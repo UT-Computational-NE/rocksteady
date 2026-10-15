@@ -6,13 +6,13 @@ y [K]   fit vs data   (models: steady poly 0, transient first_order, indetermina
   indeterminate    100     100 s  +0.0000  0.0481  0.0396  0.0479  0.1173  0.48%  0.0908  0.00555      1 s     75
 
 y [K]   intervals
-  #  state             start       end    n  model            mean      std  tau_int  N_eff   u(mean)     RMSE  parameters
-  1  indeterminate  06:00:00  06:01:39  100  first_order  10.00405  0.04864      1 s     75  0.005612  0.04791  y0 9.991 ± 0.024; y_inf 10.01 ± 0.012; tau 22.17 ± 69 s; [tau_unidentifiable]
-  2  steady         06:01:40  06:16:39  900  poly 0        9.99688  0.04889      1 s    900  0.001630  0.04887
-  3  transient      06:16:40  06:28:19  700  first_order  18.56690  0.05125      1 s    700  0.001937  0.05114  y0 9.994 ± 0.011; y_inf 20 ± 0.0029; tau 99.85 ± 0.18 s
-  4  steady         06:28:20  06:43:19  900  poly 0       19.99647  0.05009      1 s    900  0.001670  0.05006
-  5  indeterminate  06:43:20  06:44:09    0  first_order                                                        [too_few_samples]
-  6  steady         06:44:10  06:49:59  350  poly 0       19.99691  0.04807      1 s    314  0.002712  0.04800
+  #  state             start       end    n  model           mean     std  tau_int  N_eff  u(mean)    RMSE  parameters
+  1  indeterminate  06:00:00  06:01:39  100  first_order  10.0041  0.0486      1 s     75  0.00561  0.0479  y0 9.991 ± 0.024; y_inf 10.01 ± 0.012; tau 22.17 ± 69 s; [tau_unidentifiable]
+  2  steady         06:01:40  06:16:39  900  poly 0        9.9969  0.0489      1 s    900  0.00163  0.0489
+  3  transient      06:16:40  06:28:19  700  first_order  18.5669  0.0513      1 s    700  0.00194  0.0511  y0 9.994 ± 0.011; y_inf 20 ± 0.0029; tau 99.85 ± 0.18 s
+  4  steady         06:28:20  06:43:19  900  poly 0       19.9965  0.0501      1 s    900  0.00167  0.0501
+  5  indeterminate  06:43:20  06:44:09    0  first_order                                                    [too_few_samples]
+  6  steady         06:44:10  06:49:59  350  poly 0       19.9969  0.0481      1 s    314  0.00271  0.0480
 
 z   fit vs data   (models: steady poly 1, transient poly 1, indeterminate poly 1)
   state              n      time      bias      std      MAE     RMSE   max|e|  NRMSE       r   u(bias)  tau_int  N_eff

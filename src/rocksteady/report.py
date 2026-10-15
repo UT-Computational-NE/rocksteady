@@ -232,11 +232,11 @@ def _duration(seconds: float) -> str:
 
 
 def _decimals(values) -> int:
-    """Decimals that give about four significant figures to the largest of ``values``."""
-    v = np.asarray([x for x in values if np.isfinite(x) and x != 0], dtype=float)
+    """Decimals that give three significant figures to the smallest non-zero of ``values`` (typical spreads)."""
+    v = np.asarray([abs(x) for x in values if np.isfinite(x) and x != 0], dtype=float)
     if not len(v):
         return 2
-    return int(np.clip(4 - (np.floor(np.log10(np.max(np.abs(v)))) + 1), 0, 8))
+    return int(np.clip(2 - np.floor(np.log10(v.min())), 0, 8))
 
 
 def _fmt(x, dec: int, signed: bool = False) -> str:
@@ -259,7 +259,7 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], left: Sequence[
 
 
 def _state_table(df) -> str:
-    dec = _decimals(np.concatenate([df[c].to_numpy(float) for c in ("bias", "std", "mae", "rmse", "max_abs")]))
+    dec = _decimals(np.concatenate([df[c].to_numpy(float) for c in ("std", "mae", "rmse")]))
     header = ["state", "n", "time", "bias", "std", "MAE", "RMSE", "max|e|", "NRMSE", "r", "u(bias)",
               "tau_int", "N_eff"]
     rows = []
@@ -311,7 +311,7 @@ def _param_text(r: Optional[FitResult]) -> str:
 
 def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
     is_fit = "model" in df.columns
-    noise_cols = ("std", "rmse") if is_fit else ("bias", "std", "rmse")
+    noise_cols = ("std", "rmse")
     dec = _decimals(np.concatenate([df[c].to_numpy(float) for c in noise_cols]))
     dec_level = max(_decimals(df["mean"].to_numpy(float)), dec) if is_fit else dec
     if is_fit:
