@@ -19,7 +19,7 @@ the data?*
 ## Install
 
 ```
-pip install "rocksteady @ git+https://github.com/<org>/rocksteady.git@v0.2.0"
+pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.2.0"
 ```
 
 Python 3.10 or later, with numpy and pandas. pandas is used only by
@@ -229,4 +229,4 @@ See [CHANGELOG.md](CHANGELOG.md) for changes between versions.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](LICENSE).

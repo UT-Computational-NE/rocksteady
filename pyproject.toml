@@ -7,7 +7,7 @@ name = "rocksteady"
 dynamic = ["version"]
 description = "Steady-state detection for multi-signal experiments with characteristic time constants and external actions"
 readme = "README.md"
-license = "MIT"
+license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{ name = "Nicholas Luciano" }]
 requires-python = ">=3.10"
@@ -28,9 +28,10 @@ classifiers = [
 test = ["pytest"]
 dev = ["build", "pytest"]
 
-# [project.urls]  -- fill in when the GitHub repository exists
-# Homepage = "https://github.com/<org>/rocksteady"
-# Issues = "https://github.com/<org>/rocksteady/issues"
+[project.urls]
+Homepage = "https://github.com/UT-Computational-NE/rocksteady"
+Issues = "https://github.com/UT-Computational-NE/rocksteady/issues"
+Changelog = "https://github.com/UT-Computational-NE/rocksteady/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "rocksteady.__version__" }

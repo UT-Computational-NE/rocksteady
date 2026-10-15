@@ -4,7 +4,7 @@
 
 ### Packaging
 
-- MIT license; `src/` layout; `py.typed`; version single-sourced from
+- BSD 3-Clause license; `src/` layout; `py.typed`; version single-sourced from
   `rocksteady.__version__`; Python 3.10 or later.
 - The application adapters that 0.1 shipped alongside the library are
   removed from the repository; they now live with the projects that use
