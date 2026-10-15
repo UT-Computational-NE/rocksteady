@@ -5,16 +5,18 @@ The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.
 """
 
-from typing import List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 import numpy as np
-import pandas as pd
 
 from .core import Detector, Label
 
+if TYPE_CHECKING:  # pandas is imported where it is used, so the streaming detector does not need it
+    import pandas as pd
 
-def run(detector: Detector, df: pd.DataFrame, t: Optional[np.ndarray] = None,
-        with_results: bool = False) -> pd.DataFrame:
+
+def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
+        with_results: bool = False) -> "pd.DataFrame":
     """
     Evaluate every row of ``df`` in order.
 
@@ -37,6 +39,8 @@ def run(detector: Detector, df: pd.DataFrame, t: Optional[np.ndarray] = None,
     ``limiting``, ``since_disturbance_s``, ``forced_by`` and, optionally,
     ``ratio_<criterion>``.
     """
+    import pandas as pd
+
     detector.reset()
     if t is None:
         if isinstance(df.index, pd.DatetimeIndex) and len(df):
@@ -74,12 +78,12 @@ def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
     return list(zip(starts, stops))
 
 
-def intervals(labels: pd.Series, label: Label) -> List[Tuple[int, int]]:
+def intervals(labels: "pd.Series", label: Label) -> List[Tuple[int, int]]:
     """Index runs carrying one label."""
     return runs(labels.to_numpy() == label.value)
 
 
-def accepted_intervals(labels: pd.Series) -> List[Tuple[int, int]]:
+def accepted_intervals(labels: "pd.Series") -> List[Tuple[int, int]]:
     """
     Runs that reached STEADY, including the HOLDING span that preceded them.
 

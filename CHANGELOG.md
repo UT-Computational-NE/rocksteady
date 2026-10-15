@@ -11,6 +11,9 @@
 - A step in `t` of more than 1.5 sample periods is now treated as a gap.
   With the default `Timing.max_gap_s = 0` it resets the detector, as a
   non-finite sample already did. Previously timestamps were ignored.
+- `rocksteady.core.linear_residuals` is removed (use
+  `rocksteady.stats.linear_fit(t, y)[2]`), so the core depends on numpy
+  only.
 
 ### Label changes
 
@@ -21,6 +24,14 @@
 
 ### Added
 
+- Provider registries (`rocksteady.registry`) and factories
+  (`rs.criterion`, `rs.disturbance`, `rs.override`, `rs.build_detector`).
+  Every built-in component is registered by name, and user components can
+  be registered the same way. `rs.build_detector(spec)` assembles a
+  detector from a plain-data (JSON-compatible) spec whose entries may also
+  be built objects.
+- The streaming detector no longer needs pandas at import time; only
+  `batch.run` uses it.
 - `rocksteady.signals`: `mean`, `spread`, `difference` source builders.
 - `FloorLatch` override (generalized from the reactor zero-power rule).
 - `Timing.max_gap_s` and `Timing.min_block_coverage`: tolerate short runs

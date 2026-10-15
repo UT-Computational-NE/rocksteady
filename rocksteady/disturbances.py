@@ -14,9 +14,11 @@ from typing import Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
 
+from . import registry
 from .core import Disturbance
 
 
+@registry.disturbances.register("step")
 class StepChange(Disturbance):
     """
     Discrete move detector on one signal.
@@ -47,6 +49,7 @@ class StepChange(Disturbance):
         return bool(abs(h[self.m :].mean() - h[: self.m].mean()) > self.threshold)
 
 
+@registry.disturbances.register("event_log")
 class EventLog(Disturbance):
     """
     Logged events as disturbances.

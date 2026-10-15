@@ -19,6 +19,7 @@ from typing import Callable, Union
 
 import numpy as np
 
+from . import registry
 from .core import Criterion, CriterionResult
 from .stats import hac_slope, linear_fit, tau_int
 
@@ -29,6 +30,7 @@ def _sigma(noise: NoiseModel, level: float) -> float:
     return float(noise(level)) if callable(noise) else float(noise)
 
 
+@registry.criteria.register("deviation")
 class DeviationCriterion(Criterion):
     """
     Max deviation of the block means from a fitted model within a tolerance.
@@ -86,6 +88,7 @@ class DeviationCriterion(Criterion):
         return CriterionResult(self.name, dev, sigma, self.limit, self.k)
 
 
+@registry.criteria.register("drift")
 class DriftCriterion(Criterion):
     """
     Slope equivalence test: ``|b| + k u_b <= limit``.
@@ -107,6 +110,7 @@ class DriftCriterion(Criterion):
         return CriterionResult(self.name, abs(b), u_b, self.limit, self.k)
 
 
+@registry.criteria.register("bound")
 class BoundCriterion(Criterion):
     """
     The window mean lies within ``[low, high]``.

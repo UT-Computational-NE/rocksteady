@@ -31,6 +31,10 @@ Labels
 Everything but STEADY (and HOLDING, which is steady awaiting confirmation)
 is "transient" in the two-class sense. The detector is causal; batch
 evaluation of a record gives exactly the online labels.
+
+This module holds the contracts only and depends on numpy alone. Concrete
+criteria, disturbances, overrides and signal builders live in their own
+modules and are registered by name in ``rocksteady.registry``.
 """
 
 from abc import ABC, abstractmethod
@@ -39,8 +43,6 @@ from enum import Enum
 from typing import Callable, Dict, Mapping, Optional, Sequence, Union
 
 import numpy as np
-
-from .stats import linear_fit
 
 
 class Label(str, Enum):
@@ -506,12 +508,7 @@ class Detector:
         return Verdict(t, Label.INDETERMINATE, results, since_s)
 
 
-def linear_residuals(t: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Residuals of ``y`` about its OLS line on ``t`` (re-exported for criteria)."""
-    return linear_fit(t, y)[2]
-
-
 __all__ = [
     "Label", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
-    "Context", "Timing", "Verdict", "Detector", "linear_residuals",
+    "Context", "Timing", "Verdict", "Detector", "Source",
 ]

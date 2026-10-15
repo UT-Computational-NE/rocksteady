@@ -12,11 +12,12 @@ readable ``repr`` and can be pickled (for example, to multiprocessing
 workers). Operands of ``difference`` may be column names or other sources.
 """
 
-from typing import Callable, Mapping, Sequence, Union
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
-Source = Union[str, Callable[[Mapping[str, float]], float]]
+from . import registry
+from .core import Source
 
 
 def _read(source: Source, sample: Mapping[str, float]) -> float:
@@ -56,6 +57,13 @@ class _Difference:
         return f"difference({self.a!r}, {self.b!r})"
 
 
+@registry.signal_builders.register("column")
+def column(col: str) -> str:
+    """A raw column, possibly under another signal name."""
+    return col
+
+
+@registry.signal_builders.register("mean")
 def mean(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
     """Arithmetic mean of several columns."""
     if not cols:
@@ -63,6 +71,7 @@ def mean(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
     return _Mean(cols)
 
 
+@registry.signal_builders.register("spread")
 def spread(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
     """Maximum minus minimum over several columns."""
     if not cols:
@@ -70,9 +79,10 @@ def spread(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
     return _Spread(cols)
 
 
+@registry.signal_builders.register("difference")
 def difference(a: Source, b: Source) -> Callable[[Mapping[str, float]], float]:
     """``a - b``, where each operand is a column name or another source."""
     return _Difference(a, b)
 
 
-__all__ = ["mean", "spread", "difference"]
+__all__ = ["column", "mean", "spread", "difference"]

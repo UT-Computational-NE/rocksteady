@@ -21,12 +21,14 @@ from .core import (
 from .criteria import BoundCriterion, DeviationCriterion, DriftCriterion
 from .disturbances import EventLog, StepChange
 from .overrides import FloorLatch
-from . import batch, signals, stats
+from .factory import build_detector, criterion, disturbance, override
+from . import batch, factory, registry, signals, stats
 
 __version__ = "0.1.0"
 
 __all__ = [
     "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override",
     "Outcome", "Signal", "Timing", "Verdict", "BoundCriterion", "DeviationCriterion", "DriftCriterion",
-    "EventLog", "FloorLatch", "StepChange", "batch", "signals", "stats",
+    "EventLog", "FloorLatch", "StepChange", "build_detector", "criterion", "disturbance", "override",
+    "batch", "factory", "registry", "signals", "stats",
 ]

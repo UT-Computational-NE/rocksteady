@@ -10,9 +10,11 @@ from typing import Optional
 
 import numpy as np
 
+from . import registry
 from .core import Context, Label, Override
 
 
+@registry.overrides.register("floor_latch")
 class FloorLatch(Override):
     """
     Force a label after a downward crossing of a floor.
@@ -29,14 +31,14 @@ class FloorLatch(Override):
     floor : float
     release_factor : float
         Release threshold as a multiple of ``floor`` (hysteresis).
-    label : Label
+    label : Label or its string value
     name : str
     """
 
     def __init__(self, signal: str, floor: float, release_factor: float = 2.0,
                  label: Label = Label.STEADY, name: str = "floor_latch"):
         self.signal, self.floor, self.release_factor = signal, floor, release_factor
-        self.label, self.name = label, name
+        self.label, self.name = Label(label), name
         self.reset()
 
     def reset(self) -> None:
