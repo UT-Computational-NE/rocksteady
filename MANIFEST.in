@@ -1,0 +1,4 @@
+include CHANGELOG.md
+recursive-include tests *.py *.csv
+recursive-include examples *.py
+recursive-include tools *.py

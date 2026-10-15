@@ -47,7 +47,8 @@ class DeviationCriterion(Criterion):
         can depend on level (for example, per power decade).
     model : "constant" or "linear"
         "constant": deviation from the window mean. "linear": deviation
-        from the OLS line, which admits a steady drift (the rod exemption).
+        from the OLS line, which admits a steady drift (for example, an
+        actuator slowly compensating for a slow process change).
     relative : bool
         Divide deviations by max(|window mean|, ``scale_floor``).
     scale_floor : float

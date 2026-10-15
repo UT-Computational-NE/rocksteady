@@ -24,7 +24,7 @@ from .overrides import FloorLatch
 from .factory import build_detector, criterion, disturbance, override
 from . import batch, factory, registry, signals, stats
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override",

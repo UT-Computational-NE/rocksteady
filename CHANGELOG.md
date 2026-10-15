@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0
+
+### Packaging
+
+- MIT license; `src/` layout; `py.typed`; version single-sourced from
+  `rocksteady.__version__`; Python 3.10 or later.
+- The application adapters that 0.1 shipped alongside the library are
+  removed from the repository; they now live with the projects that use
+  them.
 
 ### Breaking changes
 
@@ -51,7 +59,8 @@
 - The streaming detector no longer needs pandas at import time; only
   `batch.run` uses it.
 - `rocksteady.signals`: `mean`, `spread`, `difference` source builders.
-- `FloorLatch` override (generalized from the reactor zero-power rule).
+- `FloorLatch` override: below a floor, after a downward crossing, the
+  label is forced (steady by default) until the signal recovers.
 - `Timing.max_gap_s` and `Timing.min_block_coverage`: tolerate short runs
   of missing data, using NaN-aware block means.
 - `Timing.undecided_counts_toward_hold` (default True, the previous

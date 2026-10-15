@@ -3,10 +3,11 @@ Disturbance detectors: external action that resets the detector's clocks.
 
 - ``StepChange``: a signal's mean over the latest ``m`` samples differs from
   its mean over the ``m`` before by more than a threshold. Catches discrete
-  actuator moves (control rods) while rejecting jitter and servo hunting.
+  actuator moves (valve or positioner steps) while rejecting jitter and servo
+  hunting.
 - ``EventLog``: externally logged events (control, configuration, alarm)
-  with a start time and a duration. The loop plan's "any later control,
-  configuration, alarm or mandatory-channel event resets the sequence".
+  with a start time and a duration: any control, configuration or alarm
+  event resets the sequence.
 """
 
 from collections import deque

@@ -16,7 +16,7 @@ its own instances; the state machine that combines them is shared.
    disturbance, hold time before acceptance, and whether an undecided
    window keeps the last decided state.
 5. **Overrides**: domain rules that can force a label (for example, a
-   reactor below its power floor is steady by definition).
+   system shut down below its operating floor is steady by definition).
 
 Labels
 ------
@@ -286,7 +286,7 @@ class Verdict:
 
     @property
     def eta(self) -> float:
-        """Worst margin ratio over the criteria (the loop plan's eta_drift)."""
+        """Worst margin ratio over the criteria."""
         return max((r.ratio for r in self.results.values()), default=np.nan)
 
     @property
