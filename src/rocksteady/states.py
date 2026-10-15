@@ -15,12 +15,18 @@ The segments cover every sample, without overlap.
 Labels are causal: a sample is labelled steady only once the window
 *ending* at it passes, so the data in that certifying window were already
 steady. ``backfill_samples`` (``segments_from`` sets it to the detector's
-window) extends each steady segment back over that window.
+window) extends each steady segment back over that window. Runs that an
+override forced to steady (for example a zero-power rule after a
+shutdown) were not certified by data and are not backfilled, and backfill
+never crosses a disturbance.
 """
 
+import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Sequence
+from typing import List, Optional, Sequence
+
+import numpy as np
 
 from .batch import accepted_intervals, label_array
 from .core import Detector, Label
@@ -85,7 +91,8 @@ def _merge_short(runs_: List[Segment], min_samples: int) -> List[Segment]:
     return runs_
 
 
-def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 1) -> List[Segment]:
+def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 1,
+             forced: Optional[Sequence[bool]] = None) -> List[Segment]:
     """
     Split a labelled record into segments by state.
 
@@ -96,21 +103,35 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         ``label`` column of ``batch.run``).
     backfill_samples : int
         Extend each steady segment backwards by this many samples (the
-        certifying window), but never into an earlier steady segment.
-        Each accepted interval stays its own segment, even when backfill
-        closes the gap to the previous one.
+        certifying window), but never into an earlier steady segment and
+        never across a DISTURBED sample. Each accepted interval stays its
+        own segment, even when backfill closes the gap to the previous one.
     min_samples : int
         Transient and indeterminate runs shorter than this take the state
         of their longer neighbour between the same two steady segments.
         Steady segments are kept whatever their length.
+    forced : sequence of bool, optional
+        True where an override forced the label (``batch.run``'s
+        ``forced_by`` is set). A steady run that starts forced was not
+        certified by a window of data, so it is not backfilled.
     """
     if backfill_samples < 0 or min_samples < 1:
         raise ValueError("backfill_samples must be >= 0 and min_samples >= 1")
     lab = label_array(labels)
+    forced_at = np.zeros(len(lab), dtype=bool) if forced is None else np.asarray(forced, dtype=bool)
+    if len(forced_at) != len(lab):
+        raise ValueError("forced must have one entry per label")
+    disturbed = np.flatnonzero(lab == Label.DISTURBED.value)
     steady: List[Segment] = []
     prev_stop = 0
     for a, b in accepted_intervals(lab):
-        steady.append(Segment(max(a - int(backfill_samples), prev_stop), b, State.STEADY))
+        start = a
+        if backfill_samples and not forced_at[a]:
+            start = max(a - int(backfill_samples), prev_stop)
+            j = int(np.searchsorted(disturbed, a)) - 1  # last disturbed sample before the run
+            if j >= 0:
+                start = max(start, int(disturbed[j]) + 1)
+        steady.append(Segment(start, b, State.STEADY))
         prev_stop = b
     out: List[Segment] = []
     pos = 0
@@ -126,11 +147,29 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
     return out
 
 
-def segments_from(detector: Detector, labels: Sequence, *, backfill: bool = True,
+def segments_from(detector: Detector, run_output, *, backfill: bool = True,
                   min_samples: int = 1) -> List[Segment]:
-    """``segments`` with the detector's window as the backfill (when ``backfill`` is True)."""
+    """
+    ``segments`` for a detector's output, with its window as the backfill.
+
+    ``run_output`` is the DataFrame returned by ``batch.run`` (preferred:
+    its ``forced_by`` column keeps override-forced steady runs from being
+    backfilled), or just the labels. With labels only and a detector that
+    has overrides, a warning is issued, because forced runs cannot then be
+    told apart.
+    """
+    forced = None
+    if hasattr(run_output, "columns"):
+        if "forced_by" in run_output.columns:
+            forced = run_output["forced_by"].notna().to_numpy()
+        labels = run_output["label"]
+    else:
+        labels = run_output
+        if backfill and detector.overrides:
+            warnings.warn("segments_from got labels only for a detector with overrides; pass the batch.run "
+                          "output so that override-forced steady runs are not backfilled", stacklevel=2)
     return segments(labels, backfill_samples=detector.timing.window_samples if backfill else 0,
-                    min_samples=min_samples)
+                    min_samples=min_samples, forced=forced)
 
 
 def state_runs(segs: Sequence[Segment], state: State) -> List[Segment]:
