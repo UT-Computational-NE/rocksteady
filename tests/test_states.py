@@ -72,7 +72,7 @@ def test_backfill_extends_steady_and_keeps_accepted_intervals_separate():
 
 
 def test_backfill_shorter_than_gap_leaves_transient():
-    labels = [ST] * 3 + [DI] * 4 + [ST] * 2
+    labels = [ST] * 3 + [SE] * 4 + [ST] * 2
     segs = rs.segments(labels, backfill_samples=2)
     assert [(s.start, s.stop, s.state.value) for s in segs] == [(0, 3, ST), (3, 5, "transient"), (5, 9, ST)]
 
@@ -106,18 +106,44 @@ def test_argument_checks():
 
 def test_golden_actuator_case():
     det, df = actuator_case()
-    labels = rs.batch.run(det, df)["label"]
+    out = rs.batch.run(det, df)
+    labels = out["label"]
     plain = rs.segments(labels)
     steady = [(s.start, s.stop) for s in plain if s.state == State.STEADY]
     assert steady == rs.batch.accepted_intervals(labels)
-    filled = rs.segments_from(det, labels)
+    filled = rs.segments_from(det, out)
+    forced = out["forced_by"].notna().to_numpy()
+    disturbed = np.flatnonzero(labels.to_numpy() == DI)
     window = det.timing.window_samples
     prev = 0
+    n_forced = 0
     for (a, b), s in zip(steady, [s for s in filled if s.state == State.STEADY]):
-        assert (s.start, s.stop) == (max(a - window, prev), b)
+        if forced[a]:
+            assert (s.start, s.stop) == (a, b)  # an override-forced run is not backfilled
+            n_forced += 1
+        else:
+            last_dist = disturbed[disturbed < a].max() + 1 if (disturbed < a).any() else 0
+            assert (s.start, s.stop) == (max(a - window, prev, last_dist), b)
         prev = b
+    assert n_forced >= 1  # the floor latch forces at least one steady run in this case
     assert {s.state for s in plain} == set(State)
-    assert rs.segments_from(det, labels, backfill=False) == plain
+    assert rs.segments_from(det, out, backfill=False) == plain
+    with pytest.warns(UserWarning, match="labels only"):
+        rs.segments_from(det, labels)
+
+
+def test_backfill_skips_forced_runs_and_stops_at_disturbances():
+    labels = [SE] * 10 + [ST] * 3 + [DI] * 2 + [SE] * 3 + [ST] * 4
+    forced = [False] * 10 + [True] * 3 + [False] * 9
+    segs = rs.segments(labels, backfill_samples=6, forced=forced)
+    assert [(s.start, s.stop, s.state.value) for s in segs] == [
+        (0, 10, "transient"),
+        (10, 13, ST),  # forced: not backfilled
+        (13, 15, "transient"),  # the disturbance stays transient
+        (15, 22, ST),  # backfilled to just after the disturbance, not the full 6 samples
+    ]
+    with pytest.raises(ValueError, match="one entry per label"):
+        rs.segments(labels, forced=[True])
 
 
 def test_signal_values():
