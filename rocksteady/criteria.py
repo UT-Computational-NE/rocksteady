@@ -7,21 +7,21 @@ criterion only has to say what it measures and how well.
 
 - ``DeviationCriterion``: the signal stays within a tolerance of a fitted
   model (constant or linear) over the window. Uncertainty comes from a
-  measurement-noise model. This is the reactor power and rod test.
+  measurement-noise model.
 - ``DriftCriterion``: slope equivalence, ``|b| + k u_b <= b_crit``, with an
-  autocorrelation-robust ``u_b`` estimated from the window itself. This is
-  the flow-loop drift test.
+  autocorrelation-robust ``u_b`` estimated from the window itself (pluggable
+  through ``registry.slope_methods``).
 - ``BoundCriterion``: the window mean lies within a band. Uncertainty from
   the block-to-block scatter, corrected for autocorrelation.
 """
 
-from typing import Callable, Union
+from typing import Callable, Mapping, Optional, Union
 
 import numpy as np
 
 from . import registry
 from .core import Criterion, CriterionResult
-from .stats import hac_slope, linear_fit, tau_int
+from .stats import DEFAULT_SLOPE_METHOD, linear_fit, tau_int
 
 NoiseModel = Union[float, Callable[[float], float]]
 
@@ -93,21 +93,47 @@ class DriftCriterion(Criterion):
     """
     Slope equivalence test: ``|b| + k u_b <= limit``.
 
-    ``u_b`` is a Newey-West standard error from the window's own residuals,
-    so no external noise model is needed. ``limit`` is in signal units per
-    second. Needs at least 4 blocks.
+    The slope ``b`` and its uncertainty ``u_b`` come from the window's own
+    block means, so no external noise model is needed.
+
+    Parameters
+    ----------
+    signal : str
+    limit_per_s : float
+        Drift limit in signal units per second.
+    k : float, optional
+        Coverage factor. Default: the one supplied by the method (for
+        ``"ar1"``, a Student-t quantile on the window's effective degrees of
+        freedom; for ``"nw"``, 2).
+    method : str or callable
+        A name in ``registry.slope_methods`` or a callable
+        ``(t, y, **method_options) -> (b, u_b, k)``. See ``rocksteady.stats``
+        for the built-in methods and their calibration. ``"nw"`` reproduces
+        rocksteady 0.1.
+    method_options : mapping, optional
+        Keyword arguments for the method (for example
+        ``{"max_lag_frac": 0.25}`` for ``"nw"``).
+    name : str, optional
+
+    Needs at least 4 blocks.
     """
 
     min_blocks = 4
 
-    def __init__(self, signal: str, limit_per_s: float, k: float = 2.0, max_lag_frac: float = 0.25,
-                 name: str = None):
-        self.signal, self.limit, self.k, self.max_lag_frac = signal, limit_per_s, k, max_lag_frac
+    def __init__(self, signal: str, limit_per_s: float, *, k: Optional[float] = None,
+                 method: Union[str, Callable] = DEFAULT_SLOPE_METHOD,
+                 method_options: Optional[Mapping] = None, name: Optional[str] = None):
+        self.signal, self.limit, self.k = signal, limit_per_s, k
+        self.method = method
+        self._slope = registry.slope_methods.get(method) if isinstance(method, str) else method
+        if not callable(self._slope):
+            raise TypeError(f"method must be a registered name or a callable, got {method!r}")
+        self.method_options = dict(method_options or {})
         self.name = name or f"{signal}_drift"
 
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
-        b, u_b = hac_slope(t_blocks, y_blocks, self.max_lag_frac)
-        return CriterionResult(self.name, abs(b), u_b, self.limit, self.k)
+        b, u_b, k = self._slope(t_blocks, y_blocks, **self.method_options)
+        return CriterionResult(self.name, abs(b), u_b, self.limit, k if self.k is None else self.k)
 
 
 @registry.criteria.register("bound")

@@ -11,6 +11,16 @@
 - A step in `t` of more than 1.5 sample periods is now treated as a gap.
   With the default `Timing.max_gap_s = 0` it resets the detector, as a
   non-finite sample already did. Previously timestamps were ignored.
+- `DriftCriterion` now defaults to the calibrated `"ar1"` slope
+  uncertainty with a method-supplied coverage factor (`k=None`). The 0.1
+  behaviour is `DriftCriterion(..., method="nw", k=2.0)`. Its arguments
+  after `limit_per_s` are keyword-only, and `max_lag_frac` moved to
+  `method_options={"max_lag_frac": ...}`.
+  Why: in Monte Carlo checks, the 0.1 Newey-West interval falsely
+  certified a drift limit 10.6 % of the time at 40 blocks with AR(1)
+  phi = 0.5 (nominal 2.3 %), and 17.7 % at phi = 0.8. `"ar1"` stays at
+  or under 4.8 % from 40 blocks up. It is more conservative on strongly
+  autocorrelated windows.
 - `rocksteady.core.linear_residuals` is removed (use
   `rocksteady.stats.linear_fit(t, y)[2]`), so the core depends on numpy
   only.
@@ -30,6 +40,14 @@
   be registered the same way. `rs.build_detector(spec)` assembles a
   detector from a plain-data (JSON-compatible) spec whose entries may also
   be built objects.
+- Slope-uncertainty methods are pluggable (`registry.slope_methods`):
+  `"ar1"` (AR(1) error model, bias-corrected phi, Student-t factor on the
+  effective degrees of freedom) and `"nw"` (0.1). `tools/coverage_mc.py`
+  calibrates every registered method.
+- `stats.t_quantile`: exact Student-t quantiles (integer degrees of
+  freedom), without scipy.
+- `stats.mean_with_uncertainty(..., u_type_b=...)` returns `u_combined`,
+  the Type A and Type B parts combined in quadrature.
 - The streaming detector no longer needs pandas at import time; only
   `batch.run` uses it.
 - `rocksteady.signals`: `mean`, `spread`, `difference` source builders.
@@ -41,6 +59,13 @@
 - `Criterion.min_blocks`; the detector rejects windows too short for its
   criteria.
 - `batch.run` uses a `DatetimeIndex` for sample times when `t` is not given.
+
+### Documentation
+
+- `stats.tau_int` and `mean_with_uncertainty` document their estimator
+  and why it differs from Zhang (2006).
+- `DeviationCriterion` documents that its interval is a calibrated
+  heuristic, not a confidence interval.
 
 ### Fixed
 

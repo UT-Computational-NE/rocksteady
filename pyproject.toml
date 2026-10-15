@@ -15,3 +15,6 @@ test = ["pytest"]
 
 [tool.setuptools]
 packages = ["rocksteady"]
+
+[tool.pytest.ini_options]
+markers = ["slow: Monte Carlo calibration checks (deselect with -m 'not slow')"]

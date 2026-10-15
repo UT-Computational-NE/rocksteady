@@ -91,7 +91,8 @@ def drift_case():
     signals = [rs.Signal("a", "a"), rs.Signal("b", "b"),
                rs.Signal("mean", lambda s: 0.5 * (s["a"] + s["b"])),
                rs.Signal("spread", lambda s: abs(s["a"] - s["b"]))]
-    criteria = [rs.DriftCriterion(name, 0.002 / 60.0 * 30, name=name) for name in ("a", "b", "mean", "spread")]
+    # Pinned to the 0.1 slope method, so this snapshot guards that path; "ar1" is checked in test_calibration.
+    criteria = [rs.DriftCriterion(name, 0.002 / 60.0 * 30, method="nw", name=name) for name in ("a", "b", "mean", "spread")]
     det = rs.Detector(signals, criteria, [rs.EventLog([(1500.0, 0.0), (2600.0, 20.0)])],
                       timing=rs.Timing(sample_period_s=1.0, block_s=10.0, window_s=300.0, settle_s=60.0, hold_s=120.0))
     return det, df
