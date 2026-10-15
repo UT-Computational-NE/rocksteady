@@ -1,9 +1,10 @@
 # rocksteady
 
-A reusable pattern for deciding when an experiment is in steady state, with
-adapters for two systems that look different on the surface: the UT TRIGA
-reactor (power and control rods) and the STNCL natural-circulation loop
-(sixteen thermocouples and derived temperatures).
+A reusable pattern for deciding when an experiment is in steady state. It
+was developed for two systems that look different on the surface, a
+research reactor (power and control rods) and a natural-circulation loop
+(sixteen thermocouples and derived temperatures), which are used as
+examples below. See `examples/` for runnable, synthetic versions.
 
 ## The pattern
 
@@ -52,24 +53,6 @@ The detector is causal. Running it over a stored record (`batch.run`)
 gives exactly the labels the online detector would have produced, which is
 what makes archived labels and control-room labels comparable.
 
-## Validation
-
-- **TRIGA**: `adapters/triga_steady_state.py` reproduces the labels of the
-  existing `steady_state_classifier.OnlineSteadyStateTagger` sample for
-  sample on 2026-01-12 and 2026-01-15 (172,802 samples, zero mismatches).
-  `examples/validate_triga.py`.
-- **STNCL**: `adapters/stncl_steady_state.py` reproduces
-  `loop_steady_state.py` on `run7_02_26.csv`: margin ratios agree to
-  1e-13, pass/fail agrees on all 441 (operating) and 391 (calibration)
-  block-aligned windows, and with limits relaxed so that windows do pass,
-  297 of 297 agree with the same accepted spans.
-  `examples/validate_stncl.py`.
-
-One convention differs: the reference loop script stamps each window at
-its centre (post-run plotting), the library at its end (the time the state
-is confirmed). For a 20-minute window the reported start times differ by
-10 minutes.
-
 ## Using it
 
 ```python
@@ -109,42 +92,6 @@ uncertainty, the loop plan's `N_eff`) is in `rs.stats.mean_with_uncertainty`.
   keep state, as the zero-power rule does) and may force a label; a
   disturbance always takes precedence.
 
-## How to deploy it in both projects
-
-Make `rocksteady` its own repository and install it into each project as
-a pinned dependency. Keep the adapters in the projects, not in the library:
-
-```
-rocksteady/            (this package: generic, no reactor or loop knowledge)
-triga_modsim_tools/dataproc/triga_steady_state.py   (from adapters/)
-stncl_analysis/stncl_steady_state.py                 (from adapters/)
-```
-
-In each project's `pyproject.toml` (or requirements file):
-
-```
-rocksteady @ git+ssh://git@github.com/<org>/rocksteady.git@v0.1.0
-```
-
-Pin a tag, and bump it deliberately. Each project should keep its
-validation script (`examples/validate_*.py`) as a regression test, so a
-library change that alters labels is caught before it reaches the archive.
-
-Adapter responsibilities, so the split stays clean:
-
-- **Library**: the state machine, the criteria and disturbance types, the
-  statistics, batch and interval utilities. Nothing in it knows about
-  rods, thermocouples, or acceptance classes.
-- **Adapter**: signal definitions, calibrated tolerances and noise models,
-  acceptance classes, settling constants, domain overrides, and any legacy
-  interface (`triga_steady_state.OnlineSteadyStateTagger` keeps the
-  `update(power, rods) -> str` API, so `data_tagger.py` only changes its
-  import).
-
-Vendoring (copying `rocksteady/` into each project) also works and avoids
-a dependency, at the cost of the two copies drifting apart. The pinned git
-dependency is the better default.
-
 ## Layout
 
 ```
@@ -152,15 +99,17 @@ rocksteady/
   core.py            Signal, Criterion, Disturbance, Override, Timing, Detector, Verdict
   criteria.py        DeviationCriterion, DriftCriterion, BoundCriterion
   disturbances.py    StepChange, EventLog
+  overrides.py       FloorLatch
+  signals.py         mean, spread, difference (derived-signal builders)
   stats.py           block means, HAC slope, tau_int, mean_with_uncertainty
   batch.py           run, intervals, accepted_intervals
-adapters/
-  triga_steady_state.py
-  stncl_steady_state.py
 examples/
-  validate_triga.py  validate_stncl.py
+  actuator_steps.py  stepping actuator, noise model, floor override
+  thermal_drift.py   drifting channels, event log, settle and hold
 tests/
-  test_core.py       synthetic tests of the state machine and criteria
+  test_core.py         synthetic tests of the state machine and criteria
+  test_components.py   signal builders and overrides
+  test_regression.py   golden-label snapshots (regenerate: python tests/test_regression.py)
 ```
 
 Run the tests with `python -m pytest tests`.
