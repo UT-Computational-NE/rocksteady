@@ -45,8 +45,10 @@ class SignalReport:
     units: Optional[str] = None
     fit: Optional[PiecewiseFit] = None
     fit_results: List[FitResult] = field(default_factory=list)
+    time_origin: Any = None  # a Timestamp when the record had a DatetimeIndex
 
     def to_string(self, intervals: bool = True, time_origin=None) -> str:
+        time_origin = self.time_origin if time_origin is None else time_origin
         head = f"{self.name}{f' [{self.units}]' if self.units else ''}   {self.title}"
         lines = [head, _indent(_state_table(self.by_state))]
         if any(self.by_state["low_effective_sample"] & (self.by_state["n"] > 0)):
@@ -189,7 +191,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         import pandas as pd
 
         blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state,
-                                   pd.DataFrame(rows), units.get(name), pw, pw.results))
+                                   pd.DataFrame(rows), units.get(name), pw, pw.results, origin))
     return Report(blocks, origin)
 
 
@@ -208,7 +210,7 @@ def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a"
     if len(per):
         per["t_start_s"] = t[per["start"].to_numpy()]
         per["t_end_s"] = t[per["stop"].to_numpy() - 1]
-    block = SignalReport(names[0], f"{names[0]} vs {names[1]}", by_state, per, units)
+    block = SignalReport(names[0], f"{names[0]} vs {names[1]}", by_state, per, units, time_origin=origin)
     return Report([block], origin)
 
 
@@ -309,11 +311,19 @@ def _param_text(r: Optional[FitResult]) -> str:
     return "; ".join(parts)
 
 
+def _sig(x, digits: int = 3) -> str:
+    """``x`` to ``digits`` significant figures (blank if not finite)."""
+    return f"{x:.{digits}g}" if x is not None and np.isfinite(x) else ""
+
+
 def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
+    """
+    One row per interval. Intervals can differ by orders of magnitude (a
+    shutdown at exactly zero next to full power), so each row is formatted
+    on its own: spreads to three significant figures, levels to the
+    decimals that resolve that row's spread.
+    """
     is_fit = "model" in df.columns
-    noise_cols = ("std", "rmse")
-    dec = _decimals(np.concatenate([df[c].to_numpy(float) for c in noise_cols]))
-    dec_level = max(_decimals(df["mean"].to_numpy(float)), dec) if is_fit else dec
     if is_fit:
         header = ["#", "state", "start", "end", "n", "model", "mean", "std", "tau_int", "N_eff", "u(mean)", "RMSE",
                   "parameters"]
@@ -324,15 +334,17 @@ def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
     for i, r in df.reset_index(drop=True).iterrows():
         start, end = _clock(r["t_start_s"], origin, multi_day), _clock(r["t_end_s"], origin, multi_day)
         n_eff = f"{r['n_eff']:,.0f}" + ("*" if r["low_effective_sample"] else "") if r["n"] else ""
+        spread = r["std"] if np.isfinite(r["std"]) and r["std"] > 0 else float("nan")
+        dec = int(np.clip(2 - np.floor(np.log10(spread)), 0, 8)) if np.isfinite(spread) else 2
         if is_fit:
             rows.append([str(int(r["segment"]) + 1), r["state"], start, end, f"{int(r['n']):,}", r["model"],
-                         _fmt(r["mean"], dec_level), _fmt(r["std"], dec), _duration(r["tau_int_s"]), n_eff,
-                         _fmt(r["u_mean"], dec + 1), _fmt(r["rmse"], dec), _param_text(fits[i] if i < len(fits) else None)])
+                         _fmt(r["mean"], dec), _sig(r["std"]), _duration(r["tau_int_s"]), n_eff,
+                         _sig(r["u_mean"], 2), _sig(r["rmse"]), _param_text(fits[i] if i < len(fits) else None)])
         else:
             rows.append([str(int(r["segment"]) + 1), r["state"], start, end, f"{int(r['n']):,}",
-                         _fmt(r["bias"], dec, signed=True), _fmt(r["std"], dec), _fmt(r["rmse"], dec),
+                         _fmt(r["bias"], dec, signed=True), _sig(r["std"]), _sig(r["rmse"]),
                          f"{r['r']:.4f}" if np.isfinite(r["r"]) else "—", _duration(r["tau_int_s"]), n_eff,
-                         _fmt(r["u_bias"], dec + 1)])
+                         _sig(r["u_bias"], 2)])
     return _table(header, rows, left=(1, 5, 12) if is_fit else (1,))
 
 
