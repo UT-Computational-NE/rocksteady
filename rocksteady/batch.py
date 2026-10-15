@@ -25,7 +25,9 @@ def run(detector: Detector, df: pd.DataFrame, t: Optional[np.ndarray] = None,
     df : DataFrame
         One row per sample; columns are what the signals' sources read.
     t : array of float, optional
-        Sample times in seconds. Default: row index times the sample period.
+        Sample times in seconds. Default: seconds since the first row if
+        ``df`` has a ``DatetimeIndex``, otherwise the row number times the
+        sample period. Times in an ``EventLog`` must use the same origin.
     with_results : bool
         Also return one column per criterion with its margin ratio.
 
@@ -37,7 +39,10 @@ def run(detector: Detector, df: pd.DataFrame, t: Optional[np.ndarray] = None,
     """
     detector.reset()
     if t is None:
-        t = np.arange(len(df)) * detector.timing.sample_period_s
+        if isinstance(df.index, pd.DatetimeIndex) and len(df):
+            t = (df.index - df.index[0]).total_seconds().to_numpy()
+        else:
+            t = np.arange(len(df)) * detector.timing.sample_period_s
     cols = list(df.columns)
     data = df.to_numpy()
     rows = []

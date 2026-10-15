@@ -12,9 +12,9 @@ from .core import (
     Detector,
     Disturbance,
     Label,
+    Outcome,
     Override,
     Signal,
-    Test,
     Timing,
     Verdict,
 )
@@ -27,6 +27,6 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override",
-    "Signal", "Test", "Timing", "Verdict", "BoundCriterion", "DeviationCriterion", "DriftCriterion",
+    "Outcome", "Signal", "Timing", "Verdict", "BoundCriterion", "DeviationCriterion", "DriftCriterion",
     "EventLog", "FloorLatch", "StepChange", "batch", "signals", "stats",
 ]

@@ -12,7 +12,7 @@ criterion only has to say what it measures and how well.
   autocorrelation-robust ``u_b`` estimated from the window itself. This is
   the flow-loop drift test.
 - ``BoundCriterion``: the window mean lies within a band. Uncertainty from
-  the block-to-block scatter.
+  the block-to-block scatter, corrected for autocorrelation.
 """
 
 from typing import Callable, Union
@@ -20,7 +20,7 @@ from typing import Callable, Union
 import numpy as np
 
 from .core import Criterion, CriterionResult
-from .stats import hac_slope, linear_fit
+from .stats import hac_slope, linear_fit, tau_int
 
 NoiseModel = Union[float, Callable[[float], float]]
 
@@ -54,6 +54,15 @@ class DeviationCriterion(Criterion):
     k : float
         Width of the uncertainty interval in standard deviations.
     name : str, optional
+
+    Notes
+    -----
+    The three-way test compares ``statistic +/- k * noise`` with the limit.
+    This is a calibrated heuristic, not a confidence interval on the true
+    maximum deviation: the maximum absolute residual of pure noise is
+    itself biased upward (about 1.5 to 2 noise standard deviations for 10
+    blocks), so ``limit`` and ``noise`` should be calibrated together on
+    data known to be steady.
     """
 
     def __init__(self, signal: str, limit: float, noise: NoiseModel, model: str = "constant",
@@ -83,8 +92,10 @@ class DriftCriterion(Criterion):
 
     ``u_b`` is a Newey-West standard error from the window's own residuals,
     so no external noise model is needed. ``limit`` is in signal units per
-    second.
+    second. Needs at least 4 blocks.
     """
+
+    min_blocks = 4
 
     def __init__(self, signal: str, limit_per_s: float, k: float = 2.0, max_lag_frac: float = 0.25,
                  name: str = None):
@@ -100,9 +111,12 @@ class BoundCriterion(Criterion):
     """
     The window mean lies within ``[low, high]``.
 
-    The statistic is the distance of the mean outside the band's centre,
-    normalised so that the limit is the half-width; uncertainty is the
-    standard error of the mean from block scatter.
+    The statistic is the distance of the mean from the band's centre, and
+    the limit is the half-width. The uncertainty is the standard error of
+    the mean from block scatter, with the block count replaced by an
+    effective count ``n / tau_int`` so that autocorrelated blocks do not
+    understate it. With fewer than about 10 blocks the autocorrelation
+    estimate, and so the uncertainty, is unreliable.
     """
 
     def __init__(self, signal: str, low: float, high: float, k: float = 2.0, name: str = None):
@@ -112,5 +126,10 @@ class BoundCriterion(Criterion):
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
         centre, half = (self.low + self.high) / 2.0, (self.high - self.low) / 2.0
         mean = float(y_blocks.mean())
-        se = float(y_blocks.std(ddof=1) / np.sqrt(len(y_blocks))) if len(y_blocks) > 1 else 0.0
+        n = len(y_blocks)
+        if n > 1:
+            n_eff = n / tau_int(y_blocks, 1.0)  # tau_int in blocks
+            se = float(y_blocks.std(ddof=1) / np.sqrt(n_eff))
+        else:
+            se = 0.0
         return CriterionResult(self.name, abs(mean - centre), se, half, self.k)

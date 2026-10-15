@@ -54,7 +54,9 @@ class Label(str, Enum):
         return self.value
 
 
-class Test(str, Enum):
+class Outcome(str, Enum):
+    """Three-way result of one criterion on one window."""
+
     PASS = "pass"
     FAIL = "fail"
     UNDECIDED = "undecided"
@@ -115,25 +117,40 @@ class CriterionResult:
 
     @property
     def ratio(self) -> float:
-        """Margin ratio: below 1 passes with margin, above 1 is not demonstrated."""
-        return self.upper / self.limit if self.limit > 0 else np.inf
+        """
+        Margin ratio: below 1 passes with margin, above 1 is not demonstrated.
+
+        Infinite when the statistic or its uncertainty is not finite, or the
+        limit is not positive, so the worst ratio over several criteria does
+        not depend on their order.
+        """
+        if not (np.isfinite(self.statistic) and np.isfinite(self.uncertainty)) or not self.limit > 0:
+            return np.inf
+        r = self.upper / self.limit
+        return np.inf if np.isnan(r) else float(r)
 
     @property
-    def test(self) -> Test:
+    def outcome(self) -> Outcome:
         if not np.isfinite(self.statistic) or not np.isfinite(self.uncertainty):
-            return Test.UNDECIDED
+            return Outcome.UNDECIDED
         if self.upper <= self.limit:
-            return Test.PASS
+            return Outcome.PASS
         if self.lower > self.limit:
-            return Test.FAIL
-        return Test.UNDECIDED
+            return Outcome.FAIL
+        return Outcome.UNDECIDED
 
 
 class Criterion(ABC):
-    """A test on one signal over the trailing window of block means."""
+    """
+    A test on one signal over the trailing window of block means.
+
+    ``min_blocks`` is the fewest blocks the criterion can decide on; the
+    detector refuses a window shorter than the largest ``min_blocks``.
+    """
 
     name: str
     signal: str
+    min_blocks: int = 3
 
     @abstractmethod
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
@@ -201,6 +218,18 @@ class Timing:
     hold_s          : continuous passing time before HOLDING becomes STEADY.
     hold_when_undecided : an undecided window keeps the last decided state
                       instead of returning INDETERMINATE.
+    undecided_counts_toward_hold : when an undecided window keeps a passing
+                      state, it also advances the hold clock. If False, the
+                      hold clock pauses until a window passes again.
+    max_gap_s       : longest run of missing data that is tolerated without
+                      clearing the history. Missing data are non-finite or
+                      unreadable samples, and the samples implied by a jump
+                      in ``t`` of more than 1.5 sample periods. With 0 (the
+                      default) any missing data resets the detector.
+    min_block_coverage : when gaps are tolerated, the smallest fraction of
+                      valid samples every block in the window must have for
+                      the criteria to be evaluated; otherwise the window is
+                      undecided.
     """
 
     sample_period_s: float = 1.0
@@ -209,6 +238,17 @@ class Timing:
     settle_s: float = 0.0
     hold_s: float = 0.0
     hold_when_undecided: bool = False
+    undecided_counts_toward_hold: bool = True
+    max_gap_s: float = 0.0
+    min_block_coverage: float = 0.5
+
+    def __post_init__(self):
+        if not self.sample_period_s > 0:
+            raise ValueError("sample_period_s must be positive")
+        if self.settle_s < 0 or self.hold_s < 0 or self.max_gap_s < 0:
+            raise ValueError("settle_s, hold_s and max_gap_s must be non-negative")
+        if not 0 < self.min_block_coverage <= 1:
+            raise ValueError("min_block_coverage must be in (0, 1]")
 
     @property
     def window_samples(self) -> int:
@@ -279,6 +319,9 @@ class Detector:
         Applied in order after the disturbance check; the first non-None
         label wins.
     timing : Timing
+
+    Times passed to ``update`` must increase. A step of more than 1.5
+    sample periods is a gap; see ``Timing.max_gap_s``.
     """
 
     def __init__(
@@ -298,8 +341,10 @@ class Detector:
         for c in self.criteria:
             if c.signal not in names:
                 raise ValueError(f"criterion {c.name!r} refers to unknown signal {c.signal!r}")
-        if timing.n_blocks < 3:
-            raise ValueError("window_s must span at least 3 blocks")
+        need = max([3] + [getattr(c, "min_blocks", 3) for c in self.criteria])
+        if timing.n_blocks < need:
+            raise ValueError(f"window_s must span at least {need} blocks for these criteria "
+                             f"(it spans {timing.n_blocks})")
         self._index = {s.name: i for i, s in enumerate(self.signals)}
         self._n = timing.window_samples
         self._b = timing.block_samples
@@ -314,8 +359,11 @@ class Detector:
         self._count = 0
         self._since_disturbance = 0
         self._was_disturbed = False
+        self._seen_disturbance = False
         self._last_decided: Optional[bool] = None  # True = passing
         self._pass_run = 0
+        self._gap_run = 0
+        self._last_t: Optional[float] = None
         for d in self.disturbances:
             d.reset()
         for o in self.overrides:
@@ -323,14 +371,44 @@ class Detector:
 
     # -- helpers ----------------------------------------------------------
 
+    def _push(self, row: np.ndarray) -> None:
+        self._buf[self._head] = row
+        self._head = (self._head + 1) % self._n
+        self._count += 1
+
+    def _tolerate_gap(self, n_missing: int) -> bool:
+        """
+        Record ``n_missing`` missing samples as NaN rows if the gap is within
+        ``max_gap_s``; otherwise reset. Returns True if the gap was tolerated.
+        """
+        run = self._gap_run + n_missing
+        if self._count == 0 or run * self.timing.sample_period_s > self.timing.max_gap_s:
+            self.reset()
+            return False
+        nan_row = np.full(len(self.signals), np.nan)
+        for _ in range(min(n_missing, self._n)):
+            self._push(nan_row)
+        self._count += max(n_missing - self._n, 0)
+        self._since_disturbance += n_missing
+        self._gap_run = run
+        return True
+
     def _window(self) -> np.ndarray:
         """Window samples in time order, shape (n, n_signals)."""
         return np.concatenate((self._buf[self._head :], self._buf[: self._head]))
 
-    def _blocks(self) -> np.ndarray:
-        """Block means over the window, shape (n_blocks, n_signals)."""
-        w = self._window()[self._n - self._nb * self._b :]
-        return w.reshape(self._nb, self._b, -1).mean(axis=1)
+    def _blocks(self) -> Optional[np.ndarray]:
+        """
+        Block means over the window, shape (n_blocks, n_signals), or None if
+        some block has too few valid samples (``Timing.min_block_coverage``).
+        """
+        w = self._window()[self._n - self._nb * self._b :].reshape(self._nb, self._b, -1)
+        valid = np.isfinite(w[:, :, 0])  # missing samples are whole NaN rows
+        if valid.all():
+            return w.mean(axis=1)
+        if (valid.mean(axis=1) < self.timing.min_block_coverage).any():
+            return None
+        return np.nanmean(w, axis=1)
 
     def _record(self, passing: Optional[bool]) -> None:
         if passing is not None:
@@ -346,25 +424,34 @@ class Detector:
     def update(self, t: float, sample: Mapping[str, float]) -> Verdict:
         """Add one sample at time ``t`` (seconds) and return the verdict."""
         dt = self.timing.sample_period_s
+        if self._last_t is not None:
+            step = t - self._last_t
+            if not step > 0:
+                raise ValueError(f"times must increase: t={t} follows t={self._last_t}")
+            if step > 1.5 * dt:
+                self._tolerate_gap(int(round(step / dt)) - 1)
+
         try:
             values = {s.name: s.value(sample) for s in self.signals}
+            row = np.fromiter(values.values(), dtype=float, count=len(values))
+            missing = not np.all(np.isfinite(row))
         except (KeyError, TypeError, ValueError):
-            self.reset()
-            return Verdict(t, Label.INDETERMINATE)
-        row = np.fromiter(values.values(), dtype=float, count=len(values))
-        if not np.all(np.isfinite(row)):
-            self.reset()
-            return Verdict(t, Label.INDETERMINATE)
-
-        self._buf[self._head] = row
-        self._head = (self._head + 1) % self._n
-        self._count += 1
+            missing = True
+        if missing:
+            tolerated = self._tolerate_gap(1)
+            self._last_t = t
+            since_s = self._since_disturbance * dt if tolerated else 0.0
+            return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
+        self._last_t = t
+        self._gap_run = 0
+        self._push(row)
 
         # Update every detector (no short-circuit) so their histories stay current.
         flags = [d.update(t, sample, values) for d in self.disturbances]
         disturbed = any(flags)
         onset = disturbed and not self._was_disturbed
         self._was_disturbed = disturbed
+        self._seen_disturbance = self._seen_disturbance or disturbed
         self._since_disturbance = 0 if disturbed else self._since_disturbance + 1
         since_s = self._since_disturbance * dt
 
@@ -388,27 +475,34 @@ class Detector:
         if self._count < self._n:
             return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
         if self._since_disturbance < self.timing.quiet_samples:
+            if not self._seen_disturbance:
+                # Start of a record: the settling wait applies, but nothing was disturbed.
+                self._record(None)
+                return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
             self._record(False)
             return Verdict(t, Label.SETTLING, since_disturbance_s=since_s)
 
         blocks = self._blocks()
         results = {}
-        for c in self.criteria:
-            results[c.name] = c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]])
-        tests = [r.test for r in results.values()]
+        if blocks is None:
+            outcomes = [Outcome.UNDECIDED]
+        else:
+            for c in self.criteria:
+                results[c.name] = c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]])
+            outcomes = [r.outcome for r in results.values()]
 
-        if Test.FAIL in tests:
+        if Outcome.FAIL in outcomes:
             self._record(False)
             return Verdict(t, Label.SETTLING, results, since_s)
-        if all(tt == Test.PASS for tt in tests):
+        if all(o == Outcome.PASS for o in outcomes):
             self._record(True)
             return Verdict(t, self._passing_label(), results, since_s)
         # Undecided.
         if self.timing.hold_when_undecided and self._last_decided is not None:
-            self._record(self._last_decided)
+            if not (self._last_decided and not self.timing.undecided_counts_toward_hold):
+                self._record(self._last_decided)
             return Verdict(t, self._passing_label() if self._last_decided else Label.SETTLING, results, since_s)
         self._record(None)
-        self._pass_run = 0
         return Verdict(t, Label.INDETERMINATE, results, since_s)
 
 
@@ -418,6 +512,6 @@ def linear_residuals(t: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 __all__ = [
-    "Label", "Test", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
+    "Label", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
     "Context", "Timing", "Verdict", "Detector", "linear_residuals",
 ]
