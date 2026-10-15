@@ -27,9 +27,20 @@
 
   Time constants come with uncertainties corrected for autocorrelation,
   and the flags `tau_unidentifiable` and `tau_at_bound`.
+- `rocksteady.metrics`, statistics with uncertainties corrected for
+  autocorrelation (#4):
+  - `signal_stats` (per interval, about its fit: mean, std, `tau_int`,
+    `N_eff`, `u_mean`);
+  - `error_stats` (`a - b`: n, time, bias, std, MAE, RMSE, max|e|, NRMSE,
+    r, `tau_int`, `N_eff`, `u_bias`);
+  - `stats_by_state` and `stats_by_segment`.
+- `stats.acf_tau`: integrated autocorrelation time pooled over pieces,
+  never across their boundaries; FFT-based for long pieces (#4).
 
 ### Changed
 
+- `stats.tau_int` delegates to `stats.acf_tau`. Results are unchanged (to
+  rounding), and long series are much faster.
 - `batch.intervals` and `batch.accepted_intervals` accept any sequence of
   labels (strings or `Label`), not only a pandas Series, and return plain
   `int` indices.

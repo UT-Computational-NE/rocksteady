@@ -23,7 +23,7 @@ from .disturbances import EventLog, StepChange
 from .overrides import FloorLatch
 from .factory import build_detector, criterion, disturbance, override
 from .states import Segment, State, segments, segments_from
-from . import batch, factory, fit, registry, signals, states, stats
+from . import batch, factory, fit, metrics, registry, signals, states, stats
 
 __version__ = "0.2.0"
 
@@ -32,5 +32,5 @@ __all__ = [
     "Outcome", "Signal", "Timing", "Verdict", "BoundCriterion", "DeviationCriterion", "DriftCriterion",
     "EventLog", "FloorLatch", "StepChange", "build_detector", "criterion", "disturbance", "override",
     "Segment", "State", "segments", "segments_from",
-    "batch", "factory", "fit", "registry", "signals", "states", "stats",
+    "batch", "factory", "fit", "metrics", "registry", "signals", "states", "stats",
 ]
