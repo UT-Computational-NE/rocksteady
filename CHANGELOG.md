@@ -20,6 +20,13 @@
     AR(1) sandwich, computed in O(n).
   - `piecewise_fit` fits each segment with the model for its state; the
     model spec is per signal and optionally per state.
+- Exponential fit models, fitted by variable projection with numpy only (#3):
+  - `"first_order"` (`y_inf + (y0 - y_inf) exp(-t/tau)`; option `y0=0`
+    gives `A(1 - exp(-lambda t))`);
+  - `"exp"` (`c + A exp(t/T)`, with T a reactor period).
+
+  Time constants come with uncertainties corrected for autocorrelation,
+  and the flags `tau_unidentifiable` and `tau_at_bound`.
 
 ### Changed
 

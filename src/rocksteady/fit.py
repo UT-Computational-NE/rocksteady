@@ -13,6 +13,18 @@ Built in:
   Parameters are the derivatives at the interval centre in physical units:
   ``level``, ``slope`` (per second), ``curvature`` (second derivative, per
   second squared), then ``d3``, ``d4``, ...
+- ``"first_order"``: ``y_inf + (y0 - y_inf) exp(-(t - t0) / tau)``, an
+  exponential rise or decay to an asymptote (``y0=0`` gives
+  ``A (1 - exp(-lambda t))``).
+- ``"exp"``: ``c + A exp((t - t0) / T)``, growth (T > 0) or decay (T < 0);
+  ``T`` is a reactor period.
+
+The exponential models are fitted by variable projection: for a fixed time
+constant the model is linear in the other parameters, so a one-dimensional
+search over the log time constant with a linear least-squares solve inside
+finds the optimum (numpy only). A time constant is only determined when
+the interval resolves the curve; ``tau_unidentifiable`` flags when it does
+not, and the fit is still returned.
 
 Model specs
 -----------
@@ -36,7 +48,7 @@ result). Consecutive valid samples are treated as one sample apart.
 
 from dataclasses import dataclass, field
 from math import factorial
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
@@ -220,6 +232,182 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
 
 
 # ---------------------------------------------------------------------------
+# Exponential models (variable projection)
+# ---------------------------------------------------------------------------
+
+_GOLD = (np.sqrt(5.0) - 1.0) / 2.0
+
+
+def _varpro_search(sse: Callable[[float], float], lo: float, hi: float,
+                   n_grid: int = 80, iters: int = 60) -> Tuple[float, bool]:
+    """
+    Minimize ``sse(u)`` over ``u`` in ``[lo, hi]``: a log-spaced grid, then a
+    golden-section refinement around the best grid point. Returns the best
+    ``u`` and whether it sits on a bound of the range.
+    """
+    grid = np.linspace(lo, hi, n_grid)
+    vals = np.array([sse(u) for u in grid])
+    i = int(np.nanargmin(vals))
+    a, b = grid[max(i - 1, 0)], grid[min(i + 1, n_grid - 1)]
+    c, d = b - _GOLD * (b - a), a + _GOLD * (b - a)
+    fc, fd = sse(c), sse(d)
+    for _ in range(iters):
+        if fc < fd:
+            b, d, fd = d, c, fc
+            c = b - _GOLD * (b - a)
+            fc = sse(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + _GOLD * (b - a)
+            fd = sse(d)
+    u = 0.5 * (a + b)
+    if sse(u) > vals[i]:
+        u = grid[i]
+    step = grid[1] - grid[0]
+    return float(u), bool(u - lo < 0.5 * step or hi - u < 0.5 * step)
+
+
+def _linear_ls(basis: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float]:
+    coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    r = y - basis @ coef
+    return coef, float(r @ r)
+
+
+def _time_scales(s: np.ndarray, tau_min: Optional[float],
+                 tau_max: Optional[float]) -> Tuple[float, float, float, float]:
+    """(span, median spacing, lower and upper search bounds) for a time constant."""
+    span = float(s.max())
+    dt = float(np.median(np.diff(s))) if len(s) > 1 else 1.0
+    lo = tau_min if tau_min is not None else max(0.5 * dt, span / 1e4)
+    hi = tau_max if tau_max is not None else 100.0 * span
+    return span, dt, lo, hi
+
+
+def _identifiability(flags: Set[str], tau: float, u_tau: float, span: float, dt: float) -> None:
+    """Flag a time constant that the interval cannot determine."""
+    if not np.isfinite(u_tau) or u_tau > 0.5 * abs(tau) or span < 0.5 * abs(tau) or abs(tau) < 5.0 * dt:
+        flags.add("tau_unidentifiable")
+
+
+@registry.fit_models.register("first_order")
+def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, tau_min: Optional[float] = None,
+                    tau_max: Optional[float] = None, uncertainty: str = "ar1") -> FitResult:
+    """
+    First-order approach ``y = y_inf + (y0 - y_inf) exp(-(t - t0) / tau)``.
+
+    ``t0`` is the first valid sample time. It covers exponential rise
+    (``y_inf > y0``) and decay (``y_inf < y0``). Passing ``y0`` fixes the
+    start value; ``y0=0`` gives ``A (1 - exp(-lambda t))`` with
+    ``A = y_inf`` and ``lambda = 1 / tau``.
+
+    Parameters reported: ``y0``, ``y_inf``, ``tau`` (s) and ``lambda`` (1/s),
+    with uncertainties (``u(y0) = 0`` when fixed). Flags: ``tau_at_bound``,
+    ``tau_unidentifiable`` (span shorter than tau/2, tau under five sample
+    spacings, or ``u(tau) > tau/2``), ``too_few_samples``.
+    """
+    names = ["y0", "y_inf", "tau", "lambda"]
+    options = {"y0": y0, "tau_min": tau_min, "tau_max": tau_max, "uncertainty": uncertainty}
+    t = np.asarray(t, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(t) & np.isfinite(y)
+    n_free = 2 if y0 is not None else 3
+    if ok.sum() < n_free + 2:
+        return _empty("first_order", t, names, options, "too_few_samples")
+    t0 = float(t[ok].min())
+    s_ok, y_ok = t[ok] - t0, y[ok]
+    span, dt, lo, hi = _time_scales(s_ok, tau_min, tau_max)
+
+    def basis(s, tau):
+        g = np.exp(-s / tau)
+        return np.column_stack((1.0 - g, g)) if y0 is None else (1.0 - g)[:, None]
+
+    def sse(u):
+        tau = np.exp(u)
+        b = basis(s_ok, tau)
+        yy = y_ok if y0 is None else y_ok - y0 * np.exp(-s_ok / tau)
+        return _linear_ls(b, yy)[1]
+
+    u, at_bound = _varpro_search(sse, np.log(lo), np.log(hi))
+    tau = float(np.exp(u))
+    yy = y_ok if y0 is None else y_ok - y0 * np.exp(-s_ok / tau)
+    coef, _ = _linear_ls(basis(s_ok, tau), yy)
+    y_inf = float(coef[0])
+    y_start = float(coef[1]) if y0 is None else float(y0)
+    s_all = t - t0
+    g_all = np.exp(-s_all / tau)
+    fitted = y_inf + (y_start - y_inf) * g_all
+    resid = np.where(ok, y - fitted, np.nan)
+    # Jacobian in theta = (y_inf, [y0,] log tau).
+    g = np.exp(-s_ok / tau)
+    d_logtau = (y_start - y_inf) * g * s_ok / tau
+    cols = [1.0 - g] + ([g] if y0 is None else []) + [d_logtau]
+    cov_th, phi = sandwich_cov(np.column_stack(cols), resid[ok], uncertainty)
+    # params (y0, y_inf, tau, lambda) = h(theta)
+    if y0 is None:
+        jac_h = np.array([[0, 1, 0], [1, 0, 0], [0, 0, tau], [0, 0, -1.0 / tau]])
+    else:
+        jac_h = np.array([[0, 0], [1, 0], [0, tau], [0, -1.0 / tau]])
+    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
+    _identifiability(flags, tau, u_tau, span, dt)
+    params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
+    return FitResult("first_order", params, cov, fitted, resid, flags, options, phi)
+
+
+@registry.fit_models.register("exp")
+def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: Optional[float] = None,
+            uncertainty: str = "ar1") -> FitResult:
+    """
+    Free exponential ``y = c + A exp((t - t0) / T)``.
+
+    ``T > 0`` is growth and ``T < 0`` decay; for reactor power, ``T`` is the
+    period. ``t0`` is the first valid sample time, so ``A`` is the
+    exponential part at the start. ``|T|`` is searched between ``T_min``
+    (default: the larger of half a sample spacing and span / 300, which
+    keeps ``exp`` finite) and ``T_max`` (default 100 x span), for both signs.
+
+    Parameters reported: ``c``, ``A``, ``T`` (s). Flags as for
+    ``first_order``.
+    """
+    names = ["c", "A", "T"]
+    options = {"T_min": T_min, "T_max": T_max, "uncertainty": uncertainty}
+    t = np.asarray(t, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(t) & np.isfinite(y)
+    if ok.sum() < 5:
+        return _empty("exp", t, names, options, "too_few_samples")
+    t0 = float(t[ok].min())
+    s_ok, y_ok = t[ok] - t0, y[ok]
+    span, dt, lo, hi = _time_scales(s_ok, T_min, T_max)
+    lo = max(lo, span / 300.0) if T_min is None else lo
+
+    def fit_sign(sign):
+        def sse(u):
+            h = np.exp(s_ok / (sign * np.exp(u)))
+            return _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)[1]
+        u, at_bound = _varpro_search(sse, np.log(lo), np.log(hi))
+        return sse(u), sign * float(np.exp(u)), at_bound
+
+    best = min((fit_sign(+1.0), fit_sign(-1.0)), key=lambda r: r[0])
+    _, T, at_bound = best
+    h = np.exp(s_ok / T)
+    coef, _ = _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)
+    c, A = float(coef[0]), float(coef[1])
+    fitted = c + A * np.exp((t - t0) / T)
+    resid = np.where(ok, y - fitted, np.nan)
+    # Jacobian in theta = (c, A, log|T|); d/dlog|T| of A exp(s/T) is -A h s / T.
+    jac = np.column_stack((np.ones_like(h), h, -A * h * s_ok / T))
+    cov_th, phi = sandwich_cov(jac, resid[ok], uncertainty)
+    jac_h = np.diag([1.0, 1.0, T])  # T = sign * exp(log|T|)
+    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
+    _identifiability(flags, T, u_T, span, dt)
+    return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi)
+
+
+# ---------------------------------------------------------------------------
 # Model specs and piecewise fits
 # ---------------------------------------------------------------------------
 
@@ -311,5 +499,5 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     return PiecewiseFit(fitted, list(segs), results)
 
 
-__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_model", "piecewise_fit", "resolve_model",
+__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit", "resolve_model",
            "validate_models", "sandwich_cov", "ar1_apply", "residual_phi"]
