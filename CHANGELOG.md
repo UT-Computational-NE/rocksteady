@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Interval fits and statistics by state (milestone v0.3.0, #1-#6).
 
 ### Added
 
@@ -44,6 +46,13 @@
     plain-text tables.
 - `batch.fit_report(detector, df, models)`: run, segment and report in one
   call (#5).
+- Examples print fit and comparison reports; README section "Intervals,
+  fits and statistics by state" (#6).
+
+### Notes
+
+- `segments_from` takes the `batch.run` output. Override-forced steady
+  runs are not backfilled, and backfill never crosses a disturbance.
 
 ### Changed
 
