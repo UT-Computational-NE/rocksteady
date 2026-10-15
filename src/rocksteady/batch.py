@@ -90,18 +90,19 @@ def fit_report(detector: Detector, df: "pd.DataFrame", models, *, labels=None, b
     """
     Fit and report a record by state, in one call.
 
-    Runs ``detector`` over ``df`` (unless ``labels`` are given), splits the
-    record into segments by state (``segments_from``, with the certifying
-    window backfilled), and fits the signals named in ``models`` (the
-    detector's signal values, or raw columns of ``df``) with
-    ``report.fit_report``. Returns a ``report.Report``.
+    Runs ``detector`` over ``df`` (unless ``labels`` are given: the
+    ``batch.run`` output, or a label sequence), splits the record into
+    segments by state (``segments_from``, with the certifying window
+    backfilled except for override-forced runs), and fits the signals
+    named in ``models`` (the detector's signal values, or raw columns of
+    ``df``) with ``report.fit_report``. Returns a ``report.Report``.
     """
     from .metrics import STATES
     from .report import fit_report as _fit_report
     from .states import segments_from
 
     if labels is None:
-        labels = run(detector, df, t=t)["label"]
+        labels = run(detector, df, t=t)
     segs = segments_from(detector, labels, backfill=backfill, min_samples=min_samples)
     values = signal_values(detector, df)
     extra = [c for c in models if c not in values.columns and c in df.columns]

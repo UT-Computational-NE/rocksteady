@@ -90,8 +90,7 @@ def test_bad_inputs():
 def test_batch_fit_report_runs_detector():
     det, df = actuator_case()
     rep = rs.batch.fit_report(det, df, {"level": {"steady": 0, "transient": "first_order"}, "act": 1})
-    labels = rs.batch.run(det, df)["label"]
-    segs = rs.segments_from(det, labels)
+    segs = rs.segments_from(det, rs.batch.run(det, df))
     assert len(rep["level"].by_interval) == len(segs)
     assert rep["level"].by_interval["state"].tolist() == [s.state.value for s in segs]
     assert "level   fit vs data" in str(rep)
