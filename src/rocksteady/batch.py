@@ -85,6 +85,34 @@ def signal_values(detector: Detector, df: "pd.DataFrame") -> "pd.DataFrame":
     return pd.DataFrame(out, index=df.index, columns=[s.name for s in detector.signals])
 
 
+def fit_report(detector: Detector, df: "pd.DataFrame", models, *, labels=None, backfill: bool = True,
+               min_samples: int = 1, t: Optional[np.ndarray] = None, units=None, states=None, nrmse: str = "mean"):
+    """
+    Fit and report a record by state, in one call.
+
+    Runs ``detector`` over ``df`` (unless ``labels`` are given), splits the
+    record into segments by state (``segments_from``, with the certifying
+    window backfilled), and fits the signals named in ``models`` (the
+    detector's signal values, or raw columns of ``df``) with
+    ``report.fit_report``. Returns a ``report.Report``.
+    """
+    from .metrics import STATES
+    from .report import fit_report as _fit_report
+    from .states import segments_from
+
+    if labels is None:
+        labels = run(detector, df, t=t)["label"]
+    segs = segments_from(detector, labels, backfill=backfill, min_samples=min_samples)
+    values = signal_values(detector, df)
+    extra = [c for c in models if c not in values.columns and c in df.columns]
+    if extra:
+        values = values.join(df[extra].astype(float))
+    if t is None and not hasattr(df.index, "tz_localize"):
+        t = np.arange(len(df)) * detector.timing.sample_period_s
+    return _fit_report(values, segs, models, t=t, dt=detector.timing.sample_period_s, units=units,
+                       states=STATES if states is None else states, nrmse=nrmse)
+
+
 def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
     """Half-open index runs ``[start, stop)`` where ``mask`` is True."""
     m = np.asarray(mask, dtype=bool)

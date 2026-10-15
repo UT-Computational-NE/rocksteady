@@ -36,6 +36,14 @@
   - `stats_by_state` and `stats_by_segment`.
 - `stats.acf_tau`: integrated autocorrelation time pooled over pieces,
   never across their boundaries; FFT-based for long pieces (#4).
+- `rocksteady.report` (#5):
+  - `fit_report` (each signal against its piecewise fit, by state and by
+    interval, with fitted parameters);
+  - `compare_report` (`a` against `b`, by state and by interval);
+  - `Report`, with `by_state` and `by_interval` DataFrames, `fits`, and
+    plain-text tables.
+- `batch.fit_report(detector, df, models)`: run, segment and report in one
+  call (#5).
 
 ### Changed
 
