@@ -1,5 +1,6 @@
 """
-Batch evaluation of a record with a detector, and interval extraction.
+Batch evaluation of a record with a detector, signal values, and interval
+extraction.
 
 The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.
@@ -63,6 +64,27 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     return out
 
 
+def signal_values(detector: Detector, df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    The detector's signal values for every row of ``df``: one column per
+    signal, indexed like ``df``. A row whose signal cannot be read (missing
+    column, non-numeric value) gives NaN for that signal.
+    """
+    import pandas as pd
+
+    cols = list(df.columns)
+    data = df.to_numpy()
+    out = np.full((len(df), len(detector.signals)), np.nan)
+    for i in range(len(df)):
+        sample = dict(zip(cols, data[i]))
+        for j, s in enumerate(detector.signals):
+            try:
+                out[i, j] = s.value(sample)
+            except (KeyError, TypeError, ValueError):
+                pass
+    return pd.DataFrame(out, index=df.index, columns=[s.name for s in detector.signals])
+
+
 def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
     """Half-open index runs ``[start, stop)`` where ``mask`` is True."""
     m = np.asarray(mask, dtype=bool)
@@ -75,21 +97,27 @@ def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
         starts = [0] + starts
     if m[-1]:
         stops = stops + [len(m)]
-    return list(zip(starts, stops))
+    return [(int(a), int(b)) for a, b in zip(starts, stops)]
 
 
-def intervals(labels: "pd.Series", label: Label) -> List[Tuple[int, int]]:
+def label_array(labels: Sequence) -> np.ndarray:
+    """Labels (a Series, a list of ``Label`` or of strings) as an array of label strings."""
+    values = labels.to_numpy() if hasattr(labels, "to_numpy") else labels
+    return np.array([str(v) for v in values], dtype=object)
+
+
+def intervals(labels: Sequence, label: Label) -> List[Tuple[int, int]]:
     """Index runs carrying one label."""
-    return runs(labels.to_numpy() == label.value)
+    return runs(label_array(labels) == label.value)
 
 
-def accepted_intervals(labels: "pd.Series") -> List[Tuple[int, int]]:
+def accepted_intervals(labels: Sequence) -> List[Tuple[int, int]]:
     """
     Runs that reached STEADY, including the HOLDING span that preceded them.
 
     With ``hold_s = 0`` these are simply the STEADY runs.
     """
-    lab = labels.to_numpy()
+    lab = label_array(labels)
     out = []
     for a, b in runs((lab == Label.STEADY.value) | (lab == Label.HOLDING.value)):
         if (lab[a:b] == Label.STEADY.value).any():

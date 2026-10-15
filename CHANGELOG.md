@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `rocksteady.states`: `State` (steady, transient, indeterminate),
+  `Segment`, `segments(labels, backfill_samples=, min_samples=)` and
+  `segments_from(detector, labels)`, which split a labelled record into
+  intervals by state. Steady segments are the accepted intervals,
+  optionally backfilled over their certifying window (#1).
+- `batch.signal_values(detector, df)`: the detector's signal values for
+  every row (#1).
+
+### Changed
+
+- `batch.intervals` and `batch.accepted_intervals` accept any sequence of
+  labels (strings or `Label`), not only a pandas Series, and return plain
+  `int` indices.
+
 ## 0.2.0
 
 ### Packaging
