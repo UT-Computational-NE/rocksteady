@@ -102,6 +102,23 @@
 - `tools/benchmark.py`: scaling of `slope_ar1`, `Detector.update`
   (blocks, channels, window copy), fragmented `acf_tau` and `EventLog` (#25).
 
+- Provenance: `Report.provenance` records the rocksteady version, time origin
+  and sample period, normalized model specs (`fit.normalize_model`) and
+  parameter order per signal and state, uncertainty methods and NRMSE
+  normalization. `batch.fit_report` adds the detector's effective timing,
+  validity policy and components (`batch.detector_provenance`) and the
+  segmentation settings. The tables carry it in `.attrs["rocksteady"]`, and
+  `Report.to_dict()`/`to_json()` export it with the tables and fits (#26).
+- Stable evaluation: `FitResult.t_ref` (when `params` are stated),
+  `FitResult.evaluation` (a stable, JSON-ready form: for `exp` growth the
+  amplitude at the interval end, which cannot underflow), `FitResult.predict(t)`,
+  `FitResult.to_dict()` and `fit.evaluate(model, evaluation, t)`. Interval
+  tables gain `t_ref_s` (#26).
+- Fits flag `time_gaps` when the valid samples are not consecutive. This
+  makes the AR(1) assumption visible: consecutive valid samples are one
+  sample apart. `uncertainty="ar1_time"` (opt-in) models the actual sample
+  positions; `_ar1.ar1_apply(..., steps=)` and `_ar1.gap_steps` support it (#26).
+
 ### Performance
 
 - `stats.slope_ar1` no longer forms dense n x n lag and correlation

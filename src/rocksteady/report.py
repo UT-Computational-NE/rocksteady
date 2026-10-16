@@ -14,19 +14,27 @@ plain-text tables::
     power [kW]   fit vs data   (models: steady poly 0, transient exp, indeterminate exp)
       state             n     time   bias    std    MAE   RMSE  max|e|  NRMSE       r  u(bias)  tau_int  N_eff
       all           8,640  24.00 h   ...
+
+``Report.provenance`` records how the tables were made (software version,
+time origin and sample period, the normalized model spec and parameter
+order per signal and state, the uncertainty methods, NRMSE normalization,
+and, from ``batch.fit_report``, the detector's effective timing and
+validity policy). The DataFrames carry it in ``.attrs["rocksteady"]``, and
+``Report.to_dict()`` / ``to_json()`` export it with the tables and fits.
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
-from .fit import FitResult, PiecewiseFit, piecewise_fit, resolve_model, validate_models
+from .fit import FitResult, PiecewiseFit, normalize_model, piecewise_fit, resolve_model, validate_models
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment, State
 
-FIT_INTERVAL_COLUMNS = ["segment", "state", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "n", "mean",
-                        "std", "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
+FIT_INTERVAL_COLUMNS = ["segment", "state", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
+                        "n", "mean", "std", "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
 _HIDDEN_PARAMS = {"lambda"}  # derived from tau; shown in DataFrames, not in the text table
 _TIME_PARAMS = {"tau", "T"}
 
@@ -61,12 +69,36 @@ class SignalReport:
         return "\n".join(lines)
 
 
+UNCERTAINTY_DESCRIPTION = {
+    "mean_and_bias": "u = std / sqrt(N_eff), N_eff = n dt / tau_int; tau_int from the pair-weighted pooled ACF "
+                     "(stats.acf_tau), within pieces split at segment edges, non-finite samples and time gaps "
+                     "> 1.5 dt; fit residuals for signals, de-meaned errors for comparisons",
+    "parameters": "sandwich covariance (fit.sandwich_cov) per model option 'uncertainty': 'ar1' (default; "
+                  "bias-corrected lag-1 residual autocorrelation, consecutive valid samples one sample apart, "
+                  "flag time_gaps when they are not), 'ar1_time' (AR(1) over sample positions) or 'iid'",
+}
+
+
+def _jsonable(x):
+    """``json.dumps`` default: numpy scalars and arrays, timestamps, sets."""
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, (set, frozenset)):
+        return sorted(x)
+    if hasattr(x, "isoformat"):
+        return x.isoformat()
+    raise TypeError(f"not JSON serializable: {type(x).__name__}")
+
+
 class Report:
     """A set of ``SignalReport`` blocks, printable as text and available as DataFrames."""
 
-    def __init__(self, blocks: Sequence[SignalReport], time_origin=None):
+    def __init__(self, blocks: Sequence[SignalReport], time_origin=None, provenance: Optional[dict] = None):
         self.blocks = list(blocks)
         self.time_origin = time_origin
+        self.provenance: Dict[str, Any] = dict(provenance or {})
 
     def __getitem__(self, name: str) -> SignalReport:
         for b in self.blocks:
@@ -82,14 +114,18 @@ class Report:
         """All blocks' state tables, indexed by (signal, state)."""
         import pandas as pd
 
-        return pd.concat({b.name: b.by_state for b in self.blocks}, names=["signal", "state"])
+        out = pd.concat({b.name: b.by_state for b in self.blocks}, names=["signal", "state"])
+        out.attrs["rocksteady"] = self.provenance
+        return out
 
     @property
     def by_interval(self):
         """All blocks' interval tables, with a ``signal`` column."""
         import pandas as pd
 
-        return pd.concat([b.by_interval.assign(signal=b.name) for b in self.blocks], ignore_index=True)
+        out = pd.concat([b.by_interval.assign(signal=b.name) for b in self.blocks], ignore_index=True)
+        out.attrs["rocksteady"] = self.provenance
+        return out
 
     @property
     def fits(self) -> Dict[str, PiecewiseFit]:
@@ -97,6 +133,24 @@ class Report:
 
     def to_string(self, intervals: bool = True) -> str:
         return "\n\n".join(b.to_string(intervals, self.time_origin) for b in self.blocks)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Provenance, both tables (as records) and every interval's fit (``FitResult.to_dict``)."""
+        by_state = self.by_state.reset_index()
+        return {
+            "provenance": self.provenance,
+            "by_state": by_state.to_dict(orient="records"),
+            "by_interval": self.by_interval.to_dict(orient="records"),
+            "fits": {b.name: [r.to_dict() for r in b.fit_results] for b in self.blocks if b.fit_results},
+        }
+
+    def to_json(self, path=None, **kwargs) -> str:
+        """``to_dict`` as JSON (NaN and Infinity kept as JavaScript literals); written to ``path`` if given."""
+        text = json.dumps(self.to_dict(), default=_jsonable, **{"indent": 1, **kwargs})
+        if path is not None:
+            with open(path, "w") as fh:
+                fh.write(text)
+        return text
 
     def __str__(self) -> str:
         return self.to_string()
@@ -182,7 +236,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
             ss = signal_stats(y[s.slice], r, dt=dt, t=t[s.slice])
             e = r.residuals[np.isfinite(r.residuals)]
             rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
-                         "t_start_s": t[s.start], "t_end_s": t[s.stop - 1], "model": r.label,
+                         "t_start_s": t[s.start], "t_end_s": t[s.stop - 1], "model": r.label, "t_ref_s": r.t_ref,
                          "n": ss.n, "mean": ss.mean, "std": ss.std, "tau_int_s": ss.tau_int_s,
                          "n_eff": ss.n_eff, "u_mean": ss.u_mean,
                          "rmse": float(np.sqrt(np.mean(e * e))) if len(e) else float("nan"),
@@ -195,7 +249,20 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state,
                                    pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS),
                                    units.get(name), pw, pw.results, origin))
-    return Report(blocks, origin)
+    fit_states = [s for s in states if s != "all"]
+    order: Dict[str, Dict[str, List[str]]] = {}
+    for b in blocks:
+        for s, r in zip(segs, b.fit_results):
+            order.setdefault(b.name, {}).setdefault(s.state.value, list(r.params))
+    prov = _provenance("fit_report", origin, dt, nrmse, states, units)
+    prov.update({
+        "error": "e = fit - data",
+        "models": {name: {st: normalize_model(spec, st) for st in fit_states} for name, spec in models.items()},
+        "parameter_order": order,
+        "parameter_reference": "params are stated at t_ref (poly: interval centre; first_order, exp: first valid "
+                               "sample); FitResult.evaluation is the stable form for fit.evaluate",
+    })
+    return Report(blocks, origin, prov)
 
 
 def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a", "b"), t=None,
@@ -214,7 +281,22 @@ def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a"
     per["t_start_s"] = t[starts] if len(per) else np.array([], dtype=float)
     per["t_end_s"] = t[stops - 1] if len(per) else np.array([], dtype=float)
     block = SignalReport(names[0], f"{names[0]} vs {names[1]}", by_state, per, units, time_origin=origin)
-    return Report([block], origin)
+    prov = _provenance("compare_report", origin, dt, nrmse, states, {names[0]: units} if units else None)
+    prov.update({"error": f"e = {names[0]} - {names[1]}", "names": list(names[:2])})
+    return Report([block], origin, prov)
+
+
+def _provenance(kind: str, origin, dt: float, nrmse: str, states: Sequence[str], units) -> Dict[str, Any]:
+    from . import __version__
+
+    return {
+        "kind": kind, "rocksteady_version": __version__,
+        "time": {"unit": "s", "origin": None if origin is None else str(origin), "sample_period_s": float(dt)},
+        "states": [str(s) for s in states], "nrmse": nrmse,
+        "nrmse_normalization": {"mean": "|mean(reference)|", "range": "max - min of reference",
+                                "std": "std of reference", "none": "not computed"}[nrmse],
+        "uncertainty": dict(UNCERTAINTY_DESCRIPTION), "units": dict(units or {}),
+    }
 
 
 # ---------------------------------------------------------------------------

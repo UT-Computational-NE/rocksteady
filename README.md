@@ -310,7 +310,7 @@ The column conventions:
 Neighbouring samples are correlated, so `std/√n` understates the uncertainty of a mean.
 
 - **The correction:** `rocksteady` estimates the integrated autocorrelation time `tau_int` and uses the effective sample count `N_eff = duration / tau_int`. It reports `u(mean) = std/√N_eff` and `u(bias) = std_e/√N_eff`. The spread itself is not corrected.
-- **Pooling:** autocorrelation is estimated within intervals (and across gaps) only, never across their boundaries.
+- **Pooling:** autocorrelation is estimated within contiguous pieces only: never across interval boundaries, non-finite samples or omitted timestamps.
 - **Comparisons:** errors in comparisons are de-meaned but not detrended. A slowly wandering offset is real uncertainty in the bias.
 - **Low N_eff:** `*` marks `N_eff < 10`, where a normal coverage factor is not appropriate.
 
@@ -318,9 +318,36 @@ In Monte Carlo checks with AR(1) noise, `u(mean)` and `u(bias)` were within
 about 1 % of the true uncertainty for φ up to 0.9. Coverage of `τ ± 2u(τ)`
 was 93–97 % (nominal 95.4 %).
 
+Fit parameter uncertainties (`uncertainty="ar1"`, the default) treat
+consecutive valid samples as one sample apart. A fit whose interval has
+missing samples carries the flag `time_gaps`. With up to 60 % of samples
+missing, the level uncertainty stayed within about +10 % of the truth in
+Monte Carlo checks. `uncertainty="ar1_time"` models the actual sample
+positions instead; it was no better calibrated, so it is opt-in.
+
 `stats.mean_with_uncertainty(x, dt, u_type_b=None)` remains for a single
 accepted interval. It detrends with a line and combines an optional Type B
 uncertainty in quadrature.
+
+### Provenance, evaluation and export
+
+`report.provenance` records how a report was made:
+- the rocksteady version;
+- the time origin and sample period;
+- every signal's model spec per state, with defaults filled in (`fit.normalize_model`), and its parameter order;
+- the uncertainty methods and the NRMSE normalization;
+- from `batch.fit_report`, the detector's effective timing, validity policy and components, and the segmentation settings.
+
+The tables carry it in `.attrs["rocksteady"]`. `report.to_json(path)` writes
+it with both tables and every interval's fit (`FitResult.to_dict()`).
+
+Fitted parameters are stated at a reference time `t_ref`: the interval
+centre for `poly`, and the first valid sample for the exponential models. The
+`t_ref_s` column gives it. `FitResult.evaluation` is a numerically stable
+form; for `exp` growth it holds the amplitude at the interval end, which
+cannot underflow. `FitResult.predict(t)`, or
+`fit.evaluate(model, evaluation, t)` on an exported record, reproduces the
+fitted curve at any time on the same clock.
 
 ## Extending rocksteady
 
@@ -361,7 +388,9 @@ callable noise model goes into a spec.
 
 `batch.run` loops over samples in Python. With 30 s blocks and 1 Hz data,
 expect a few tens of microseconds per criterion per sample (about 4 s for
-four hours of six drift criteria).
+four hours of six drift criteria). The AR(1) drift test costs O(n) in the
+number of blocks, so long windows are affordable. `python tools/benchmark.py`
+measures the scaling.
 
 ## References
 
