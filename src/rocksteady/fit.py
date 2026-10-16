@@ -54,8 +54,9 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, 
 
 import numpy as np
 
+from . import _validate as _v
 from . import registry
-from .states import Segment, State
+from .states import Segment, State, check_segments
 
 ModelSpec = Union[int, str, Mapping[str, Any]]
 
@@ -229,6 +230,30 @@ def _poly_names(order: int) -> List[str]:
     return [base[k] if k < 3 else f"d{k}" for k in range(order + 1)]
 
 
+def _check_poly_options(order: int = 0, uncertainty: str = "ar1") -> None:
+    if isinstance(order, bool) or int(order) != order or order < 0:
+        raise ValueError(f"order must be a non-negative integer, got {order!r}")
+    if uncertainty not in ("ar1", "iid"):
+        raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {uncertainty!r}")
+
+
+def _check_time_bounds(lo, hi, lo_name: str, hi_name: str, uncertainty: str = "ar1") -> None:
+    lo = _v.optional_finite(lo, lo_name, positive=True)
+    hi = _v.optional_finite(hi, hi_name, positive=True)
+    _v.ordered(lo, hi, lo_name, hi_name)
+    if uncertainty not in ("ar1", "iid"):
+        raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {uncertainty!r}")
+
+
+def _check_first_order_options(y0=None, tau_min=None, tau_max=None, uncertainty: str = "ar1") -> None:
+    _v.optional_finite(y0, "y0")
+    _check_time_bounds(tau_min, tau_max, "tau_min", "tau_max", uncertainty)
+
+
+def _check_exp_options(T_min=None, T_max=None, uncertainty: str = "ar1") -> None:
+    _check_time_bounds(T_min, T_max, "T_min", "T_max", uncertainty)
+
+
 @registry.fit_models.register("poly")
 def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "ar1") -> FitResult:
     """
@@ -239,8 +264,10 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
     The order is reduced (flag ``order_reduced``) when there are fewer than
     ``order + 2`` valid samples.
     """
-    if int(order) != order or order < 0:
-        raise ValueError(f"poly order must be a non-negative integer, got {order!r}")
+    try:
+        _check_poly_options(order, uncertainty)
+    except ValueError as exc:
+        raise ValueError(f"poly: {exc}") from None
     order = int(order)
     t = np.asarray(t, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -333,6 +360,8 @@ def _time_scales(s: np.ndarray, tau_min: Optional[float],
     dt = float(np.median(np.diff(s))) if len(s) > 1 else 1.0
     lo = tau_min if tau_min is not None else max(0.5 * dt, span / 1e4)
     hi = tau_max if tau_max is not None else 100.0 * span
+    if tau_min is None and lo > hi:  # an explicit upper bound below the default lower one
+        lo = hi
     return span, dt, lo, hi
 
 
@@ -378,6 +407,10 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
     ``tau_unidentifiable`` (span shorter than tau/2, tau under five sample
     spacings, or ``u(tau) > tau/2``), ``too_few_samples``.
     """
+    try:
+        _check_first_order_options(y0, tau_min, tau_max, uncertainty)
+    except ValueError as exc:
+        raise ValueError(f"first_order: {exc}") from None
     names = ["y0", "y_inf", "tau", "lambda"]
     options = {"y0": y0, "tau_min": tau_min, "tau_max": tau_max, "uncertainty": uncertainty}
     t = np.asarray(t, dtype=float)
@@ -448,6 +481,10 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     Parameters reported: ``c``, ``A``, ``T`` (s). Flags as for
     ``first_order``.
     """
+    try:
+        _check_exp_options(T_min, T_max, uncertainty)
+    except ValueError as exc:
+        raise ValueError(f"exp: {exc}") from None
     names = ["c", "A", "T"]
     options = {"T_min": T_min, "T_max": T_max, "uncertainty": uncertainty}
     t = np.asarray(t, dtype=float)
@@ -539,15 +576,46 @@ def resolve_model(spec: ModelSpec, state: Union[State, str, None] = None) -> Tup
     raise ValueError(f"invalid model spec {spec!r}")
 
 
+fit_poly.validate_options = _check_poly_options
+fit_first_order.validate_options = _check_first_order_options
+fit_exp.validate_options = _check_exp_options
+
+
+def check_model_options(name: str, options: Mapping[str, Any]) -> None:
+    """
+    Check a fit model's options before any data: the option names must be
+    parameters of the provider, and a provider with a ``validate_options``
+    attribute checks their values. Raises ``ValueError``.
+    """
+    import inspect
+
+    provider = registry.fit_models.get(name)
+    try:
+        inspect.signature(provider).bind(np.zeros(0), np.zeros(0), **options)
+    except TypeError as exc:
+        raise ValueError(f"{name}: invalid options {sorted(options)} ({exc})") from None
+    check = getattr(provider, "validate_options", None)
+    if check is not None:
+        try:
+            check(**options)
+        except ValueError as exc:
+            raise ValueError(f"{name}: {exc}") from None
+
+
 def validate_models(models: Mapping[str, ModelSpec],
                     states: Sequence[Union[State, str]] = tuple(State)) -> None:
-    """Check a ``{signal: spec}`` mapping resolves for every state; raise ``ValueError`` otherwise."""
+    """
+    Check a ``{signal: spec}`` mapping before any data: every state resolves
+    to a registered model, and its options are valid (``check_model_options``).
+    Errors name the signal, the state, the model and the option.
+    """
     for name, spec in models.items():
         for st in states:
             try:
-                resolve_model(spec, st)
+                model, opts = resolve_model(spec, st)
+                check_model_options(model, opts)
             except (ValueError, KeyError) as exc:
-                raise ValueError(f"model for {name!r}: {exc}") from None
+                raise ValueError(f"model for {name!r} in state {State(st).value!r}: {exc}") from None
 
 
 def fit_model(spec: ModelSpec, t: np.ndarray, y: np.ndarray, state: Union[State, str, None] = None) -> FitResult:
@@ -583,6 +651,7 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     y = np.asarray(y, dtype=float)
     if len(t) != len(y):
         raise ValueError("t and y must have the same length")
+    segs = check_segments(segs, len(y))
     fitted = np.full(len(y), np.nan)
     results = []
     for s in segs:
@@ -593,4 +662,4 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
 
 
 __all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit",
-           "resolve_model", "validate_models", "sandwich_cov", "propagate_cov", "ar1_apply", "residual_phi"]
+           "resolve_model", "validate_models", "check_model_options", "sandwich_cov", "propagate_cov", "ar1_apply", "residual_phi"]

@@ -32,7 +32,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 from .fit import FitResult
-from .states import Segment, State
+from .states import Segment, State, check_segments
 from .stats import acf_tau
 
 NRMSE_NORMS = ("mean", "range", "std", "none")
@@ -203,6 +203,7 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
     """
     import pandas as pd
 
+    segs = check_segments(segs, len(np.asarray(a)))
     rows = {}
     for st in states:
         sel = [(s.start, s.stop) for s in segs if st == ALL or s.state == State(st)]
@@ -218,6 +219,7 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
     """``error_stats`` for each segment. Returns a DataFrame with the segment's index, state, start and stop."""
     import pandas as pd
 
+    segs = check_segments(segs, len(np.asarray(a)))
     rows = []
     for i, s in enumerate(segs):
         es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac)

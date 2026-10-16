@@ -44,6 +44,30 @@
   interval tables of `fit_report` and `compare_report`, keep their columns
   when there are no segments (#21).
 
+### Changed
+
+- Configurations are validated when they are built, whether by constructor
+  or by plain-data spec (the same checks run either way); errors name the
+  component and option (#23):
+  - finite timing values;
+  - non-empty names, and signal references in disturbances and overrides;
+  - finite, ordered bounds and positive limits;
+  - positive-integer averaging lengths;
+  - non-negative event durations;
+  - `FloorLatch` floor > 0 and release factor >= 1.
+
+  Some configurations accepted before are now rejected.
+- A criterion result with a negative or non-finite uncertainty or coverage
+  factor, or a non-positive limit, is undecided. It used to pass.
+  `CriterionResult.invalid_reason` says why (#23).
+- Fit search bounds (`tau_min`/`tau_max`, `T_min`/`T_max`) must be finite,
+  positive and ordered. `validate_models` checks option names and values
+  before any data is processed, using `fit.check_model_options` and each
+  provider's `validate_options` (#23).
+- `states.check_segments` rejects segments outside the record or overlapping
+  each other, and allows partial coverage. `piecewise_fit` and the
+  statistics use it (#23).
+
 ## 0.3.0
 
 Interval fits and statistics by state (milestone v0.3.0, #1-#6).

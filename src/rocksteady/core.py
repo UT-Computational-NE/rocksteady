@@ -44,6 +44,8 @@ from typing import Callable, Dict, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
+from . import _validate as _v
+
 
 class Label(str, Enum):
     DISTURBED = "disturbed"
@@ -82,6 +84,11 @@ class Signal:
     name: str
     source: Source
 
+    def __post_init__(self):
+        _v.name(self.name, "Signal name")
+        if not (isinstance(self.source, str) and self.source) and not callable(self.source):
+            raise ValueError(f"Signal {self.name!r}: source must be a column name or a callable, got {self.source!r}")
+
     def value(self, sample: Mapping[str, float]) -> float:
         if isinstance(self.source, str):
             return float(sample[self.source])
@@ -118,22 +125,42 @@ class CriterionResult:
         return self.statistic - self.k * self.uncertainty
 
     @property
+    def invalid_reason(self) -> Optional[str]:
+        """
+        Why this result cannot decide anything, or None. A criterion or a
+        callable noise model may return values no window can be judged on:
+        non-finite numbers, a negative uncertainty or coverage factor, or a
+        limit that is not positive.
+        """
+        for label, value in (("statistic", self.statistic), ("uncertainty", self.uncertainty),
+                             ("limit", self.limit), ("k", self.k)):
+            if not np.isfinite(value):
+                return f"{label} is not finite ({value!r})"
+        if self.uncertainty < 0:
+            return f"uncertainty is negative ({self.uncertainty!r})"
+        if self.k < 0:
+            return f"coverage factor k is negative ({self.k!r})"
+        if not self.limit > 0:
+            return f"limit is not positive ({self.limit!r})"
+        return None
+
+    @property
     def ratio(self) -> float:
         """
         Margin ratio: below 1 passes with margin, above 1 is not demonstrated.
 
-        Infinite when the statistic or its uncertainty is not finite, or the
-        limit is not positive, so the worst ratio over several criteria does
-        not depend on their order.
+        Infinite for an invalid result (see ``invalid_reason``), so the worst
+        ratio over several criteria does not depend on their order.
         """
-        if not (np.isfinite(self.statistic) and np.isfinite(self.uncertainty)) or not self.limit > 0:
+        if self.invalid_reason is not None:
             return np.inf
         r = self.upper / self.limit
         return np.inf if np.isnan(r) else float(r)
 
     @property
     def outcome(self) -> Outcome:
-        if not np.isfinite(self.statistic) or not np.isfinite(self.uncertainty):
+        """PASS, FAIL or UNDECIDED; an invalid result is always UNDECIDED, never a pass."""
+        if self.invalid_reason is not None:
             return Outcome.UNDECIDED
         if self.upper <= self.limit:
             return Outcome.PASS
@@ -251,10 +278,12 @@ class Timing:
     min_block_coverage: float = 0.5
 
     def __post_init__(self):
-        if not self.sample_period_s > 0:
-            raise ValueError("sample_period_s must be positive")
-        if self.settle_s < 0 or self.hold_s < 0 or self.max_gap_s < 0:
-            raise ValueError("settle_s, hold_s and max_gap_s must be non-negative")
+        _v.finite(self.sample_period_s, "Timing.sample_period_s", positive=True)
+        _v.finite(self.block_s, "Timing.block_s", positive=True)
+        _v.finite(self.window_s, "Timing.window_s", positive=True)
+        for opt in ("settle_s", "hold_s", "max_gap_s"):
+            _v.finite(getattr(self, opt), f"Timing.{opt}", nonnegative=True)
+        _v.finite(self.min_block_coverage, "Timing.min_block_coverage")
         if not 0 < self.min_block_coverage <= 1:
             raise ValueError("min_block_coverage must be in (0, 1]")
         if self.block_s < self.sample_period_s * (1 - 1e-9):
@@ -382,10 +411,16 @@ class Detector:
             if dupes:
                 hint = " (give each criterion a distinct name=)" if kind == "criterion" else ""
                 raise ValueError(f"duplicate {kind} names {dupes}{hint}")
-        names = {s.name for s in self.signals}
         for c in self.criteria:
-            if c.signal not in names:
-                raise ValueError(f"criterion {c.name!r} refers to unknown signal {c.signal!r}")
+            _v.name(getattr(c, "name", None), f"{type(c).__name__} name")
+        names = {s.name for s in self.signals}
+        for kind, items in (("criterion", self.criteria), ("disturbance", self.disturbances),
+                            ("override", self.overrides)):
+            for item in items:
+                ref = getattr(item, "signal", None)
+                if (kind == "criterion" or ref is not None) and ref not in names:
+                    raise ValueError(f"{kind} {getattr(item, 'name', type(item).__name__)!r} refers to unknown "
+                                     f"signal {ref!r}; signals are {sorted(names)}")
         need = max([3] + [getattr(c, "min_blocks", 3) for c in self.criteria])
         if timing.n_blocks < need:
             raise ValueError(f"window_s must span at least {need} blocks for these criteria "

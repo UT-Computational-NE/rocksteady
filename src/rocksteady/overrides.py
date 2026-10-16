@@ -10,6 +10,7 @@ from typing import Optional
 
 import numpy as np
 
+from . import _validate as _v
 from . import registry
 from .core import Context, Label, Override
 
@@ -41,6 +42,11 @@ class FloorLatch(Override):
 
     def __init__(self, signal: str, floor: float, release_factor: float = 2.0,
                  label: Label = Label.STEADY, name: str = "floor_latch"):
+        what = f"FloorLatch {name!r}"
+        floor = _v.finite(floor, f"{what}: floor", positive=True)
+        release_factor = _v.finite(release_factor, f"{what}: release_factor")
+        if release_factor < 1:
+            raise ValueError(f"{what}: release_factor must be >= 1 (release above the floor), got {release_factor!r}")
         self.signal, self.floor, self.release_factor = signal, floor, release_factor
         self.label, self.name = Label(label), name
         self.reset()
