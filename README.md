@@ -19,7 +19,7 @@ the data?*
 ## Install
 
 ```
-pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.2.0"
+pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.3.0"
 ```
 
 Python 3.10 or later, with numpy and pandas. pandas is used only by
@@ -70,8 +70,8 @@ detector = rs.build_detector(spec)
 
 Runnable examples with synthetic data are in [`examples/`](examples):
 
-- [`thermal_drift.py`](examples/thermal_drift.py): channels relaxing to a setpoint, with an event log, settling time and hold time.
-- [`actuator_steps.py`](examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown rule.
+- [`thermal_drift.py`](examples/thermal_drift.py): channels relaxing to a setpoint, with an event log, settling time and hold time. It then fits the approach to the new setpoint with a first-order model (τ recovered as 600 ± 1 s) and compares two channels by state.
+- [`actuator_steps.py`](examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown rule. It ends with a fit report by state.
 
 ## Concepts
 
@@ -160,13 +160,109 @@ then ignore the missing samples, and a window is evaluated only if every
 block keeps at least `min_block_coverage` of its samples.
 `rocksteady.batch.run` takes sample times from a `DatetimeIndex` when there is one.
 
-## Reporting a steady value
+## Intervals, fits and statistics by state
 
-`rocksteady.stats.mean_with_uncertainty(x, dt, u_type_b=None)` gives the mean over an
-accepted interval and its uncertainty. The Type A part uses an effective
-sample count `N_eff = duration / tau_int`, so correlated noise does not
-understate it. A Type B uncertainty, if given, is combined in quadrature.
-`low_effective_sample` flags `N_eff < 10`.
+Once a record is labelled, `rocksteady` can split it into intervals, fit
+each interval, and report statistics by state.
+
+```python
+report = rs.batch.fit_report(
+    detector, df,
+    models={"level": {"steady": 0, "transient": "first_order"}, "actuator": 1},
+)
+print(report)          # tables by state and by interval
+report.by_state        # DataFrame indexed by (signal, state)
+report.by_interval     # DataFrame, one row per (signal, interval)
+```
+
+```
+level   fit vs data   (models: steady poly 0, transient first_order, indeterminate first_order)
+  state              n       time    bias    std    MAE   RMSE  max|e|  NRMSE       r  u(bias)  tau_int  N_eff
+  all            7,200     2.00 h  +0.000  2.438  1.223  2.438  23.136  0.78%  1.0000   0.2183     58 s    125
+  steady         6,457  107.6 min  +0.000  2.527  1.261  2.526  23.136  0.80%  1.0000   0.2434     60 s    108
+  transient        743   12.4 min  +0.000  1.453  0.891  1.453   6.138  0.51%  1.0000   0.0533      1 s    743
+```
+
+### States
+
+`rs.segments(labels)` (or `rs.segments_from(detector, batch.run(...))`)
+splits a record into contiguous intervals, each in one state:
+
+| State | From the labels |
+|---|---|
+| steady | a run that reached `steady`, with any `holding` just before it |
+| transient | `disturbed`, `settling`, and `holding` that never confirmed |
+| indeterminate | `indeterminate` outside steady intervals: start of record, data gaps, windows too noisy to decide |
+
+The "all" rows cover every sample.
+
+Labels are causal: a sample is called steady only once the window *ending*
+at it passes. `segments_from` therefore **backfills** each steady
+interval over the window that certified it: the `W - 1` samples before
+its first steady sample, for a window of `W` samples. It does not backfill runs that
+an override forced to steady (they were not certified by data), and it
+never backfills across a disturbance. During slow approaches, labels can
+flicker between `settling` and `indeterminate`. `min_samples=` merges runs
+shorter than that into their neighbours.
+
+### Fit models
+
+The model for each signal is chosen per state. An integer is a polynomial
+order. Any other model is named, or given as `{"model": ..., **options}`:
+
+| Model | Form | Parameters |
+|---|---|---|
+| `poly` (order *p*) | polynomial on scaled time | `level`, `slope`, `curvature`, … at the interval centre |
+| `first_order` | `y∞ + (y0 − y∞)·exp(−(t − t0)/τ)` | `y0`, `y_inf`, `tau`, `lambda`; `y0=0` gives `A(1 − exp(−λt))` |
+| `exp` | `c + A·exp((t − t0)/T)` | `c`, `A`, `T` (growth T > 0, decay T < 0; a reactor period) |
+
+Missing `indeterminate` entries fall back to `transient`. The exponential
+models are fitted by variable projection, with numpy only. Their time
+constants come with uncertainties corrected for autocorrelation.
+
+`tau_unidentifiable` flags a time constant the interval cannot determine:
+- the interval is shorter than τ/2, so the curve looks like a line;
+- τ is under five samples, so it looks like a step;
+- or u(τ) > τ/2.
+
+### The fit is the detrend
+
+Noise statistics (`std`, `tau_int`, `N_eff`) come from the residuals about
+each interval's own model, so **the model decides what counts as noise**:
+- **Too simple:** a constant fitted to a drifting interval leaves the drift in the "noise". The tell-tale is a `tau_int` much longer than the sensor's time constant.
+- **Too flexible:** an overly flexible model absorbs slow noise and makes the uncertainty look better than it is.
+
+Choose models from the physics.
+
+### Three kinds of statistics
+
+| What | Error | Columns |
+|---|---|---|
+| One signal, per interval (`metrics.signal_stats`) | residual about the fit | mean, std, `tau_int`, `N_eff`, `u(mean)`, fitted parameters ± u |
+| Live vs fit, per state (`report.fit_report`) | `e = fit − data` | n, time, bias, std, MAE, RMSE, max\|e\|, NRMSE, r, `u(bias)`, `tau_int`, `N_eff` |
+| Live vs live, per state (`report.compare_report`) | `e = a − b` | the same |
+
+The column conventions:
+- **Bias:** `mean(e)`.
+- **NRMSE:** normalised by `|mean(b)|` by default; `nrmse="range"`, `"std"` or `"none"` are also available. With long shutdowns the mean is small, so `"range"` may read better.
+- **r:** Pearson's correlation, `—` when either series is constant (an order-0 fit over one plateau).
+
+### Uncertainty and autocorrelation
+
+Neighbouring samples are correlated, so `std/√n` understates the uncertainty of a mean.
+
+- **The correction:** `rocksteady` estimates the integrated autocorrelation time `tau_int` and uses the effective sample count `N_eff = duration / tau_int`. It reports `u(mean) = std/√N_eff` and `u(bias) = std_e/√N_eff`. The spread itself is not corrected.
+- **Pooling:** autocorrelation is estimated within intervals (and across gaps) only, never across their boundaries.
+- **Comparisons:** errors in comparisons are de-meaned but not detrended. A slowly wandering offset is real uncertainty in the bias.
+- **Low N_eff:** `*` marks `N_eff < 10`, where a normal coverage factor is not appropriate.
+
+In Monte Carlo checks with AR(1) noise, `u(mean)` and `u(bias)` were within
+about 1 % of the true uncertainty for φ up to 0.9. Coverage of `τ ± 2u(τ)`
+was 93–97 % (nominal 95.4 %).
+
+`stats.mean_with_uncertainty(x, dt, u_type_b=None)` remains for a single
+accepted interval. It detrends with a line and combines an optional Type B
+uncertainty in quadrature.
 
 ## Extending rocksteady
 
@@ -198,6 +294,7 @@ rs.criterion("range", signal="T1", limit=0.2, noise=0.01)
 | `registry.overrides` | `Override.apply(ctx) -> Label or None` (and `reset`) |
 | `registry.signal_builders` | callable returning a source (a column name or `sample -> float`) |
 | `registry.slope_methods` | `(t, y, **options) -> (b, u_b, k)` |
+| `registry.fit_models` | `(t, y, **options) -> FitResult` |
 
 Spec entries may also be built objects. That is how a criterion with a
 callable noise model goes into a spec.

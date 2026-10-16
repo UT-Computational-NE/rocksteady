@@ -7,6 +7,12 @@ level-dependent measurement-noise model (``DeviationCriterion``), the
 actuator may drift slowly without counting as a move (linear model), and
 a shutdown below a floor is steady by definition (``FloorLatch``).
 
+Afterwards the record is split into steady, transient and indeterminate
+intervals, and each signal is fitted interval by interval: the level with
+a constant when steady and a first-order approach when transient, the
+actuator with a line. The report gives fit statistics by state and by
+interval, with uncertainties corrected for autocorrelation.
+
 Run: python examples/actuator_steps.py [--plot]
 """
 
@@ -64,6 +70,14 @@ for a, b in rs.batch.accepted_intervals(out["label"]):
     forced = out["forced_by"].iloc[a:b].dropna().unique().tolist()
     print(f"steady {a:5d}-{b:5d} s  level {m['mean']:8.3f} +/- {m['u_mean']:.3f}"
           + (f"  (forced by {forced[0]})" if forced else ""))
+
+# --- fits and statistics by state -------------------------------------------
+report = rs.batch.fit_report(
+    detector, df,
+    models={"level": {"steady": 0, "transient": "first_order"}, "actuator": 1},
+)
+print()
+print(report)
 
 if "--plot" in sys.argv:
     import matplotlib.pyplot as plt

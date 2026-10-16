@@ -150,7 +150,7 @@ def test_model_specs():
             resolve_model(bad, "transient")
     with pytest.raises(ValueError, match="a state is needed"):
         resolve_model(by_state)
-    validate_models({"power": by_state, "rod": 1})
+    validate_models({"power": by_state, "valve": 1})
     with pytest.raises(ValueError, match="model for 'power'"):
         validate_models({"power": {"steady": 0}})
     assert "poly" in registry.fit_models

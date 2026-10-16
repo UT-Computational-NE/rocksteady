@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Interval fits and statistics by state (milestone v0.3.0, #1-#6).
 
 ### Added
 
@@ -47,6 +49,18 @@
     plain-text tables.
 - `batch.fit_report(detector, df, models)`: run, segment and report in one
   call (#5).
+- Examples print fit and comparison reports; README section "Intervals,
+  fits and statistics by state" (#6).
+
+### Notes
+
+- `segments_from` takes the `batch.run` output and backfills exactly the
+  certifying window (`window_samples - 1` samples). Override-forced
+  steady runs are not backfilled, and backfill never crosses a
+  disturbance.
+- Fit parameter covariances do not depend on parameter units. Parameters
+  the data cannot determine get infinite variance and the flag
+  `rank_deficient`.
 
 ### Changed
 

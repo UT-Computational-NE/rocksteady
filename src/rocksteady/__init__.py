@@ -25,7 +25,7 @@ from .factory import build_detector, criterion, disturbance, override
 from .states import Segment, State, segments, segments_from
 from . import batch, factory, fit, metrics, registry, report, signals, states, stats
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override",
