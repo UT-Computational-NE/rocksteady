@@ -125,11 +125,11 @@ class FitResult:
         Infinite or undetermined values are kept as inf/NaN.
         """
         return {
-            "model": self.model, "label": self.label, "options": dict(self.options),
-            "uncertainty": self.options.get("uncertainty", "ar1"),
+            "model": self.model, "label": self.label, "options": _plain(dict(self.options)),
+            "uncertainty": _plain(self.options.get("uncertainty", "ar1")),
             "param_order": list(self.params), "params": {k: float(v) for k, v in self.params.items()},
             "u": self.u, "cov": None if self.cov is None else np.asarray(self.cov, dtype=float).tolist(),
-            "t_ref": float(self.t_ref), "evaluation": dict(self.evaluation), "flags": sorted(self.flags),
+            "t_ref": float(self.t_ref), "evaluation": _plain(dict(self.evaluation)), "flags": sorted(self.flags),
             "phi": float(self.phi), "n_params": int(self.n_params),
         }
 
@@ -147,6 +147,19 @@ class FitResult:
         if self.model == "poly":
             return f"poly {self.options.get('order', 0)}"
         return self.model
+
+
+def _plain(x: Any) -> Any:
+    """``x`` with NumPy scalars and arrays (also inside dicts, lists and tuples) as plain Python values."""
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, Mapping):
+        return {k: _plain(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_plain(v) for v in x]
+    return x
 
 
 def _empty(model: str, t: np.ndarray, names: Sequence[str], options: Dict[str, Any], flag: str) -> FitResult:
@@ -322,7 +335,7 @@ def normalize_model(spec: ModelSpec, state: Union[State, str, None] = None) -> D
     full = {p.name: p.default for p in params
             if p.default is not inspect.Parameter.empty and p.kind is not inspect.Parameter.VAR_KEYWORD}
     full.update(opts)
-    return {"model": name, **full}
+    return _plain({"model": name, **full})
 
 
 def _flag_undetermined(cov: Optional[np.ndarray], flags: Set[str]) -> None:
