@@ -125,9 +125,13 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         certifying window. Overrides ``backfill_samples``.
     backfill_tol_s : float, optional
         How far a sample's age (``t[a] - t[i]``) may exceed ``backfill_s``
-        and still count as inside the window. Ages are compared with the
-        detector's rounding to whole sample periods, so the natural value
-        is half a sample period (what ``segments_from`` passes). Default:
+        and still count as inside the window: a sample is inside when its
+        age is at most ``backfill_s + backfill_tol_s``, boundary included
+        (with 0, exactly the samples at most ``backfill_s`` old). Ages are
+        compared with the detector's rounding to whole sample periods, so
+        the natural value is half a sample period (what ``segments_from``
+        passes): a sample less than half a period beyond the window rounds
+        into it, one more than half a period beyond does not. Default:
         half the median spacing of ``t``. The tolerance is in seconds and
         does not depend on the clock origin, so epoch timestamps behave
         like times from zero.
@@ -155,10 +159,11 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
     for a, b in accepted_intervals(lab):
         start = a
         if by_time and not forced_at[a]:
-            # Inside the window: age t[a] - t[i] < backfill_s + tol. The margin (half a sample period)
-            # dwarfs the rounding of epoch-sized times, so the result does not depend on the clock origin.
-            edge = times[a] - (backfill_s + backfill_tol_s)
-            start = max(int(np.searchsorted(times[: a + 1], edge, side="right")), prev_stop)
+            # Inside the window: age t[a] - t[i] <= backfill_s + tol, boundary included. A few ulps of
+            # t[a] absorb the rounding of the subtraction (2e-7 s at epoch times), so that tol = 0 keeps
+            # a sample exactly backfill_s old; they are far below any sample period.
+            edge = times[a] - (backfill_s + backfill_tol_s) - 4.0 * np.spacing(abs(times[a]))
+            start = max(int(np.searchsorted(times[: a + 1], edge, side="left")), prev_stop)
         elif backfill_samples and not forced_at[a]:
             start = max(a - int(backfill_samples), prev_stop)
         if start < a:
