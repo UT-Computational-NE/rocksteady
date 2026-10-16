@@ -182,7 +182,8 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     norm = {"mean": abs(float(bv.mean())), "range": float(np.ptp(bv)),
             "std": float(bv.std(ddof=1)) if n > 1 else float("nan"), "none": float("nan")}[nrmse]
     sa, sb = float(av.std()), float(bv.std())
-    r = float(np.mean((av - av.mean()) * (bv - bv.mean())) / (sa * sb)) if sa > 0 and sb > 0 else float("nan")
+    constant = np.ptp(av) == 0 or np.ptp(bv) == 0  # std of identical values can round to ~1e-16, not 0
+    r = float("nan") if constant else float(np.mean((av - av.mean()) * (bv - bv.mean())) / (sa * sb))
     tau = acf_tau([a[lo:hi] - b[lo:hi] - bias for lo, hi in runs], dt, max_lag_frac, pair_weighted=True)
     n_eff = max(n * dt / tau, 1.0)
     return ErrorStats(

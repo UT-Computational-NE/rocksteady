@@ -39,6 +39,14 @@
   `pair_weighted=True` weights each lag by its share of within-piece pairs.
   This gives the time constant for the uncertainty of a mean pooled over
   separate pieces, and the metrics use it for `N_eff`.
+- `rocksteady.report` (#5):
+  - `fit_report` (each signal against its piecewise fit, by state and by
+    interval, with fitted parameters);
+  - `compare_report` (`a` against `b`, by state and by interval);
+  - `Report`, with `by_state` and `by_interval` DataFrames, `fits`, and
+    plain-text tables.
+- `batch.fit_report(detector, df, models)`: run, segment and report in one
+  call (#5).
 
 ### Changed
 
