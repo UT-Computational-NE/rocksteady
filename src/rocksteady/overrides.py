@@ -21,8 +21,12 @@ class FloorLatch(Override):
 
     Latches when the signal goes from at or above ``floor`` to below it.
     Releases when the signal exceeds ``release_factor * floor`` or when a
-    disturbance begins. While latched the label is ``label`` (STEADY by
-    default: a system below its operating floor is steady by definition).
+    disturbance begins; a disturbance beginning takes priority, so a crossing
+    on the same sample does not latch. A later downward crossing, including
+    one while a disturbance is still active, latches again (the detector
+    reports DISTURBED until the disturbance ends). While latched the label
+    is ``label`` (STEADY by default: a system below its operating floor is
+    steady by definition).
 
     Parameters
     ----------
@@ -47,10 +51,11 @@ class FloorLatch(Override):
 
     def apply(self, ctx: Context) -> Optional[Label]:
         v = ctx.values[self.signal]
-        if v < self.floor and self._prev >= self.floor:
-            self._latched = True
-        elif v > self.release_factor * self.floor or ctx.disturbance_onset:
+        if ctx.disturbance_onset or v > self.release_factor * self.floor:
+            # A disturbance beginning releases the latch, even on the sample where the signal crosses the floor.
             self._latched = False
+        elif v < self.floor and self._prev >= self.floor:
+            self._latched = True
         self._prev = v
         return self.label if self._latched else None
 

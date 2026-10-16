@@ -24,6 +24,10 @@
   timestamp gaps left samples out of the record. Counting stored rows
   could reach back past the window into rejected data. `segments` gains
   `t=` and `backfill_s=` (#17).
+- `FloorLatch`: a disturbance beginning releases the latch even on the
+  sample where the signal crosses the floor. Previously the crossing
+  latched first, and the label was forced steady straight after the
+  disturbance, skipping the settling time (#18).
 
 ## 0.3.0
 

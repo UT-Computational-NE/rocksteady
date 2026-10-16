@@ -71,3 +71,24 @@ def test_detector_treats_a_missing_channel_in_spread_as_missing():  # #16
                       timing=rs.Timing(block_s=1, window_s=3))
     labels = [det.update(t, {"a": 1.0, "b": np.nan, "c": 2.0}).label for t in range(3)]
     assert labels == [Label.INDETERMINATE] * 3
+
+
+def test_floor_latch_disturbance_onset_takes_priority():  # #18
+    o = rs.FloorLatch("p", floor=1.0)
+    o.apply(_ctx(2.0))
+    assert o.apply(_ctx(0.0, onset=True)) is None  # coincident onset and crossing: no latch
+    assert o.apply(_ctx(0.0)) is None  # still low, but no new crossing
+    o.apply(_ctx(3.0))
+    assert o.apply(_ctx(0.0)) == Label.STEADY  # an ordinary crossing latches
+    assert o.apply(_ctx(0.0, onset=True)) is None  # onset while latched releases
+    o.apply(_ctx(2.5))
+    assert o.apply(_ctx(0.5)) == Label.STEADY  # re-arms after release
+
+
+def test_floor_latch_does_not_skip_settling_after_a_coincident_disturbance():  # #18
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 1, 0)],
+                      disturbances=[rs.EventLog([(1, 0)])], overrides=[rs.FloorLatch("x", floor=1)],
+                      timing=rs.Timing(block_s=1, window_s=3, settle_s=10))
+    verdicts = [det.update(0, {"x": 2}), det.update(1, {"x": 0}), det.update(2, {"x": 0})]
+    assert verdicts[1].label == Label.DISTURBED
+    assert verdicts[2].label != Label.STEADY and verdicts[2].forced_by is None
