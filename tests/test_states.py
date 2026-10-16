@@ -127,7 +127,11 @@ def test_golden_actuator_case():
         prev = b
     assert n_forced >= 1  # the floor latch forces at least one steady run in this case
     assert {s.state for s in plain} == set(State)
-    assert rs.segments_from(det, out, backfill=False) == plain
+    unfilled = rs.segments_from(det, out, backfill=False)
+    assert [(s.start, s.stop, s.state) for s in unfilled] == [(s.start, s.stop, s.state) for s in plain]
+    # Provenance survives segmentation: a segment is forced exactly when an override forced one of its labels.
+    assert [s.forced for s in unfilled] == [bool(forced[s.slice].any()) for s in unfilled]
+    assert any(s.forced for s in unfilled) and not any(s.forced for s in plain)
     with pytest.warns(UserWarning, match="labels only"):
         rs.segments_from(det, labels)
 
@@ -197,12 +201,11 @@ def test_backfill_stays_inside_the_certifying_window_with_omitted_timestamps():
     assert steady[0].start == 5 and (df["x"].iloc[steady[0].start:] == 0).all()
 
 
-@pytest.mark.parametrize("missing", [[6, 7], [6], [4, 7], [3, 6], [5, 7]])
+@pytest.mark.parametrize("missing", [[6, 7], [6], [4, 7], [3, 6], [5, 7], [3, 6, 9], [9], [9, 12], [12, 13], [15]])
 def test_omitted_timestamps_and_explicit_nan_rows_agree(missing):
-    """Same certifying window start and end; several gaps, including gaps inside blocks.
+    """Same steady intervals, start and end; gaps before and inside the run, inside blocks and at the end.
 
-    A tolerated missing row *after* the run starts is labelled indeterminate and splits the
-    run, while an omitted timestamp does not; that labelling policy is #24."""
+    A tolerated missing row inside a steady run is bridged (#24), as an omitted timestamp is."""
     full_t = np.arange(16.0)
     x = np.where(full_t < 2, 50.0, 0.0)
     explicit = pd.DataFrame({"x": np.where(np.isin(full_t, missing), np.nan, x)})
@@ -211,14 +214,14 @@ def test_omitted_timestamps_and_explicit_nan_rows_agree(missing):
     det = _gap_detector(window_s=6, max_gap_s=3, min_block_coverage=0.5)
     out_e = rs.batch.run(det, explicit, t=full_t)
     out_o = rs.batch.run(det, omitted, t=full_t[keep])
-    segs_e = rs.segments_from(det, out_e)
-    segs_o = rs.segments_from(det, out_o)
-    te = _steady_times([s for s in segs_e], full_t)
-    to = _steady_times([s for s in segs_o], full_t[keep])
-    assert to and te
+    assert set(out_e["reason"][np.isin(full_t, missing)]) == {"missing"}
+    te = _steady_times(rs.segments_from(det, out_e), full_t)
+    to = _steady_times(rs.segments_from(det, out_o), full_t[keep])
+    assert to and len(to) == len(te)  # low block coverage may split both the same way
     # Same physical window start; the explicit record may start on a NaN row the omitted one does not have.
     assert to[0][0] == min(tt for tt in full_t[keep] if tt >= te[0][0])
-    assert to[0][1] == te[0][1]
+    assert [b for _, b in to] == [b for _, b in te]
+    assert [a for a, _ in to[1:]] == [a for a, _ in te[1:]]
 
 
 def test_time_backfill_arguments():

@@ -16,7 +16,7 @@ if TYPE_CHECKING:  # pandas is imported where it is used, so the streaming detec
     import pandas as pd
 
 
-RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by")
+RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by", "reason")
 
 
 def _unique_columns(df) -> list:
@@ -51,9 +51,12 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     Returns
     -------
     DataFrame indexed like ``df`` with columns ``label``, ``eta``,
-    ``limiting``, ``since_disturbance_s``, ``forced_by``, optionally one
-    ``ratio_<criterion>`` per criterion (NaN where it was not evaluated),
-    and ``t_s``. The columns are the same for an empty record.
+    ``limiting``, ``since_disturbance_s``, ``forced_by`` (the override that
+    forced the label, or None where the label follows from the data),
+    ``reason`` (``core.Reason`` value: why the row has its label),
+    optionally one ``ratio_<criterion>`` per criterion (NaN where it was
+    not evaluated), and ``t_s``. The columns are the same for an empty
+    record.
     """
     import pandas as pd
 
@@ -69,7 +72,8 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     for i in range(len(df)):
         v = detector.update(float(t[i]), dict(zip(cols, data[i])))
         row = {"label": v.label.value, "eta": v.eta, "limiting": v.limiting,
-               "since_disturbance_s": v.since_disturbance_s, "forced_by": v.forced_by}
+               "since_disturbance_s": v.since_disturbance_s, "forced_by": v.forced_by,
+               "reason": None if v.reason is None else v.reason.value}
         if with_results:
             for name, r in v.results.items():
                 row[f"ratio_{name}"] = r.ratio

@@ -19,6 +19,12 @@ window) extends each steady segment back over that window. Runs that an
 override forced to steady (for example a zero-power rule after a
 shutdown) were not certified by data and are not backfilled, and backfill
 never crosses a disturbance.
+
+A sample the detector skipped as missing (reason ``missing`` or
+``unreadable``, within ``Timing.max_gap_s``) is bridged: inside a steady
+run it belongs to the steady segment, as an omitted timestamp would. Fits
+and statistics ignore its non-finite values. Elsewhere it stays
+indeterminate.
 """
 
 import warnings
@@ -28,8 +34,8 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-from .batch import accepted_intervals, label_array
-from .core import Detector, Label
+from .batch import accepted_intervals, label_array, runs
+from .core import MISSING_REASONS, Detector, Label
 
 
 class State(str, Enum):
@@ -43,11 +49,17 @@ class State(str, Enum):
 
 @dataclass(frozen=True)
 class Segment:
-    """Samples ``[start, stop)`` in one state."""
+    """
+    Samples ``[start, stop)`` in one state.
+
+    ``forced`` is True when an override forced the label of at least one of
+    its samples, so the state is not (only) certified by data.
+    """
 
     start: int
     stop: int
     state: State
+    forced: bool = False
 
     def __len__(self) -> int:
         return self.stop - self.start
@@ -91,9 +103,24 @@ def _merge_short(runs_: List[Segment], min_samples: int) -> List[Segment]:
     return runs_
 
 
+def _bridged(lab: np.ndarray, bridge: Optional[Sequence[bool]]) -> np.ndarray:
+    """Labels with each bridged run between two passing samples given the label before it."""
+    if bridge is None:
+        return lab
+    mask = np.asarray(bridge, dtype=bool)
+    if len(mask) != len(lab):
+        raise ValueError("bridge must have one entry per label")
+    passing = (Label.STEADY.value, Label.HOLDING.value)
+    out = lab.copy()
+    for a, b in runs(mask):
+        if a > 0 and b < len(lab) and lab[a - 1] in passing and lab[b] in passing:
+            out[a:b] = lab[a - 1]
+    return out
+
+
 def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 1,
              forced: Optional[Sequence[bool]] = None, t: Optional[Sequence[float]] = None,
-             backfill_s: Optional[float] = None) -> List[Segment]:
+             backfill_s: Optional[float] = None, bridge: Optional[Sequence[bool]] = None) -> List[Segment]:
     """
     Split a labelled record into segments by state.
 
@@ -116,19 +143,26 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
     forced : sequence of bool, optional
         True where an override forced the label (``batch.run``'s
         ``forced_by`` is set). A steady run that starts forced was not
-        certified by a window of data, so it is not backfilled.
+        certified by a window of data, so it is not backfilled. Segments
+        holding a forced sample have ``forced=True``.
     t, backfill_s : sample times (s) and a backfill duration, optional
         Backfill by time instead of by count: each steady segment extends
         back to the first stored sample at or after ``t[a] - backfill_s``.
         Use this when samples can be missing from the record (timestamp
         gaps the detector tolerated), so that backfill covers exactly the
         certifying window. Overrides ``backfill_samples``.
+    bridge : sequence of bool, optional
+        True where the detector skipped a missing sample it tolerated
+        (``batch.run``'s ``reason`` is ``missing`` or ``unreadable``). A
+        run of such samples between two samples of the same accepted run
+        (HOLDING or STEADY on both sides) joins that run, so the run is not
+        split by a short gap; at the edge of a run they stay indeterminate.
     """
     if backfill_samples < 0 or min_samples < 1:
         raise ValueError("backfill_samples must be >= 0 and min_samples >= 1")
     if (t is None) != (backfill_s is None):
         raise ValueError("give both t and backfill_s to backfill by time")
-    lab = label_array(labels)
+    lab = _bridged(label_array(labels), bridge)
     forced_at = np.zeros(len(lab), dtype=bool) if forced is None else np.asarray(forced, dtype=bool)
     if len(forced_at) != len(lab):
         raise ValueError("forced must have one entry per label")
@@ -164,6 +198,8 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         if len(st):
             out.append(st)
         pos = st.stop
+    if forced_at.any():
+        out = [Segment(s.start, s.stop, s.state, True) if forced_at[s.slice].any() else s for s in out]
     return out
 
 
@@ -176,14 +212,19 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
     ``run_output`` is the DataFrame returned by ``batch.run`` (preferred).
     Its ``forced_by`` column keeps override-forced steady runs from being
     backfilled, and its ``t_s`` column makes backfill follow time, which is
-    exact when the record has tolerated timestamp gaps. With labels only,
+    exact when the record has tolerated timestamp gaps. Its ``reason``
+    column bridges tolerated missing samples inside steady runs, so NaN
+    rows and omitted timestamps give the same segments. With labels only,
     backfill counts ``evaluated_samples - 1`` stored samples, and a warning
     is issued for a detector with overrides, because forced runs cannot
     then be told apart.
     """
     forced = None
     times = None
+    bridge = None
     if hasattr(run_output, "columns"):
+        if "reason" in run_output.columns:
+            bridge = run_output["reason"].isin([r.value for r in MISSING_REASONS]).to_numpy()
         if "forced_by" in run_output.columns:
             forced = run_output["forced_by"].notna().to_numpy()
         if "t_s" in run_output.columns:
@@ -198,8 +239,8 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
     n_back = max(detector.timing.evaluated_samples - 1, 0) if backfill else 0
     if times is not None:
         return segments(labels, min_samples=min_samples, forced=forced, t=times,
-                        backfill_s=n_back * detector.timing.sample_period_s)
-    return segments(labels, backfill_samples=n_back, min_samples=min_samples, forced=forced)
+                        backfill_s=n_back * detector.timing.sample_period_s, bridge=bridge)
+    return segments(labels, backfill_samples=n_back, min_samples=min_samples, forced=forced, bridge=bridge)
 
 
 def check_segments(segs: Sequence[Segment], n: int, *, require_full: bool = False) -> List[Segment]:

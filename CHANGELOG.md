@@ -67,6 +67,24 @@
 - `states.check_segments` rejects segments outside the record or overlapping
   each other, and allows partial coverage. `piecewise_fit` and the
   statistics use it (#23).
+- The missing-sample hold policy is specified: a tolerated missing sample
+  is `indeterminate` (reason `missing` or `unreadable`) whatever the
+  undecided options, and the hold clock pauses over it, as over omitted
+  timestamps. `segments`/`segments_from` bridge such samples inside a
+  steady run (`segments(..., bridge=)`, from the `reason` column), so NaN
+  rows and omitted timestamps give the same steady intervals. A steady run
+  is no longer split by tolerated NaN rows (#24).
+
+### Added
+
+- Verdict reasons: `Verdict.reason` (`rs.Reason`) says why a sample has its
+  label (certified, forced, disturbance, settling time, failed, undecided,
+  invalid result, low coverage, insufficient history, missing, unreadable,
+  gap reset). `batch.run` returns it as a `reason` column (#24).
+- Forced-versus-certified provenance downstream: `Segment.forced` is True
+  when an override forced a label in the segment, and the interval tables
+  of `fit_report`, `compare_report` and `stats_by_segment` carry a `forced`
+  column (#24).
 
 ## 0.3.0
 

@@ -28,6 +28,10 @@ Labels
 - HOLDING: all criteria pass, but for less than the hold time.
 - STEADY: all criteria pass and the hold time has elapsed.
 
+Each verdict also carries a ``Reason`` saying why it has its label (a
+window certified by data, a forced label, missing data, low block
+coverage, too little history, and so on).
+
 Everything but STEADY (and HOLDING, which is steady awaiting confirmation)
 is "transient" in the two-class sense. The detector is causal; batch
 evaluation of a record gives exactly the online labels.
@@ -56,6 +60,56 @@ class Label(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+class Reason(str, Enum):
+    """
+    Why a verdict has its label.
+
+    CERTIFIED       all criteria pass on the window (HOLDING or STEADY).
+    FORCED          an override forced the label (``Verdict.forced_by``).
+    DISTURBANCE     a disturbance is active (DISTURBED).
+    SETTLING_TIME   the quiet time after a disturbance, or at the start of a
+                    record, has not yet elapsed.
+    FAILED          at least one criterion fails beyond its uncertainty.
+    UNDECIDED       statistical overlap: the uncertainty straddles a limit.
+    INVALID_RESULT  a criterion returned an unusable result
+                    (``CriterionResult.invalid_reason``).
+    LOW_COVERAGE    some block has too few valid samples
+                    (``Timing.min_block_coverage``).
+    INSUFFICIENT_HISTORY  fewer samples than one window since the start or
+                    the last reset.
+    MISSING         this sample is non-finite, and the gap is tolerated.
+    UNREADABLE      a signal could not be computed from this sample (a
+                    missing key or a bad value), and the gap is tolerated.
+    GAP_RESET       missing data (this sample, or a jump in time before it)
+                    exceeded ``Timing.max_gap_s`` and cleared the history.
+
+    The last three label a sample INDETERMINATE whatever the hold policy.
+    UNDECIDED, INVALID_RESULT and LOW_COVERAGE may keep the last decided
+    label when ``Timing.hold_when_undecided`` is set.
+    """
+
+    CERTIFIED = "certified"
+    FORCED = "forced"
+    DISTURBANCE = "disturbance"
+    SETTLING_TIME = "settling_time"
+    FAILED = "failed"
+    UNDECIDED = "undecided"
+    INVALID_RESULT = "invalid_result"
+    LOW_COVERAGE = "low_coverage"
+    INSUFFICIENT_HISTORY = "insufficient_history"
+    MISSING = "missing"
+    UNREADABLE = "unreadable"
+    GAP_RESET = "gap_reset"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+#: Reasons for a tolerated missing sample. The hold clock pauses over them,
+#: and ``states.segments`` bridges them inside a steady run.
+MISSING_REASONS = frozenset({Reason.MISSING, Reason.UNREADABLE})
 
 
 class Outcome(str, Enum):
@@ -251,8 +305,10 @@ class Timing:
     settle_s        : quiet time required after a disturbance before a window
                       is evaluated, in addition to the window itself.
     hold_s          : continuous passing time before HOLDING becomes STEADY.
-    hold_when_undecided : an undecided window keeps the last decided state
-                      instead of returning INDETERMINATE.
+    hold_when_undecided : an undecided window (statistical overlap, an
+                      invalid criterion result, or low block coverage) keeps
+                      the last decided state instead of returning
+                      INDETERMINATE.
     undecided_counts_toward_hold : when an undecided window keeps a passing
                       state, it also advances the hold clock. If False, the
                       hold clock pauses until a window passes again.
@@ -261,6 +317,17 @@ class Timing:
                       unreadable samples, and the samples implied by a jump
                       in ``t`` of more than 1.5 sample periods. With 0 (the
                       default) any missing data resets the detector.
+
+    Missing data and the hold clock: a tolerated missing sample is labelled
+    INDETERMINATE (reason MISSING or UNREADABLE) whatever the two undecided
+    options, because no window is evaluated on it. The hold clock *pauses*:
+    it neither resets nor advances, for missing samples and for omitted
+    timestamps alike, so after a tolerated gap a passing run resumes where
+    it stopped and STEADY comes ``hold_s`` of passing windows after the
+    first, plus the gap. ``states.segments`` bridges such samples inside a
+    steady run, so a gap given as NaN rows and the same gap given as
+    omitted timestamps yield the same steady intervals. The quiet time
+    after a disturbance does advance over a tolerated gap.
     min_block_coverage : when gaps are tolerated, the smallest fraction of
                       valid samples every block in the window must have for
                       the criteria to be evaluated; otherwise the window is
@@ -343,6 +410,7 @@ class Verdict:
     results: Dict[str, CriterionResult] = field(default_factory=dict)
     since_disturbance_s: float = 0.0
     forced_by: Optional[str] = None
+    reason: Optional[Reason] = None
 
     @property
     def eta(self) -> float:
@@ -505,24 +573,29 @@ class Detector:
     def update(self, t: float, sample: Mapping[str, float]) -> Verdict:
         """Add one sample at time ``t`` (seconds) and return the verdict."""
         dt = self.timing.sample_period_s
+        gap_reset = False
         if self._last_t is not None:
             step = t - self._last_t
             if not step > 0:
                 raise ValueError(f"times must increase: t={t} follows t={self._last_t}")
             if step > 1.5 * dt:
-                self._tolerate_gap(int(round(step / dt)) - 1)
+                gap_reset = not self._tolerate_gap(int(round(step / dt)) - 1)
 
+        missing = None
         try:
             values = {s.name: s.value(sample) for s in self.signals}
             row = np.fromiter(values.values(), dtype=float, count=len(values))
-            missing = not np.all(np.isfinite(row))
+            if not np.all(np.isfinite(row)):
+                missing = Reason.MISSING
         except (KeyError, TypeError, ValueError):
-            missing = True
-        if missing:
+            missing = Reason.UNREADABLE
+        if missing is not None:
+            # No window is evaluated: the hold clock pauses (``_record`` is not called).
             tolerated = self._tolerate_gap(1)
             self._last_t = t
             since_s = self._since_disturbance * dt if tolerated else 0.0
-            return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
+            return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s,
+                           reason=missing if tolerated else Reason.GAP_RESET)
         self._last_t = t
         self._gap_run = 0
         self._push(row)
@@ -543,7 +616,7 @@ class Detector:
 
         if disturbed:
             self._record(False)
-            return Verdict(t, Label.DISTURBED, since_disturbance_s=0.0)
+            return Verdict(t, Label.DISTURBED, since_disturbance_s=0.0, reason=Reason.DISTURBANCE)
 
         for name, label in forced:
             if label is not None:
@@ -551,43 +624,48 @@ class Detector:
                 self._record(passing if label != Label.INDETERMINATE else None)
                 if passing:
                     label = self._passing_label()
-                return Verdict(t, label, since_disturbance_s=since_s, forced_by=name)
+                return Verdict(t, label, since_disturbance_s=since_s, forced_by=name, reason=Reason.FORCED)
 
         if self._count < self._n:
-            return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
+            return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s,
+                           reason=Reason.GAP_RESET if gap_reset else Reason.INSUFFICIENT_HISTORY)
         if self._since_disturbance < self.timing.quiet_samples:
             if not self._seen_disturbance:
                 # Start of a record: the settling wait applies, but nothing was disturbed.
                 self._record(None)
-                return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s)
+                return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s, reason=Reason.SETTLING_TIME)
             self._record(False)
-            return Verdict(t, Label.SETTLING, since_disturbance_s=since_s)
+            return Verdict(t, Label.SETTLING, since_disturbance_s=since_s, reason=Reason.SETTLING_TIME)
 
         blocks = self._blocks()
         results = {}
         if blocks is None:
             outcomes = [Outcome.UNDECIDED]
+            undecided = Reason.LOW_COVERAGE
         else:
             evaluated = [c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
             outcomes = [r.outcome for r in evaluated]  # every criterion counts, whatever its name
             results = {c.name: r for c, r in zip(self.criteria, evaluated)}
+            invalid = any(r.invalid_reason is not None for r in evaluated)
+            undecided = Reason.INVALID_RESULT if invalid else Reason.UNDECIDED
 
         if Outcome.FAIL in outcomes:
             self._record(False)
-            return Verdict(t, Label.SETTLING, results, since_s)
+            return Verdict(t, Label.SETTLING, results, since_s, reason=Reason.FAILED)
         if all(o == Outcome.PASS for o in outcomes):
             self._record(True)
-            return Verdict(t, self._passing_label(), results, since_s)
+            return Verdict(t, self._passing_label(), results, since_s, reason=Reason.CERTIFIED)
         # Undecided.
         if self.timing.hold_when_undecided and self._last_decided is not None:
             if not (self._last_decided and not self.timing.undecided_counts_toward_hold):
                 self._record(self._last_decided)
-            return Verdict(t, self._passing_label() if self._last_decided else Label.SETTLING, results, since_s)
+            label = self._passing_label() if self._last_decided else Label.SETTLING
+            return Verdict(t, label, results, since_s, reason=undecided)
         self._record(None)
-        return Verdict(t, Label.INDETERMINATE, results, since_s)
+        return Verdict(t, Label.INDETERMINATE, results, since_s, reason=undecided)
 
 
 __all__ = [
-    "Label", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
+    "Label", "Reason", "MISSING_REASONS", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
     "Context", "Timing", "Verdict", "Detector", "Source",
 ]
