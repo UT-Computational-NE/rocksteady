@@ -150,8 +150,35 @@ def fit_report(detector: Detector, df: "pd.DataFrame", models, *, labels=None, b
     for c in models:  # raw columns, added by position: values has exactly one row per row of df
         if c not in values.columns and c in df.columns:
             values[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
-    return _fit_report(values, segs, models, t=t, dt=detector.timing.sample_period_s, units=units,
-                       states=STATES if states is None else states, nrmse=nrmse)
+    rep = _fit_report(values, segs, models, t=t, dt=detector.timing.sample_period_s, units=units,
+                      states=STATES if states is None else states, nrmse=nrmse)
+    rep.provenance["detector"] = detector_provenance(detector)
+    rep.provenance["segmentation"] = {"backfill": bool(backfill), "min_samples": int(min_samples),
+                                      "backfill_to": "certifying window (evaluated span), by time",
+                                      "forced_runs_backfilled": False, "missing_samples_bridged": True}
+    return rep
+
+
+def detector_provenance(detector: Detector) -> dict:
+    """
+    How ``detector`` labels a record, as plain data: effective timing
+    (after rounding to whole samples), validity policy, and the names and
+    types of its signals, criteria, disturbances and overrides.
+    """
+    tm = detector.timing
+    return {
+        "timing": {**tm.effective, "settle_s": tm.settle_s, "hold_s": tm.hold_s},
+        "validity_policy": {
+            "max_gap_s": tm.max_gap_s, "min_block_coverage": tm.min_block_coverage,
+            "grid_tolerance": tm.grid_tolerance, "hold_when_undecided": tm.hold_when_undecided,
+            "undecided_counts_toward_hold": tm.undecided_counts_toward_hold,
+            "missing_samples": "indeterminate; hold clock paused",
+        },
+        "signals": [s.name for s in detector.signals],
+        "criteria": [{"name": c.name, "type": type(c).__name__, "signal": c.signal} for c in detector.criteria],
+        "disturbances": [{"name": getattr(d, "name", None), "type": type(d).__name__} for d in detector.disturbances],
+        "overrides": [{"name": getattr(o, "name", None), "type": type(o).__name__} for o in detector.overrides],
+    }
 
 
 def _report_times(detector: Detector, df, labels, t):

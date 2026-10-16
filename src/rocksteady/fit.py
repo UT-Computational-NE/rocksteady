@@ -43,9 +43,30 @@ where J is the Jacobian (the basis, for a polynomial), R the AR(1)
 correlation matrix with the residuals' bias-corrected lag-1
 autocorrelation, and M the residual-maker matrix. This generalizes
 ``stats.slope_ar1``. ``uncertainty="iid"`` uses R = I (the classical
-result). Consecutive valid samples are treated as one sample apart.
-The covariance is invariant to parameter units, and parameters the data
-cannot determine get infinite variance (flag ``rank_deficient``).
+result). The covariance is invariant to parameter units, and parameters
+the data cannot determine get infinite variance (flag ``rank_deficient``).
+
+Missing samples: the valid samples of an interval need not be
+consecutive (NaN samples, omitted timestamps). ``"ar1"`` treats
+consecutive valid samples as one sample apart, and such fits carry the
+flag ``time_gaps``. In Monte Carlo checks (AR(1) noise with phi up to
+0.97, 30-60 % of samples missing in runs of 20) the level uncertainty
+stayed within about +10 % of the true spread: slightly conservative.
+``uncertainty="ar1_time"`` instead takes the spacing in whole periods of
+the median spacing and uses ``R = phi^|s_i - s_j|`` over the sample
+positions ``s``, with ``phi`` from adjacent pairs only. It was no better
+calibrated in those checks, so it is opt-in. Without gaps the two agree.
+
+Evaluation and serialization
+----------------------------
+``FitResult.params`` are for display, at the reference time ``t_ref``
+(the interval centre for ``poly``, the first valid sample for the
+exponential models). ``FitResult.evaluation`` is a numerically stable,
+JSON-ready representation (for ``exp`` growth, the amplitude at the
+interval end, which cannot underflow), with its own ``t_ref``.
+``FitResult.predict(t)`` and ``evaluate(model, evaluation, t)`` evaluate
+the curve at any times on the same clock; ``FitResult.to_dict()`` holds
+everything needed to do so later.
 """
 
 from dataclasses import dataclass, field
@@ -55,11 +76,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, 
 import numpy as np
 
 from . import _validate as _v
-from ._ar1 import ar1_apply  # re-exported: rocksteady.fit.ar1_apply
+from ._ar1 import ar1_apply, gap_steps  # ar1_apply is re-exported: rocksteady.fit.ar1_apply
 from . import registry
 from .states import Segment, State, check_segments
 
 ModelSpec = Union[int, str, Mapping[str, Any]]
+UNCERTAINTY_METHODS = ("ar1", "ar1_time", "iid")
 
 _STATE_KEYS = {s.value for s in State}
 
@@ -88,6 +110,28 @@ class FitResult:
     options: Dict[str, Any] = field(default_factory=dict)
     phi: float = float("nan")  # lag-1 autocorrelation used for ``cov``
     n_params: int = 0  # free parameters fitted (degrees of freedom used)
+    t_ref: float = float("nan")  # time (same clock as t) at which ``params`` are stated
+    evaluation: Dict[str, Any] = field(default_factory=dict)  # stable form for ``predict``; see ``evaluate``
+
+    def predict(self, t) -> np.ndarray:
+        """The fitted curve at times ``t`` (same clock as the fit's ``t``)."""
+        return evaluate(self.model, self.evaluation, t)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        A JSON-ready record of the fit: model, options, parameter order,
+        values, uncertainties and covariance (same order), reference time,
+        the stable evaluation form, flags, and the AR(1) coefficient.
+        Infinite or undetermined values are kept as inf/NaN.
+        """
+        return {
+            "model": self.model, "label": self.label, "options": dict(self.options),
+            "uncertainty": self.options.get("uncertainty", "ar1"),
+            "param_order": list(self.params), "params": {k: float(v) for k, v in self.params.items()},
+            "u": self.u, "cov": None if self.cov is None else np.asarray(self.cov, dtype=float).tolist(),
+            "t_ref": float(self.t_ref), "evaluation": dict(self.evaluation), "flags": sorted(self.flags),
+            "phi": float(self.phi), "n_params": int(self.n_params),
+        }
 
     @property
     def u(self) -> Dict[str, float]:
@@ -115,30 +159,42 @@ def _empty(model: str, t: np.ndarray, names: Sequence[str], options: Dict[str, A
 # ---------------------------------------------------------------------------
 
 
-def residual_phi(e: np.ndarray, n_params: int, phi_max: float = 0.995) -> float:
+def residual_phi(e: np.ndarray, n_params: int, phi_max: float = 0.995,
+                 steps: Optional[np.ndarray] = None) -> float:
     """
     Lag-1 autocorrelation of residuals, bias-corrected for ``n_params``
     fitted parameters and clipped to ``[0, phi_max]``.
 
     The correction ``(m + (m + 2) phi) / n`` reduces to Marriott and Pope's
     ``(1 + 3 phi) / n`` for a mean and to the ``(2 + 4 phi) / n`` used by
-    ``stats.slope_ar1`` for a line.
+    ``stats.slope_ar1`` for a line. With ``steps`` (sample spacing, see
+    ``_ar1.gap_steps``), only pairs one sample apart count, scaled to
+    ``n - 1`` pairs.
     """
     n = len(e)
     ee = float(e @ e)
     if n < 3 or ee <= 0:
         return 0.0
-    r1 = float(e[1:] @ e[:-1]) / ee
+    if steps is None:
+        r1 = float(e[1:] @ e[:-1]) / ee
+    else:
+        adjacent = np.asarray(steps) == 1.0
+        if not adjacent.any():
+            return 0.0  # no adjacent pairs: the lag-1 correlation cannot be estimated
+        r1 = float(e[1:][adjacent] @ e[:-1][adjacent]) / ee * (n - 1) / int(adjacent.sum())
     return float(min(max(r1 + (n_params + (n_params + 2) * r1) / n, 0.0), phi_max))
 
 
 def sandwich_cov(jac: np.ndarray, e: np.ndarray, method: str = "ar1", phi_max: float = 0.995,
-                 rcond: float = 1e-10) -> Tuple[Optional[np.ndarray], float]:
+                 rcond: float = 1e-10, steps: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], float]:
     """
     Parameter covariance ``(J'J)^-1 J'(s^2 R)J (J'J)^-1`` for residuals ``e``.
 
-    ``method`` is ``"ar1"`` or ``"iid"`` (R = I). Returns ``(cov, phi)``;
-    ``cov`` is None when there are no residual degrees of freedom.
+    ``method`` is ``"ar1"`` (consecutive samples), ``"ar1_time"`` (AR(1)
+    over the sample positions given by ``steps``, see ``_ar1.gap_steps``;
+    the same as ``"ar1"`` when ``steps`` is None) or ``"iid"`` (R = I).
+    Returns ``(cov, phi)``; ``cov`` is None when there are no residual
+    degrees of freedom.
 
     The columns of J are scaled to unit norm and J is factorized by SVD, so
     the result does not depend on the parameters' units. A direction whose
@@ -150,16 +206,16 @@ def sandwich_cov(jac: np.ndarray, e: np.ndarray, method: str = "ar1", phi_max: f
     n, m = jac.shape
     if n <= m:
         return None, float("nan")
-    if method not in ("ar1", "iid"):
-        raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {method!r}")
+    _check_uncertainty(method)
     norms = np.linalg.norm(jac, axis=0)
     norms = np.where(norms > 0, norms, 1.0)  # an all-zero column shows up as a zero singular value
     u, sv, vt = np.linalg.svd(jac / norms, full_matrices=False)
     keep = sv > rcond * sv.max() if sv.max() > 0 else np.zeros(m, dtype=bool)
     rank = int(keep.sum())
-    phi = residual_phi(e, max(rank, 1), phi_max) if method == "ar1" else 0.0
+    steps = steps if method == "ar1_time" else None
+    phi = residual_phi(e, max(rank, 1), phi_max, steps) if method != "iid" else 0.0
     uk = u[:, keep]
-    g = uk.T @ ar1_apply(uk, phi)  # U'RU over the determined directions
+    g = uk.T @ ar1_apply(uk, phi, steps)  # U'RU over the determined directions
     tr_mr = n - float(np.trace(g))
     if tr_mr <= 0:
         return None, phi
@@ -194,6 +250,81 @@ def propagate_cov(cov: Optional[np.ndarray], jac: np.ndarray) -> Optional[np.nda
     return out
 
 
+def _steps(t_valid: np.ndarray, flags: Set[str]) -> Optional[np.ndarray]:
+    """
+    Spacing of the valid samples in whole periods of their median spacing
+    (``_ar1.gap_steps``), or None when they are consecutive. Flags
+    ``time_gaps`` when they are not.
+    """
+    if len(t_valid) < 2:
+        return None
+    steps = gap_steps(t_valid, float(np.median(np.diff(t_valid))))
+    if steps is not None:
+        flags.add("time_gaps")
+    return steps
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+
+def _eval_poly(ev: Mapping[str, Any], t: np.ndarray) -> np.ndarray:
+    x = (t - ev["t_ref"]) / ev["t_scale"]
+    coef = np.asarray(ev["coef"], dtype=float)
+    return (x[:, None] ** np.arange(len(coef))) @ coef
+
+
+def _eval_first_order(ev: Mapping[str, Any], t: np.ndarray) -> np.ndarray:
+    return ev["y_inf"] + (ev["y0"] - ev["y_inf"]) * np.exp(-(t - ev["t_ref"]) / ev["tau"])
+
+
+def _eval_exp(ev: Mapping[str, Any], t: np.ndarray) -> np.ndarray:
+    return ev["c"] + ev["B"] * np.exp((t - ev["t_ref"]) / ev["T"])
+
+
+_EVALUATORS: Dict[str, Callable[[Mapping[str, Any], np.ndarray], np.ndarray]] = {
+    "poly": _eval_poly, "first_order": _eval_first_order, "exp": _eval_exp}
+
+
+def evaluate(model: str, evaluation: Mapping[str, Any], t) -> np.ndarray:
+    """
+    Evaluate a fitted model from its stable form (``FitResult.evaluation``,
+    also in ``FitResult.to_dict()``) at times ``t`` on the fit's clock.
+
+    Built in:
+
+    - ``poly``: ``sum_k coef_k ((t - t_ref) / t_scale)^k``;
+    - ``first_order``: ``y_inf + (y0 - y_inf) exp(-(t - t_ref) / tau)``;
+    - ``exp``: ``c + B exp((t - t_ref) / T)``, with ``t_ref`` the interval
+      end for growth, so ``B`` does not underflow.
+
+    A registered model provides its own as an ``evaluate(evaluation, t)``
+    attribute of the provider.
+    """
+    if not evaluation:
+        raise ValueError(f"{model}: no evaluation form (the fit failed, or the model does not provide one)")
+    fn = _EVALUATORS.get(model) or getattr(registry.fit_models.get(model), "evaluate", None)
+    if fn is None:
+        raise ValueError(f"{model}: the model does not provide an evaluate(evaluation, t)")
+    return fn(evaluation, np.atleast_1d(np.asarray(t, dtype=float)))
+
+
+def normalize_model(spec: ModelSpec, state: Union[State, str, None] = None) -> Dict[str, Any]:
+    """
+    A model spec as ``{"model": name, **options}`` with every option of the
+    provider filled in with its default, for the record of a result.
+    """
+    import inspect
+
+    name, opts = resolve_model(spec, state)
+    params = list(inspect.signature(registry.fit_models.get(name)).parameters.values())[2:]
+    full = {p.name: p.default for p in params
+            if p.default is not inspect.Parameter.empty and p.kind is not inspect.Parameter.VAR_KEYWORD}
+    full.update(opts)
+    return {"model": name, **full}
+
+
 def _flag_undetermined(cov: Optional[np.ndarray], flags: Set[str]) -> None:
     if cov is not None and np.isinf(np.diag(cov)).any():
         flags.add("rank_deficient")
@@ -212,16 +343,19 @@ def _poly_names(order: int) -> List[str]:
 def _check_poly_options(order: int = 0, uncertainty: str = "ar1") -> None:
     if isinstance(order, bool) or int(order) != order or order < 0:
         raise ValueError(f"order must be a non-negative integer, got {order!r}")
-    if uncertainty not in ("ar1", "iid"):
-        raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {uncertainty!r}")
+    _check_uncertainty(uncertainty)
+
+
+def _check_uncertainty(uncertainty) -> None:
+    if uncertainty not in UNCERTAINTY_METHODS:
+        raise ValueError(f"uncertainty must be one of {UNCERTAINTY_METHODS}, got {uncertainty!r}")
 
 
 def _check_time_bounds(lo, hi, lo_name: str, hi_name: str, uncertainty: str = "ar1") -> None:
     lo = _v.optional_finite(lo, lo_name, positive=True)
     hi = _v.optional_finite(hi, hi_name, positive=True)
     _v.ordered(lo, hi, lo_name, hi_name)
-    if uncertainty not in ("ar1", "iid"):
-        raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {uncertainty!r}")
+    _check_uncertainty(uncertainty)
 
 
 def _check_first_order_options(y0=None, tau_min=None, tau_max=None, uncertainty: str = "ar1") -> None:
@@ -270,7 +404,8 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
     scale = np.array([factorial(k) / half**k for k in range(p + 1)])
     names = _poly_names(p)
     params = {k: float(v) for k, v in zip(names, scale * coef)}
-    cov_c, phi = sandwich_cov(basis[ok], resid[ok], uncertainty)
+    steps = _steps(t[ok], flags)
+    cov_c, phi = sandwich_cov(basis[ok], resid[ok], uncertainty, steps=steps)
     cov = propagate_cov(cov_c, np.diag(scale))
     _flag_undetermined(cov, flags)
     if p < order:  # report the requested parameters, missing ones as NaN
@@ -281,7 +416,8 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
             full[: p + 1, : p + 1] = cov
             cov = full
     options["order_used"] = p
-    return FitResult("poly", params, cov, fitted, resid, flags, options, phi, p + 1)
+    evaluation = {"t_ref": centre, "t_scale": half, "coef": [float(c) for c in coef]}
+    return FitResult("poly", params, cov, fitted, resid, flags, options, phi, p + 1, centre, evaluation)
 
 
 # ---------------------------------------------------------------------------
@@ -426,21 +562,22 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
     g = np.exp(-s_ok / tau)
     d_logtau = (y_start - y_inf) * g * s_ok / tau
     cols = [1.0 - g] + ([g] if y0 is None else []) + [d_logtau]
-    cov_th, phi = sandwich_cov(np.column_stack(cols), resid[ok], uncertainty)
+    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    cov_th, phi = sandwich_cov(np.column_stack(cols), resid[ok], uncertainty, steps=_steps(t[ok], flags))
     # params (y0, y_inf, tau, lambda) = h(theta)
     if y0 is None:
         jac_h = np.array([[0, 1, 0], [1, 0, 0], [0, 0, tau], [0, 0, -1.0 / tau]])
     else:
         jac_h = np.array([[0, 0], [1, 0], [0, tau], [0, -1.0 / tau]])
     cov = propagate_cov(cov_th, jac_h)
-    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
     _flag_undetermined(cov, flags)
     if _negligible_amplitude(y_start - y_inf, y_ok):
         _undetermine(cov, [2, 3], flags)  # tau, lambda
     u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, tau, u_tau, span, dt)
     params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
-    return FitResult("first_order", params, cov, fitted, resid, flags, options, phi, n_free)
+    evaluation = {"t_ref": t0, "y0": y_start, "y_inf": y_inf, "tau": tau}
+    return FitResult("first_order", params, cov, fitted, resid, flags, options, phi, n_free, t0, evaluation)
 
 
 @registry.fit_models.register("exp")
@@ -499,21 +636,23 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     coef, _ = _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)
     c, B = float(coef[0]), float(coef[1])  # B: the exponential part at the reference time
     A = B * float(np.exp(-r0 / T))  # ... and at the interval start (may underflow for steep growth)
-    fitted = c + B * np.exp((t - t0 - r0) / T)
+    t_b = t0 + r0  # the stable reference: the interval end for growth, the start for decay
+    fitted = c + B * np.exp((t - t_b) / T)
     resid = np.where(ok, y - fitted, np.nan)
     # Jacobian in theta = (c, B, log|T|); d/dlog|T| of B exp((s - r0)/T) is -B h (s - r0) / T.
     jac = np.column_stack((np.ones_like(h), h, -B * h * (s_ok - r0) / T))
-    cov_th, phi = sandwich_cov(jac, resid[ok], uncertainty)
+    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    cov_th, phi = sandwich_cov(jac, resid[ok], uncertainty, steps=_steps(t[ok], flags))
     # (c, A, T) from theta: A = B exp(-r0/T), T = sign * exp(log|T|).
     jac_h = np.array([[1.0, 0.0, 0.0], [0.0, float(np.exp(-r0 / T)), A * r0 / T], [0.0, 0.0, T]])
     cov = propagate_cov(cov_th, jac_h)
-    flags: Set[str] = {"tau_at_bound"} if at_bound else set()
     _flag_undetermined(cov, flags)
     if _negligible_amplitude(B, y_ok):
         _undetermine(cov, [2], flags)  # T
     u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, T, u_T, span, dt)
-    return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi, 3)
+    evaluation = {"t_ref": t_b, "c": c, "B": B, "T": T}
+    return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi, 3, t0, evaluation)
 
 
 # ---------------------------------------------------------------------------
@@ -641,4 +780,5 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
 
 
 __all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit",
-           "resolve_model", "validate_models", "check_model_options", "sandwich_cov", "propagate_cov", "ar1_apply", "residual_phi"]
+           "resolve_model", "validate_models", "check_model_options", "sandwich_cov", "propagate_cov", "ar1_apply",
+           "residual_phi", "evaluate", "normalize_model"]
