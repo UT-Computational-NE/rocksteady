@@ -22,8 +22,11 @@ the data?*
 pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.3.0"
 ```
 
-Python 3.10 or later, with numpy and pandas. pandas is used only by
-`rocksteady.batch`; the streaming detector needs numpy alone.
+Python 3.10 or later, with numpy and pandas; both are installed with the
+package. The streaming detector (`Detector.update` and its components)
+needs numpy alone and does not import pandas. The batch, statistics and
+report layers (`batch`, `metrics`, `report`) return DataFrames and use
+pandas.
 
 ## Quickstart
 
@@ -381,8 +384,22 @@ rs.criterion("range", signal="T1", limit=0.2, noise=0.01)
 | `registry.slope_methods` | `(t, y, **options) -> (b, u_b, k)` |
 | `registry.fit_models` | `(t, y, **options) -> FitResult` |
 
+Slope methods and fit models must accept `(t, y)` positionally; the
+protocols are `registry.SlopeMethod` and `registry.FitModel`. Give a
+provider a `validate_options(**options)` attribute, and `DriftCriterion` (for
+slope methods) and `fit.validate_models` (for fit models) reject bad option
+names and values when the detector or report is set up, not partway
+through a long run.
+
 Spec entries may also be built objects. That is how a criterion with a
 callable noise model goes into a spec.
+
+**Stateful components belong to one detector.** Disturbances and overrides
+keep state (a step detector's history, a latch), and the detector updates
+and resets it. Do not share an instance between detectors that are used
+at the same time. `build_detector(spec)` with plain-data entries builds
+fresh instances on every call, and rocksteady never copies components
+behind your back.
 
 ## Performance
 

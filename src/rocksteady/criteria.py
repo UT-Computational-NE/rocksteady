@@ -140,6 +140,8 @@ class DriftCriterion(Criterion):
         if not callable(self._slope):
             raise TypeError(f"method must be a registered name or a callable, got {method!r}")
         self.method_options = dict(method_options or {})
+        method_name = method if isinstance(method, str) else getattr(method, "__name__", "method")
+        registry.check_options(self._slope, self.method_options, f"{what}: slope method {method_name!r}")
         self.name = name or f"{signal}_drift"
 
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:

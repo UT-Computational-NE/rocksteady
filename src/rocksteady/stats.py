@@ -57,6 +57,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from . import _validate as _v
 from . import registry
 from ._ar1 import ar1_quad
 
@@ -175,6 +176,22 @@ def slope_nw(t: np.ndarray, y: np.ndarray, max_lag_frac: float = 0.25, k: float 
     return b, u, k
 
 
+def _check_nw_options(max_lag_frac: float = 0.25, k: float = 2.0) -> None:
+    if not 0 <= _v.finite(max_lag_frac, "max_lag_frac") <= 1:  # the bandwidth is at least one lag
+        raise ValueError(f"max_lag_frac must be in [0, 1], got {max_lag_frac!r}")
+    _v.finite(k, "k", nonnegative=True)
+
+
+def _check_ar1_options(confidence: float = 0.975, phi_max: float = 0.98) -> None:
+    if not 0.5 < _v.finite(confidence, "confidence") < 1:
+        raise ValueError(f"confidence must be in (0.5, 1), got {confidence!r}")
+    if not 0 <= _v.finite(phi_max, "phi_max") < 1:
+        raise ValueError(f"phi_max must be in [0, 1), got {phi_max!r}")
+
+
+slope_nw.validate_options = _check_nw_options
+
+
 @registry.slope_methods.register("ar1")
 def slope_ar1(t: np.ndarray, y: np.ndarray, confidence: float = 0.975,
               phi_max: float = 0.98) -> Tuple[float, float, float]:
@@ -203,6 +220,9 @@ def slope_ar1(t: np.ndarray, y: np.ndarray, confidence: float = 0.975,
     u = math.sqrt(max(ee / tr_mr * float(xrx[1, 1]) / (stt * stt), 0.0))
     nu = max(int(n * (1.0 - phi) / (1.0 + phi)) - 2, 1)
     return b, u, t_quantile(confidence, nu)
+
+
+slope_ar1.validate_options = _check_ar1_options
 
 
 # ---------------------------------------------------------------------------

@@ -246,7 +246,17 @@ class Criterion(ABC):
 
 
 class Disturbance(ABC):
-    """Per-sample detector of external action. ``update`` returns True while active."""
+    """
+    Per-sample detector of external action. ``update`` returns True while active.
+
+    Disturbances (and overrides) may keep state between samples, which the
+    detector clears with ``reset``. An instance belongs to one detector:
+    two detectors sharing it, used sample by sample in turn, would update
+    and reset each other's state. (Running them one after the other with
+    ``batch.run``, which resets first, is safe.) Build separate instances
+    for each detector, for example by calling ``build_detector(spec)`` once
+    per detector; rocksteady never copies components for you.
+    """
 
     name: str
 
@@ -271,7 +281,12 @@ class Context:
 
 
 class Override(ABC):
-    """A domain rule that may force a label. Return None to defer to the detector."""
+    """
+    A domain rule that may force a label. Return None to defer to the detector.
+
+    Like a ``Disturbance``, an instance may keep state and belongs to one
+    detector.
+    """
 
     name: str
 
@@ -473,6 +488,10 @@ class Detector:
         Applied in order after the disturbance check; the first non-None
         label wins.
     timing : Timing
+
+    The detector owns its disturbances and overrides: it updates and resets
+    their state, so an instance must not be shared with another detector
+    in use at the same time (see ``Disturbance``).
 
     Times passed to ``update`` must increase and lie on the sampling grid
     (``Timing.grid_tolerance``). A step of more than 1.5 sample periods is
@@ -693,6 +712,7 @@ class Detector:
 
 
 __all__ = [
-    "Label", "Reason", "MISSING_REASONS", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance", "Override",
+    "Label", "Reason", "MISSING_REASONS", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance",
+    "Override",
     "Context", "Timing", "Verdict", "Detector", "Source",
 ]
