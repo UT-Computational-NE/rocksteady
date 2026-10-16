@@ -249,3 +249,20 @@ def test_time_backfill_does_not_depend_on_the_clock_origin(origin):
     assert [(s.start, s.stop) for s in steady] == [(3, 6)]
     with pytest.raises(ValueError, match="backfill_tol_s"):
         rs.segments(labels, t=origin + np.arange(6.0), backfill_s=2.0, backfill_tol_s=-1.0)
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.7e9, 1e12])
+def test_time_backfill_boundary_and_rounding(origin):
+    labels = ["settling"] * 5 + ["steady"]
+    t = origin + np.arange(6.0)
+    # Zero tolerance keeps the sample exactly backfill_s old (t = 3 for a window ending at t = 5).
+    assert rs.segments(labels, t=t, backfill_s=2.0, backfill_tol_s=0.0)[-1].start == 3
+    # Also with times that are not exact in binary (0.1 s spacing; ulps of 2e-7 s at epoch times).
+    t01 = origin + 0.1 * np.arange(6.0)
+    assert rs.segments(labels, t=t01, backfill_s=0.2, backfill_tol_s=0.0)[-1].start == 3
+    # Rounding to whole periods (default tolerance: half the spacing): a sample 0.4 period beyond
+    # the window rounds into it, one 0.6 period beyond does not.
+    near = origin + np.array([0.0, 1.0, 2.0, 2.6, 4.0, 5.0])  # t[3] is 2.4 s old: 0.4 beyond 2.0
+    far = origin + np.array([0.0, 1.0, 2.0, 2.4, 4.0, 5.0])   # t[3] is 2.6 s old: 0.6 beyond 2.0
+    assert rs.segments(labels, t=near, backfill_s=2.0, backfill_tol_s=0.5)[-1].start == 3
+    assert rs.segments(labels, t=far, backfill_s=2.0, backfill_tol_s=0.5)[-1].start == 4
