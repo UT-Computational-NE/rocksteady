@@ -113,7 +113,9 @@ class Registry:
                 raise TypeError(f"a {self.kind} provider must be callable, got {obj!r}")
             elif self.positional:
                 try:
-                    inspect.signature(obj).bind(*([None] * self.positional))
+                    # Only the data positions: required options come later, from the spec, and
+                    # check_options binds them in full once they are known.
+                    inspect.signature(obj).bind_partial(*([None] * self.positional))
                 except TypeError:
                     raise TypeError(f"a {self.kind} provider must accept (t, y) positionally, got "
                                     f"{getattr(obj, '__name__', obj)!r}") from None

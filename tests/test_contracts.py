@@ -93,3 +93,28 @@ def test_streaming_core_does_not_import_pandas():
             "print('pandas' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
     assert out == "False"
+
+
+def test_providers_with_required_options_can_register():
+    def model(t, y, *, gain):
+        return rs.fit.fit_poly(t, np.asarray(y) * gain)
+
+    def slope(t, y, *, scale):
+        return 0.0, 0.1 * scale, 2.0
+
+    registry.fit_models.register("required_gain", model)
+    registry.slope_methods.register("required_scale", slope)
+    try:
+        r = rs.fit.fit_model({"model": "required_gain", "gain": 2}, np.arange(10.0), np.arange(10.0))
+        assert r.params["level"] == pytest.approx(9.0)
+        # The full bind still runs once the options are known: a missing required option fails early.
+        with pytest.raises(ValueError, match=r"model for 'x' in state 'steady': required_gain: invalid options"):
+            rs.fit.validate_models({"x": "required_gain"})
+        rs.fit.validate_models({"x": {"model": "required_gain", "gain": 2}})
+        crit = rs.DriftCriterion("x", 1.0, method="required_scale", method_options={"scale": 2.0})
+        assert crit.evaluate(np.arange(5.0), np.zeros(5)).uncertainty == pytest.approx(0.2)
+        with pytest.raises(ValueError, match="slope method 'required_scale': invalid options"):
+            rs.DriftCriterion("x", 1.0, method="required_scale")
+    finally:
+        registry.fit_models.unregister("required_gain")
+        registry.slope_methods.unregister("required_scale")
