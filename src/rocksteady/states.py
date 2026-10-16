@@ -93,7 +93,7 @@ def _merge_short(runs_: List[Segment], min_samples: int) -> List[Segment]:
 
 def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 1,
              forced: Optional[Sequence[bool]] = None, t: Optional[Sequence[float]] = None,
-             backfill_s: Optional[float] = None) -> List[Segment]:
+             backfill_s: Optional[float] = None, backfill_tol_s: Optional[float] = None) -> List[Segment]:
     """
     Split a labelled record into segments by state.
 
@@ -123,6 +123,14 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         Use this when samples can be missing from the record (timestamp
         gaps the detector tolerated), so that backfill covers exactly the
         certifying window. Overrides ``backfill_samples``.
+    backfill_tol_s : float, optional
+        How far a sample's age (``t[a] - t[i]``) may exceed ``backfill_s``
+        and still count as inside the window. Ages are compared with the
+        detector's rounding to whole sample periods, so the natural value
+        is half a sample period (what ``segments_from`` passes). Default:
+        half the median spacing of ``t``. The tolerance is in seconds and
+        does not depend on the clock origin, so epoch timestamps behave
+        like times from zero.
     """
     if backfill_samples < 0 or min_samples < 1:
         raise ValueError("backfill_samples must be >= 0 and min_samples >= 1")
@@ -137,14 +145,20 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
     if times is not None and len(times) != len(lab):
         raise ValueError("t must have one entry per label")
     by_time = times is not None and backfill_s > 0
+    if by_time:
+        if backfill_tol_s is None:
+            backfill_tol_s = 0.5 * float(np.median(np.diff(times))) if len(times) > 1 else 0.0
+        if not np.isfinite(backfill_tol_s) or backfill_tol_s < 0:
+            raise ValueError(f"backfill_tol_s must be finite and >= 0, got {backfill_tol_s!r}")
     steady: List[Segment] = []
     prev_stop = 0
     for a, b in accepted_intervals(lab):
         start = a
         if by_time and not forced_at[a]:
-            first = times[a] - backfill_s
-            tol = 1e-9 * max(1.0, abs(first))
-            start = max(int(np.searchsorted(times[: a + 1], first - tol, side="left")), prev_stop)
+            # Inside the window: age t[a] - t[i] < backfill_s + tol. The margin (half a sample period)
+            # dwarfs the rounding of epoch-sized times, so the result does not depend on the clock origin.
+            edge = times[a] - (backfill_s + backfill_tol_s)
+            start = max(int(np.searchsorted(times[: a + 1], edge, side="right")), prev_stop)
         elif backfill_samples and not forced_at[a]:
             start = max(a - int(backfill_samples), prev_stop)
         if start < a:
@@ -198,7 +212,8 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
     n_back = max(detector.timing.evaluated_samples - 1, 0) if backfill else 0
     if times is not None:
         return segments(labels, min_samples=min_samples, forced=forced, t=times,
-                        backfill_s=n_back * detector.timing.sample_period_s)
+                        backfill_s=n_back * detector.timing.sample_period_s,
+                        backfill_tol_s=0.5 * detector.timing.sample_period_s)
     return segments(labels, backfill_samples=n_back, min_samples=min_samples, forced=forced)
 
 

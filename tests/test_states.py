@@ -233,3 +233,19 @@ def test_time_backfill_arguments():
     det = _gap_detector()
     out = rs.batch.run(det, pd.DataFrame({"x": np.zeros(10)}))
     assert rs.segments_from(det, out["label"]) == rs.segments_from(det, out.drop(columns="t_s"))
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.7e9, -3.2e8, 1e12])
+def test_time_backfill_does_not_depend_on_the_clock_origin(origin):
+    labels = ["settling"] * 5 + ["steady"]
+    segs = rs.segments(labels, t=origin + np.arange(6.0), backfill_s=2.0)
+    assert segs[-1].start == 3  # rows 3, 4, 5: ages 2, 1, 0 s
+    # Through the detector: the rejected value 10 (row 2) is outside the certifying window.
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 1, 0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    df = pd.DataFrame({"x": [50.0, 30.0, 10.0, 0.0, 0.0, 0.0]})
+    out = rs.batch.run(det, df, t=origin + np.arange(6.0))
+    steady = [s for s in rs.segments_from(det, out) if s.state == State.STEADY]
+    assert [(s.start, s.stop) for s in steady] == [(3, 6)]
+    with pytest.raises(ValueError, match="backfill_tol_s"):
+        rs.segments(labels, t=origin + np.arange(6.0), backfill_s=2.0, backfill_tol_s=-1.0)
