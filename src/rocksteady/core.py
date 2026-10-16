@@ -306,6 +306,13 @@ class Verdict:
 # ---------------------------------------------------------------------------
 
 
+def _duplicates(names) -> list:
+    seen, dupes = set(), set()
+    for n in names:
+        (dupes if n in seen else seen).add(n)
+    return sorted(dupes)
+
+
 class Detector:
     """
     Streaming steady-state detector. Feed one sample per ``timing.sample_period_s``.
@@ -339,6 +346,11 @@ class Detector:
         self.disturbances = list(disturbances)
         self.overrides = list(overrides)
         self.timing = timing
+        for kind, items in (("signal", self.signals), ("criterion", self.criteria)):
+            dupes = _duplicates(x.name for x in items)
+            if dupes:
+                hint = " (give each criterion a distinct name=)" if kind == "criterion" else ""
+                raise ValueError(f"duplicate {kind} names {dupes}{hint}")
         names = {s.name for s in self.signals}
         for c in self.criteria:
             if c.signal not in names:
@@ -489,9 +501,9 @@ class Detector:
         if blocks is None:
             outcomes = [Outcome.UNDECIDED]
         else:
-            for c in self.criteria:
-                results[c.name] = c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]])
-            outcomes = [r.outcome for r in results.values()]
+            evaluated = [c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
+            outcomes = [r.outcome for r in evaluated]  # every criterion counts, whatever its name
+            results = {c.name: r for c, r in zip(self.criteria, evaluated)}
 
         if Outcome.FAIL in outcomes:
             self._record(False)

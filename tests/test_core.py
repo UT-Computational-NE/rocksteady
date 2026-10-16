@@ -240,3 +240,41 @@ def test_bound_criterion_uncertainty_accounts_for_autocorrelation():
         e[i] = 0.9 * e[i - 1] + RNG.normal()
     r = rs.BoundCriterion("x", low=-10.0, high=10.0).evaluate(np.arange(n) * 30.0, e)
     assert r.uncertainty > e.std(ddof=1) / np.sqrt(n) * 1.5
+
+
+# -- review fixes ------------------------------------------------------------------
+
+
+def test_duplicate_names_are_rejected_before_any_data():  # #14
+    with pytest.raises(ValueError, match=r"duplicate criterion names \['x_bound'\].*name="):
+        rs.Detector([rs.Signal("x", "x")], [rs.BoundCriterion("x", 0, 1), rs.BoundCriterion("x", 10, 20)],
+                    timing=rs.Timing(block_s=1, window_s=3))
+    with pytest.raises(ValueError, match=r"duplicate criterion names \['c'\]"):
+        rs.Detector([rs.Signal("x", "x")], [rs.BoundCriterion("x", 0, 1, name="c"),
+                                            rs.DeviationCriterion("x", 1, 0, name="c")],
+                    timing=rs.Timing(block_s=1, window_s=3))
+    with pytest.raises(ValueError, match=r"duplicate signal names \['x'\]"):
+        rs.Detector([rs.Signal("x", "a"), rs.Signal("x", "b")], [rs.BoundCriterion("x", -1, 1)],
+                    timing=rs.Timing(block_s=1, window_s=3))
+
+
+def test_every_criterion_counts_whatever_the_order():  # #14
+    crit = [rs.BoundCriterion("x", 0, 1, name="low"), rs.BoundCriterion("x", 10, 20, name="high")]
+    labels = []
+    for order in (crit, list(reversed(crit))):
+        det = rs.Detector([rs.Signal("x", "x")], order, timing=rs.Timing(block_s=1, window_s=3))
+        v = [det.update(t, {"x": 15.0}) for t in range(3)][-1]
+        labels.append(v.label)
+        assert set(v.results) == {"low", "high"}
+    assert labels == [Label.SETTLING, Label.SETTLING]
+
+
+def test_duplicate_columns_are_rejected():  # #14
+    import pandas as pd
+
+    det = make([rs.DeviationCriterion("x", limit=0.5, noise=0.02)])
+    df = pd.DataFrame([[1.0, 2.0]], columns=["x", "x"])
+    with pytest.raises(ValueError, match="duplicate column names"):
+        rs.batch.run(det, df)
+    with pytest.raises(ValueError, match="duplicate column names"):
+        rs.batch.signal_values(det, df)
