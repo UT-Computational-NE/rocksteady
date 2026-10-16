@@ -171,3 +171,98 @@ def test_signal_values():
     assert np.isnan(values["level"].iloc[900])  # the dropout row
     floor = values["level"].iloc[2300]
     assert floor == 0.0  # below the floor, the signal maps to zero
+
+
+# -- #17: backfill follows time when samples are missing from the record ------------
+
+
+def _gap_detector(**timing):
+    kw = dict(block_s=2, window_s=6, max_gap_s=2, min_block_coverage=0.5)
+    kw.update(timing)
+    return rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 1, 0)], timing=rs.Timing(**kw))
+
+
+def _steady_times(segs, t):
+    return [(float(t[s.start]), float(t[s.stop - 1])) for s in segs if s.state == State.STEADY]
+
+
+def test_backfill_stays_inside_the_certifying_window_with_omitted_timestamps():
+    det = _gap_detector()
+    t = np.array([0., 1., 2., 3., 4., 5., 8., 9., 10.])
+    df = pd.DataFrame({"x": [50., 50., 50., 50., 50., 0., 0., 0., 0.]})
+    out = rs.batch.run(det, df, t=t)
+    assert out["label"].iloc[-1] == "steady"
+    steady = [s for s in rs.segments_from(det, out) if s.state == State.STEADY]
+    # The window passing at t = 10 covers t = 5..10 (with t = 6, 7 missing): the first stored row is index 5.
+    assert steady[0].start == 5 and (df["x"].iloc[steady[0].start:] == 0).all()
+
+
+@pytest.mark.parametrize("missing", [[6, 7], [6], [4, 7], [3, 6], [5, 7]])
+def test_omitted_timestamps_and_explicit_nan_rows_agree(missing):
+    """Same certifying window start and end; several gaps, including gaps inside blocks.
+
+    A tolerated missing row *after* the run starts is labelled indeterminate and splits the
+    run, while an omitted timestamp does not; that labelling policy is #24."""
+    full_t = np.arange(16.0)
+    x = np.where(full_t < 2, 50.0, 0.0)
+    explicit = pd.DataFrame({"x": np.where(np.isin(full_t, missing), np.nan, x)})
+    keep = ~np.isin(full_t, missing)
+    omitted = pd.DataFrame({"x": x[keep]})
+    det = _gap_detector(window_s=6, max_gap_s=3, min_block_coverage=0.5)
+    out_e = rs.batch.run(det, explicit, t=full_t)
+    out_o = rs.batch.run(det, omitted, t=full_t[keep])
+    segs_e = rs.segments_from(det, out_e)
+    segs_o = rs.segments_from(det, out_o)
+    te = _steady_times([s for s in segs_e], full_t)
+    to = _steady_times([s for s in segs_o], full_t[keep])
+    assert to and te
+    # Same physical window start; the explicit record may start on a NaN row the omitted one does not have.
+    assert to[0][0] == min(tt for tt in full_t[keep] if tt >= te[0][0])
+    assert to[0][1] == te[0][1]
+
+
+def test_time_backfill_arguments():
+    labels = [SE, SE, ST]
+    with pytest.raises(ValueError, match="both t and backfill_s"):
+        rs.segments(labels, t=[0.0, 1.0, 2.0])
+    with pytest.raises(ValueError, match="one entry per label"):
+        rs.segments(labels, t=[0.0, 1.0], backfill_s=1.0)
+    assert rs.segments(labels, t=[0.0, 5.0, 6.0], backfill_s=1.5)[-1].start == 1  # time, not count
+    assert rs.segments(labels, backfill_samples=1)[-1].start == 1
+    # Labels without times still backfill by count.
+    det = _gap_detector()
+    out = rs.batch.run(det, pd.DataFrame({"x": np.zeros(10)}))
+    assert rs.segments_from(det, out["label"]) == rs.segments_from(det, out.drop(columns="t_s"))
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.7e9, -3.2e8, 1e12])
+def test_time_backfill_does_not_depend_on_the_clock_origin(origin):
+    labels = ["settling"] * 5 + ["steady"]
+    segs = rs.segments(labels, t=origin + np.arange(6.0), backfill_s=2.0)
+    assert segs[-1].start == 3  # rows 3, 4, 5: ages 2, 1, 0 s
+    # Through the detector: the rejected value 10 (row 2) is outside the certifying window.
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 1, 0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    df = pd.DataFrame({"x": [50.0, 30.0, 10.0, 0.0, 0.0, 0.0]})
+    out = rs.batch.run(det, df, t=origin + np.arange(6.0))
+    steady = [s for s in rs.segments_from(det, out) if s.state == State.STEADY]
+    assert [(s.start, s.stop) for s in steady] == [(3, 6)]
+    with pytest.raises(ValueError, match="backfill_tol_s"):
+        rs.segments(labels, t=origin + np.arange(6.0), backfill_s=2.0, backfill_tol_s=-1.0)
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.7e9, 1e12])
+def test_time_backfill_boundary_and_rounding(origin):
+    labels = ["settling"] * 5 + ["steady"]
+    t = origin + np.arange(6.0)
+    # Zero tolerance keeps the sample exactly backfill_s old (t = 3 for a window ending at t = 5).
+    assert rs.segments(labels, t=t, backfill_s=2.0, backfill_tol_s=0.0)[-1].start == 3
+    # Also with times that are not exact in binary (0.1 s spacing; ulps of 2e-7 s at epoch times).
+    t01 = origin + 0.1 * np.arange(6.0)
+    assert rs.segments(labels, t=t01, backfill_s=0.2, backfill_tol_s=0.0)[-1].start == 3
+    # Rounding to whole periods (default tolerance: half the spacing): a sample 0.4 period beyond
+    # the window rounds into it, one 0.6 period beyond does not.
+    near = origin + np.array([0.0, 1.0, 2.0, 2.6, 4.0, 5.0])  # t[3] is 2.4 s old: 0.4 beyond 2.0
+    far = origin + np.array([0.0, 1.0, 2.0, 2.4, 4.0, 5.0])   # t[3] is 2.6 s old: 0.6 beyond 2.0
+    assert rs.segments(labels, t=near, backfill_s=2.0, backfill_tol_s=0.5)[-1].start == 3
+    assert rs.segments(labels, t=far, backfill_s=2.0, backfill_tol_s=0.5)[-1].start == 4

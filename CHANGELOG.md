@@ -19,6 +19,11 @@
 - `signals.spread` is NaN when any channel is not finite. Python's `max` and
   `min` handled NaN by position, so a missing channel could be ignored and a
   record certified on partial data, depending on channel order (#16).
+- `segments_from` backfills by time when the run output has `t_s`, so a
+  steady segment covers exactly its certifying window even when tolerated
+  timestamp gaps left samples out of the record. Counting stored rows
+  could reach back past the window into rejected data. `segments` gains
+  `t=` and `backfill_s=` (#17).
 
 ## 0.3.0
 

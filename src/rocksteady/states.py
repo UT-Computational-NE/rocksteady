@@ -92,7 +92,8 @@ def _merge_short(runs_: List[Segment], min_samples: int) -> List[Segment]:
 
 
 def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 1,
-             forced: Optional[Sequence[bool]] = None) -> List[Segment]:
+             forced: Optional[Sequence[bool]] = None, t: Optional[Sequence[float]] = None,
+             backfill_s: Optional[float] = None, backfill_tol_s: Optional[float] = None) -> List[Segment]:
     """
     Split a labelled record into segments by state.
 
@@ -116,20 +117,56 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         True where an override forced the label (``batch.run``'s
         ``forced_by`` is set). A steady run that starts forced was not
         certified by a window of data, so it is not backfilled.
+    t, backfill_s : sample times (s) and a backfill duration, optional
+        Backfill by time instead of by count: each steady segment extends
+        back to the first stored sample at or after ``t[a] - backfill_s``.
+        Use this when samples can be missing from the record (timestamp
+        gaps the detector tolerated), so that backfill covers exactly the
+        certifying window. Overrides ``backfill_samples``.
+    backfill_tol_s : float, optional
+        How far a sample's age (``t[a] - t[i]``) may exceed ``backfill_s``
+        and still count as inside the window: a sample is inside when its
+        age is at most ``backfill_s + backfill_tol_s``, boundary included
+        (with 0, exactly the samples at most ``backfill_s`` old). Ages are
+        compared with the detector's rounding to whole sample periods, so
+        the natural value is half a sample period (what ``segments_from``
+        passes): a sample less than half a period beyond the window rounds
+        into it, one more than half a period beyond does not. Default:
+        half the median spacing of ``t``. The tolerance is in seconds and
+        does not depend on the clock origin, so epoch timestamps behave
+        like times from zero.
     """
     if backfill_samples < 0 or min_samples < 1:
         raise ValueError("backfill_samples must be >= 0 and min_samples >= 1")
+    if (t is None) != (backfill_s is None):
+        raise ValueError("give both t and backfill_s to backfill by time")
     lab = label_array(labels)
     forced_at = np.zeros(len(lab), dtype=bool) if forced is None else np.asarray(forced, dtype=bool)
     if len(forced_at) != len(lab):
         raise ValueError("forced must have one entry per label")
     disturbed = np.flatnonzero(lab == Label.DISTURBED.value)
+    times = None if t is None else np.asarray(t, dtype=float)
+    if times is not None and len(times) != len(lab):
+        raise ValueError("t must have one entry per label")
+    by_time = times is not None and backfill_s > 0
+    if by_time:
+        if backfill_tol_s is None:
+            backfill_tol_s = 0.5 * float(np.median(np.diff(times))) if len(times) > 1 else 0.0
+        if not np.isfinite(backfill_tol_s) or backfill_tol_s < 0:
+            raise ValueError(f"backfill_tol_s must be finite and >= 0, got {backfill_tol_s!r}")
     steady: List[Segment] = []
     prev_stop = 0
     for a, b in accepted_intervals(lab):
         start = a
-        if backfill_samples and not forced_at[a]:
+        if by_time and not forced_at[a]:
+            # Inside the window: age t[a] - t[i] <= backfill_s + tol, boundary included. A few ulps of
+            # t[a] absorb the rounding of the subtraction (2e-7 s at epoch times), so that tol = 0 keeps
+            # a sample exactly backfill_s old; they are far below any sample period.
+            edge = times[a] - (backfill_s + backfill_tol_s) - 4.0 * np.spacing(abs(times[a]))
+            start = max(int(np.searchsorted(times[: a + 1], edge, side="left")), prev_stop)
+        elif backfill_samples and not forced_at[a]:
             start = max(a - int(backfill_samples), prev_stop)
+        if start < a:
             j = int(np.searchsorted(disturbed, a)) - 1  # last disturbed sample before the run
             if j >= 0:
                 start = max(start, int(disturbed[j]) + 1)
@@ -153,18 +190,23 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
                   min_samples: int = 1) -> List[Segment]:
     """
     ``segments`` for a detector's output, backfilled over the certifying
-    window (the ``evaluated_samples - 1`` samples before each steady run).
+    window: the evaluated span that ends at each steady run's first sample.
 
-    ``run_output`` is the DataFrame returned by ``batch.run`` (preferred:
-    its ``forced_by`` column keeps override-forced steady runs from being
-    backfilled), or just the labels. With labels only and a detector that
-    has overrides, a warning is issued, because forced runs cannot then be
-    told apart.
+    ``run_output`` is the DataFrame returned by ``batch.run`` (preferred).
+    Its ``forced_by`` column keeps override-forced steady runs from being
+    backfilled, and its ``t_s`` column makes backfill follow time, which is
+    exact when the record has tolerated timestamp gaps. With labels only,
+    backfill counts ``evaluated_samples - 1`` stored samples, and a warning
+    is issued for a detector with overrides, because forced runs cannot
+    then be told apart.
     """
     forced = None
+    times = None
     if hasattr(run_output, "columns"):
         if "forced_by" in run_output.columns:
             forced = run_output["forced_by"].notna().to_numpy()
+        if "t_s" in run_output.columns:
+            times = run_output["t_s"].to_numpy(dtype=float)
         labels = run_output["label"]
     else:
         labels = run_output
@@ -172,8 +214,12 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
             warnings.warn("segments_from got labels only for a detector with overrides; pass the batch.run "
                           "output so that override-forced steady runs are not backfilled", stacklevel=2)
     # The window certifying the first steady sample a is its evaluated span [a - W + 1, a]: W - 1 samples before it.
-    return segments(labels, backfill_samples=max(detector.timing.evaluated_samples - 1, 0) if backfill else 0,
-                    min_samples=min_samples, forced=forced)
+    n_back = max(detector.timing.evaluated_samples - 1, 0) if backfill else 0
+    if times is not None:
+        return segments(labels, min_samples=min_samples, forced=forced, t=times,
+                        backfill_s=n_back * detector.timing.sample_period_s,
+                        backfill_tol_s=0.5 * detector.timing.sample_period_s)
+    return segments(labels, backfill_samples=n_back, min_samples=min_samples, forced=forced)
 
 
 def state_runs(segs: Sequence[Segment], state: State) -> List[Segment]:
