@@ -16,6 +16,17 @@ if TYPE_CHECKING:  # pandas is imported where it is used, so the streaming detec
     import pandas as pd
 
 
+def _unique_columns(df) -> list:
+    """Column names of ``df``, which must be unique: each sample is a name -> value mapping."""
+    names = list(df.columns)
+    seen, dupes = set(), set()
+    for c in names:
+        (dupes if c in seen else seen).add(c)
+    if dupes:
+        raise ValueError(f"duplicate column names {sorted(map(str, dupes))}; samples need unique names")
+    return names
+
+
 def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         with_results: bool = False) -> "pd.DataFrame":
     """
@@ -48,7 +59,7 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
             t = (df.index - df.index[0]).total_seconds().to_numpy()
         else:
             t = np.arange(len(df)) * detector.timing.sample_period_s
-    cols = list(df.columns)
+    cols = _unique_columns(df)
     data = df.to_numpy()
     rows = []
     for i in range(len(df)):
@@ -72,7 +83,7 @@ def signal_values(detector: Detector, df: "pd.DataFrame") -> "pd.DataFrame":
     """
     import pandas as pd
 
-    cols = list(df.columns)
+    cols = _unique_columns(df)
     data = df.to_numpy()
     out = np.full((len(df), len(detector.signals)), np.nan)
     for i in range(len(df)):

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Duplicate signal or criterion names are rejected when a `Detector` is
+  built. With duplicate criterion names, a later passing result used to
+  overwrite an earlier failing one, so acceptance depended on criterion order.
+  Every criterion's outcome is now counted independently. `batch.run` and
+  `batch.signal_values` reject DataFrames with duplicate column names (#14).
+
 ## 0.3.0
 
 Interval fits and statistics by state (milestone v0.3.0, #1-#6).
