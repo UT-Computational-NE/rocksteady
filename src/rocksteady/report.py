@@ -25,8 +25,8 @@ from .fit import FitResult, PiecewiseFit, piecewise_fit, resolve_model, validate
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment, State
 
-FIT_INTERVAL_COLUMNS = ["segment", "state", "start", "stop", "t_start_s", "t_end_s", "model", "n", "mean", "std",
-                        "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
+FIT_INTERVAL_COLUMNS = ["segment", "state", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "n", "mean",
+                        "std", "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
 _HIDDEN_PARAMS = {"lambda"}  # derived from tau; shown in DataFrames, not in the text table
 _TIME_PARAMS = {"tau", "T"}
 
@@ -181,7 +181,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         for i, (s, r) in enumerate(zip(segs, pw.results)):
             ss = signal_stats(y[s.slice], r, dt=dt)
             e = r.residuals[np.isfinite(r.residuals)]
-            rows.append({"segment": i, "state": s.state.value, "start": s.start, "stop": s.stop,
+            rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
                          "t_start_s": t[s.start], "t_end_s": t[s.stop - 1], "model": r.label,
                          "n": ss.n, "mean": ss.mean, "std": ss.std, "tau_int_s": ss.tau_int_s,
                          "n_eff": ss.n_eff, "u_mean": ss.u_mean,
@@ -336,15 +336,16 @@ def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
     multi_day = len(df) > 0 and float(df["t_end_s"].max()) >= 86400.0
     for i, r in df.reset_index(drop=True).iterrows():
         start, end = _clock(r["t_start_s"], origin, multi_day), _clock(r["t_end_s"], origin, multi_day)
+        state = r["state"] + (" (forced)" if r.get("forced", False) else "")  # an override, not data, set it
         n_eff = f"{r['n_eff']:,.0f}" + ("*" if r["low_effective_sample"] else "") if r["n"] else ""
         spread = r["std"] if np.isfinite(r["std"]) and r["std"] > 0 else float("nan")
         dec = int(np.clip(2 - np.floor(np.log10(spread)), 0, 8)) if np.isfinite(spread) else 2
         if is_fit:
-            rows.append([str(int(r["segment"]) + 1), r["state"], start, end, f"{int(r['n']):,}", r["model"],
+            rows.append([str(int(r["segment"]) + 1), state, start, end, f"{int(r['n']):,}", r["model"],
                          _fmt(r["mean"], dec), _sig(r["std"]), _duration(r["tau_int_s"]), n_eff,
                          _sig(r["u_mean"], 2), _sig(r["rmse"]), _param_text(fits[i] if i < len(fits) else None)])
         else:
-            rows.append([str(int(r["segment"]) + 1), r["state"], start, end, f"{int(r['n']):,}",
+            rows.append([str(int(r["segment"]) + 1), state, start, end, f"{int(r['n']):,}",
                          _fmt(r["bias"], dec, signed=True), _sig(r["std"]), _sig(r["rmse"]),
                          f"{r['r']:.4f}" if np.isfinite(r["r"]) else "—", _duration(r["tau_int_s"]), n_eff,
                          _sig(r["u_bias"], 2)])

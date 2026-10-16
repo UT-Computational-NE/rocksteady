@@ -216,15 +216,20 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
 
 def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt: float,
                      nrmse: str = "mean", max_lag_frac: float = 0.25):
-    """``error_stats`` for each segment. Returns a DataFrame with the segment's index, state, start and stop."""
+    """
+    ``error_stats`` for each segment. Returns a DataFrame with the segment's
+    index, state, ``forced`` (an override forced some of its labels), start
+    and stop.
+    """
     import pandas as pd
 
     segs = check_segments(segs, len(np.asarray(a)))
     rows = []
     for i, s in enumerate(segs):
         es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac)
-        rows.append({"segment": i, "state": s.state.value, "start": s.start, "stop": s.stop, **es.as_dict()})
-    columns = ["segment", "state", "start", "stop"] + [f.name for f in fields(ErrorStats)]
+        rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
+                     **es.as_dict()})
+    columns = ["segment", "state", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
     return pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
 
 

@@ -160,6 +160,36 @@ then ignore the missing samples, and a window is evaluated only if every
 block keeps at least `min_block_coverage` of its samples.
 `rocksteady.batch.run` takes sample times from a `DatetimeIndex` when there is one.
 
+A tolerated missing sample is labelled `indeterminate` whatever the
+undecided policy, because no window is evaluated on it. The hold clock
+**pauses** over it: it neither resets nor advances, for NaN rows and
+omitted timestamps alike. `segments_from` bridges such samples inside a
+steady run, so a gap given as NaN rows and the same gap given as omitted
+timestamps produce the same steady intervals.
+
+### Why a sample has its label
+
+Every `Verdict` has a `reason` (`rs.Reason`), and `batch.run` returns it as a
+`reason` column:
+
+| Reason | Meaning |
+|---|---|
+| `certified` | all criteria pass on the window |
+| `forced` | an override forced the label (`forced_by` names it) |
+| `disturbance` | a disturbance is active |
+| `settling_time` | the quiet time after a disturbance (or at the start of a record) has not elapsed |
+| `failed` | a criterion fails beyond its uncertainty |
+| `undecided` | statistical overlap: the uncertainty straddles a limit |
+| `invalid_result` | a criterion returned an unusable result (`CriterionResult.invalid_reason`) |
+| `low_coverage` | a block has fewer valid samples than `min_block_coverage` |
+| `insufficient_history` | less than one window of samples since the start or a reset |
+| `missing` / `unreadable` | a tolerated non-finite or unreadable sample |
+| `gap_reset` | missing data exceeded `max_gap_s` and cleared the history |
+
+With `hold_when_undecided`, rows with `undecided`, `invalid_result` or
+`low_coverage` keep the last decided label, and the reason says why that
+window was not decided.
+
 ## Intervals, fits and statistics by state
 
 Once a record is labelled, `rocksteady` can split it into intervals, fit
@@ -201,7 +231,9 @@ at it passes. `segments_from` therefore **backfills** each steady
 interval over the window that certified it: the `W - 1` samples before
 its first steady sample, for a window of `W` samples. It does not backfill runs that
 an override forced to steady (they were not certified by data), and it
-never backfills across a disturbance. During slow approaches, labels can
+never backfills across a disturbance. A segment that holds any
+override-forced label has `forced=True`; the interval tables carry a
+`forced` column and print its state as `steady (forced)`. During slow approaches, labels can
 flicker between `settling` and `indeterminate`. `min_samples=` merges runs
 shorter than that into their neighbours.
 

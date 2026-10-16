@@ -14,6 +14,7 @@ from .core import (
     Label,
     Outcome,
     Override,
+    Reason,
     Signal,
     Timing,
     Verdict,
@@ -28,7 +29,7 @@ from . import batch, factory, fit, metrics, registry, report, signals, states, s
 __version__ = "0.3.0"
 
 __all__ = [
-    "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override",
+    "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override", "Reason",
     "Outcome", "Signal", "Timing", "Verdict", "BoundCriterion", "DeviationCriterion", "DriftCriterion",
     "EventLog", "FloorLatch", "StepChange", "build_detector", "criterion", "disturbance", "override",
     "Segment", "State", "segments", "segments_from",
