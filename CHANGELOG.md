@@ -28,6 +28,10 @@
   sample where the signal crosses the floor. Previously the crossing
   latched first, and the label was forced steady straight after the
   disturbance, skipping the settling time (#18).
+- `EventLog` flags an instantaneous event at the first sample's time, and an
+  event already under way at the first sample. The first sample used to
+  expire such events before checking them. Events that ended before the
+  record began are still not replayed (#19).
 
 ## 0.3.0
 
