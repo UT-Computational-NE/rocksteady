@@ -2,7 +2,7 @@
 Factories: build components and whole detectors from registered names.
 
     rs.criterion("drift", signal="T1", limit_per_s=1.7e-4)
-    rs.signal("T_avg", builder="mean", cols=["T1", "T2"])
+    rs.factory.signal("T_avg", builder="mean", cols=["T1", "T2"])
     rs.build_detector(spec)
 
 A detector spec is a plain mapping (JSON, YAML or TOML compatible):
@@ -23,7 +23,10 @@ A detector spec is a plain mapping (JSON, YAML or TOML compatible):
 Any list entry may instead be an already-built object (a ``Signal``,
 ``Criterion``, ``Disturbance`` or ``Override``), and ``timing`` may be a
 ``Timing``, so specs can carry things plain data cannot, such as a
-level-dependent noise callable.
+level-dependent noise callable. Built objects in a spec are used as they
+are, not copied: give each detector its own (see ``core.Disturbance``).
+Plain-data entries build new instances on every call, so
+``build_detector(spec)`` called twice gives two independent detectors.
 """
 
 from typing import Any, Mapping

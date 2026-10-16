@@ -119,6 +119,28 @@
   sample apart. `uncertainty="ar1_time"` (opt-in) models the actual sample
   positions; `_ar1.ar1_apply(..., steps=)` and `_ar1.gap_steps` support it (#26).
 
+- Provider protocols `registry.SlopeMethod`, `FitModel` and `SignalBuilder`.
+  Slope methods and fit models must accept `(t, y)` positionally, which is
+  checked when they are registered. `registry.check_options` binds options to
+  a provider's signature and calls its optional `validate_options`. Fit
+  models use it (`fit.check_model_options`), and so does `DriftCriterion`
+  for `method_options`: a misspelled or out-of-range slope option fails
+  when the detector is built, naming the criterion, method and option. The
+  built-in `ar1` and `nw` methods validate their options (#27).
+
+### Documentation
+
+- Dependencies: pandas stays a required dependency. The streaming detector
+  needs numpy only and does not import pandas, which is tested. `batch`,
+  `metrics` and `report` use pandas (the docs said only `batch`). Making
+  pandas an optional extra was considered and deferred; it would break
+  `pip install rocksteady` for every batch user (#27).
+- Stateful components (disturbances, overrides) belong to one detector.
+  `build_detector(spec)` builds fresh ones on every call, and rocksteady
+  never copies components (#27).
+- The `factory` example uses `rs.factory.signal(...)`; `rs.signal` was never
+  exported (#27).
+
 ### Performance
 
 - `stats.slope_ar1` no longer forms dense n x n lag and correlation

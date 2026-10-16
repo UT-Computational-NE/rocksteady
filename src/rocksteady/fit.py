@@ -705,19 +705,7 @@ def check_model_options(name: str, options: Mapping[str, Any]) -> None:
     parameters of the provider, and a provider with a ``validate_options``
     attribute checks their values. Raises ``ValueError``.
     """
-    import inspect
-
-    provider = registry.fit_models.get(name)
-    try:
-        inspect.signature(provider).bind(np.zeros(0), np.zeros(0), **options)
-    except TypeError as exc:
-        raise ValueError(f"{name}: invalid options {sorted(options)} ({exc})") from None
-    check = getattr(provider, "validate_options", None)
-    if check is not None:
-        try:
-            check(**options)
-        except ValueError as exc:
-            raise ValueError(f"{name}: {exc}") from None
+    registry.check_options(registry.fit_models.get(name), options, name)
 
 
 def validate_models(models: Mapping[str, ModelSpec],
