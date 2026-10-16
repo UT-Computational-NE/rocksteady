@@ -40,7 +40,9 @@ class _Spread:
         self.cols = tuple(cols)
 
     def __call__(self, sample: Mapping[str, float]) -> float:
-        return float(max(sample[c] for c in self.cols) - min(sample[c] for c in self.cols))
+        v = np.array([float(sample[c]) for c in self.cols])
+        # Built-in max/min handle NaN by position; any missing channel makes the spread missing.
+        return float(v.max() - v.min()) if np.all(np.isfinite(v)) else float("nan")
 
     def __repr__(self) -> str:
         return f"spread({list(self.cols)})"
@@ -73,7 +75,10 @@ def mean(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
 
 @registry.signal_builders.register("spread")
 def spread(cols: Sequence[str]) -> Callable[[Mapping[str, float]], float]:
-    """Maximum minus minimum over several columns."""
+    """
+    Maximum minus minimum over several columns. NaN if any column is not
+    finite, so a missing channel is treated as missing data, not ignored.
+    """
     if not cols:
         raise ValueError("spread needs at least one column")
     return _Spread(cols)
