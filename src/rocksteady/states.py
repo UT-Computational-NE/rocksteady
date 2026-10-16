@@ -102,9 +102,11 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         Label strings or ``Label`` values, one per sample (for example the
         ``label`` column of ``batch.run``).
     backfill_samples : int
-        Extend each steady segment backwards by this many samples (the
-        certifying window), but never into an earlier steady segment and
-        never across a DISTURBED sample. Each accepted interval stays its
+        Extend each steady segment backwards by this many samples, but
+        never into an earlier steady segment and never across a DISTURBED
+        sample. For a window of W samples the certifying window of the
+        first steady sample holds W - 1 earlier samples, which is what
+        ``segments_from`` uses. Each accepted interval stays its
         own segment, even when backfill closes the gap to the previous one.
     min_samples : int
         Transient and indeterminate runs shorter than this take the state
@@ -150,7 +152,8 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
 def segments_from(detector: Detector, run_output, *, backfill: bool = True,
                   min_samples: int = 1) -> List[Segment]:
     """
-    ``segments`` for a detector's output, with its window as the backfill.
+    ``segments`` for a detector's output, backfilled over the certifying
+    window (the ``window_samples - 1`` samples before each steady run).
 
     ``run_output`` is the DataFrame returned by ``batch.run`` (preferred:
     its ``forced_by`` column keeps override-forced steady runs from being
@@ -168,7 +171,8 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
         if backfill and detector.overrides:
             warnings.warn("segments_from got labels only for a detector with overrides; pass the batch.run "
                           "output so that override-forced steady runs are not backfilled", stacklevel=2)
-    return segments(labels, backfill_samples=detector.timing.window_samples if backfill else 0,
+    # The window certifying the first steady sample a covers [a - W + 1, a]: W - 1 samples before it.
+    return segments(labels, backfill_samples=max(detector.timing.window_samples - 1, 0) if backfill else 0,
                     min_samples=min_samples, forced=forced)
 
 

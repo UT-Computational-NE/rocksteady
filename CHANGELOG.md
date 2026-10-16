@@ -38,6 +38,9 @@ Interval fits and statistics by state (milestone v0.3.0, #1-#6).
   - `stats_by_state` and `stats_by_segment`.
 - `stats.acf_tau`: integrated autocorrelation time pooled over pieces,
   never across their boundaries; FFT-based for long pieces (#4).
+  `pair_weighted=True` weights each lag by its share of within-piece pairs.
+  This gives the time constant for the uncertainty of a mean pooled over
+  separate pieces, and the metrics use it for `N_eff`.
 - `rocksteady.report` (#5):
   - `fit_report` (each signal against its piecewise fit, by state and by
     interval, with fitted parameters);

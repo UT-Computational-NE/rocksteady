@@ -259,7 +259,7 @@ def _lag_sums(r: np.ndarray, max_lag: int) -> np.ndarray:
     return out
 
 
-def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25) -> float:
+def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool = False) -> float:
     """
     Integrated autocorrelation time pooled over several pieces of a series.
 
@@ -271,6 +271,19 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25) -> float:
     mean square, summed up to the first non-positive ``rho`` or
     ``max_lag_frac`` of the longest piece, and ``tau = dt (1 + 2 sum)``,
     floored at ``dt``. Returns NaN when there is no data.
+
+    With ``pair_weighted=True`` it returns the time constant *for the
+    uncertainty of the mean of all pooled samples*. Pieces are taken as
+    independent, so
+
+        Var(mean) = s^2 / N * (1 + 2 sum_k (C_k / N) rho(k)),
+
+    where ``C_k`` is the number of lag-``k`` pairs inside pieces and ``N``
+    the number of samples. Each lag counts only for the samples that have
+    such a partner. Many short pieces then contribute little correlation,
+    whereas the unweighted estimate would apply it to every sample. For a
+    single piece the weight is ``(n - k)/n``, the exact finite-sample
+    factor. ``N_eff = N dt / tau`` then gives the mean's uncertainty.
     """
     pieces = [np.asarray(p, dtype=float) for p in pieces if len(p) > 0]
     if not pieces:
@@ -293,7 +306,7 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25) -> float:
         rho = sums[k] / counts[k] / var
         if rho <= 0:
             break
-        s += rho
+        s += rho * (counts[k] / counts[0] if pair_weighted else 1.0)
     return dt * max(1.0, 1.0 + 2.0 * s)
 
 

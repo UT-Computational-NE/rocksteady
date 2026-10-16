@@ -104,10 +104,12 @@ def fit_report(detector: Detector, df: "pd.DataFrame", models, *, labels=None, b
     if labels is None:
         labels = run(detector, df, t=t)
     segs = segments_from(detector, labels, backfill=backfill, min_samples=min_samples)
+    import pandas as pd
+
     values = signal_values(detector, df)
-    extra = [c for c in models if c not in values.columns and c in df.columns]
-    if extra:
-        values = values.join(df[extra].astype(float))
+    for c in models:  # raw columns, added by position: values has exactly one row per row of df
+        if c not in values.columns and c in df.columns:
+            values[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
     if t is None and not hasattr(df.index, "tz_localize"):
         t = np.arange(len(df)) * detector.timing.sample_period_s
     return _fit_report(values, segs, models, t=t, dt=detector.timing.sample_period_s, units=units,

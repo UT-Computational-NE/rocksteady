@@ -44,6 +44,31 @@ def test_exp_recovers_growth_and_decay(c, A, T):
         assert r.params[k] == pytest.approx(v, rel=1e-5, abs=1e-8)
 
 
+def test_exp_with_small_explicit_lower_bound_on_a_long_record():
+    t = np.arange(1000.0)
+    r = fit_exp(t, 3 + 2 * np.exp(-t / 100), T_min=1.0)
+    assert r.params["T"] == pytest.approx(-100, rel=1e-5) and r.params["A"] == pytest.approx(2, rel=1e-5)
+    r = fit_exp(t, 1 + 1e-6 * np.exp(t / 50), T_min=1.0)  # steep growth: amplitude at the start is tiny
+    assert r.params["T"] == pytest.approx(50, rel=1e-5) and r.params["A"] == pytest.approx(1e-6, rel=1e-4)
+    assert np.isfinite(r.u["T"])
+
+
+def test_uncertainties_do_not_depend_on_units_and_flat_signals_are_undetermined():
+    t = np.arange(600.0)
+    y = 10 * (1 - np.exp(-t / 100)) + np.random.default_rng(9).normal(0, 0.3, 600)
+    base = fit_first_order(t, y)
+    for scale in (1e-9, 1e9):
+        r = fit_first_order(t, scale * y)
+        assert r.params["tau"] == pytest.approx(base.params["tau"], rel=1e-6)
+        assert r.u["tau"] == pytest.approx(base.u["tau"], rel=1e-6)
+        assert r.u["y_inf"] == pytest.approx(scale * base.u["y_inf"], rel=1e-6)
+    for model in (fit_exp, fit_first_order):
+        r = model(t, np.full(600, 5.0))  # exactly flat: no time constant to find
+        assert "tau_unidentifiable" in r.flags
+        flat = model(t, np.full(600, 5.0) + 1e-3 * np.random.default_rng(10).normal(size=600))
+        assert "tau_unidentifiable" in flat.flags
+
+
 def test_flags_for_unresolvable_time_constants():
     t = np.arange(50.0)
     rng = np.random.default_rng(0)

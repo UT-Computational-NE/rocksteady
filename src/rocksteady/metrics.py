@@ -5,8 +5,9 @@ autocorrelation.
 Neighbouring samples are correlated, so ``std / sqrt(n)`` understates the
 uncertainty of a mean or a bias. These statistics use an effective sample
 count ``N_eff = duration / tau_int`` instead, where ``tau_int`` is the
-integrated autocorrelation time estimated from the data
-(``stats.acf_tau``). The spread itself (``std``) is not corrected; the
+integrated autocorrelation time estimated from the data, weighted for
+the uncertainty of a mean pooled over separate pieces
+(``stats.acf_tau(..., pair_weighted=True)``). The spread itself (``std``) is not corrected; the
 uncertainty of a mean is.
 
 Three kinds of statistics:
@@ -99,7 +100,7 @@ def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: floa
         return SignalStats(0, 0.0, nan, nan, nan, nan, nan, True, **extra)
     dof = max(n - max(fit.n_params, 1), 1)
     std = float(np.sqrt(np.sum(e[ok] ** 2) / dof))
-    tau = acf_tau([e[a:b] for a, b in finite_pieces(ok)], dt, max_lag_frac)
+    tau = acf_tau([e[a:b] for a, b in finite_pieces(ok)], dt, max_lag_frac, pair_weighted=True)
     n_eff = max(n * dt / tau, 1.0)
     return SignalStats(n, n * dt, float(y[ok].mean()), std, tau, n_eff, std / np.sqrt(n_eff),
                        n_eff < 10, **extra)
@@ -183,7 +184,7 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     sa, sb = float(av.std()), float(bv.std())
     constant = np.ptp(av) == 0 or np.ptp(bv) == 0  # std of identical values can round to ~1e-16, not 0
     r = float("nan") if constant else float(np.mean((av - av.mean()) * (bv - bv.mean())) / (sa * sb))
-    tau = acf_tau([a[lo:hi] - b[lo:hi] - bias for lo, hi in runs], dt, max_lag_frac)
+    tau = acf_tau([a[lo:hi] - b[lo:hi] - bias for lo, hi in runs], dt, max_lag_frac, pair_weighted=True)
     n_eff = max(n * dt / tau, 1.0)
     return ErrorStats(
         n=n, duration_s=n * dt, bias=bias, std=std, mae=float(np.mean(np.abs(e))), rmse=rmse,
