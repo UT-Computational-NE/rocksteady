@@ -314,7 +314,13 @@ def _varpro_search(sse: Callable[[float], float], lo: float, hi: float,
 
 
 def _linear_ls(basis: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float]:
-    coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    """Least squares; a candidate whose basis is not finite (or fails to solve) scores infinitely badly."""
+    if not np.all(np.isfinite(basis)):
+        return np.full(basis.shape[1], np.nan), float("inf")
+    try:
+        coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    except np.linalg.LinAlgError:
+        return np.full(basis.shape[1], np.nan), float("inf")
     r = y - basis @ coef
     return coef, float(r @ r)
 
@@ -393,8 +399,9 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
         jac_h = np.array([[0, 1, 0], [1, 0, 0], [0, 0, tau], [0, 0, -1.0 / tau]])
     else:
         jac_h = np.array([[0, 0], [1, 0], [0, tau], [0, -1.0 / tau]])
-    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    _flag_undetermined(cov, flags)
     u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, tau, u_tau, span, dt)
     params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
@@ -410,8 +417,10 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     ``T > 0`` is growth and ``T < 0`` decay; for reactor power, ``T`` is the
     period. ``t0`` is the first valid sample time, so ``A`` is the
     exponential part at the start. ``|T|`` is searched between ``T_min``
-    (default: the larger of half a sample spacing and span / 300, which
-    keeps ``exp`` finite) and ``T_max`` (default 100 x span), for both signs.
+    (default: the larger of half a sample spacing and span / 300) and
+    ``T_max`` (default 100 x span), for both signs. The basis is evaluated
+    relative to the end of the interval for growth, so it never overflows,
+    and a candidate that still gives non-finite values is skipped.
 
     Parameters reported: ``c``, ``A``, ``T`` (s). Flags as for
     ``first_order``.
@@ -428,26 +437,39 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     span, dt, lo, hi = _time_scales(s_ok, T_min, T_max)
     lo = max(lo, span / 300.0) if T_min is None else lo
 
+    s_end = float(s_ok.max())
+
+    def ref(T):
+        """Reference time for the basis exp((s - ref)/T), chosen so that it never exceeds 1."""
+        return s_end if T > 0 else 0.0
+
+    def basis(T):
+        h = np.exp((s_ok - ref(T)) / T)
+        return np.column_stack((np.ones_like(h), h))
+
     def fit_sign(sign):
         def sse(u):
-            h = np.exp(s_ok / (sign * np.exp(u)))
-            return _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)[1]
+            return _linear_ls(basis(sign * np.exp(u)), y_ok)[1]
         u, at_bound = _varpro_search(sse, np.log(lo), np.log(hi))
         return sse(u), sign * float(np.exp(u)), at_bound
 
     best = min((fit_sign(+1.0), fit_sign(-1.0)), key=lambda r: r[0])
     _, T, at_bound = best
-    h = np.exp(s_ok / T)
+    r0 = ref(T)
+    h = np.exp((s_ok - r0) / T)
     coef, _ = _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)
-    c, A = float(coef[0]), float(coef[1])
-    fitted = c + A * np.exp((t - t0) / T)
+    c, B = float(coef[0]), float(coef[1])  # B: the exponential part at the reference time
+    A = B * float(np.exp(-r0 / T))  # ... and at the interval start (may underflow for steep growth)
+    fitted = c + B * np.exp((t - t0 - r0) / T)
     resid = np.where(ok, y - fitted, np.nan)
-    # Jacobian in theta = (c, A, log|T|); d/dlog|T| of A exp(s/T) is -A h s / T.
-    jac = np.column_stack((np.ones_like(h), h, -A * h * s_ok / T))
+    # Jacobian in theta = (c, B, log|T|); d/dlog|T| of B exp((s - r0)/T) is -B h (s - r0) / T.
+    jac = np.column_stack((np.ones_like(h), h, -B * h * (s_ok - r0) / T))
     cov_th, phi = sandwich_cov(jac, resid[ok], uncertainty)
-    jac_h = np.diag([1.0, 1.0, T])  # T = sign * exp(log|T|)
-    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    # (c, A, T) from theta: A = B exp(-r0/T), T = sign * exp(log|T|).
+    jac_h = np.array([[1.0, 0.0, 0.0], [0.0, float(np.exp(-r0 / T)), A * r0 / T], [0.0, 0.0, T]])
+    cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    _flag_undetermined(cov, flags)
     u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, T, u_T, span, dt)
     return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi)
