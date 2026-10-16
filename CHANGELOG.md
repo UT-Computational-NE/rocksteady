@@ -128,6 +128,24 @@
   when the detector is built, naming the criterion, method and option. The
   built-in `ar1` and `nw` methods validate their options (#27).
 
+### Tests and CI
+
+- `tests/test_invariants.py` adds cross-cutting invariants. The focused
+  regressions stay with their fixes (#14-#21). The invariants cover:
+  - criterion renaming and reordering;
+  - derived-signal missingness under channel permutation;
+  - units, which scale slopes and levels but not time constants or labels;
+  - omitted timestamps vs missing rows;
+  - backfill confined to the certifying window and never across a
+    disturbance or reset;
+  - empty vs non-empty schemas.
+
+  The deterministic snapshots and the Monte Carlo calibration are kept (#28).
+- CI adds a `min-deps` job: Python 3.10 with numpy 1.22 and pandas 1.5, the
+  minimums in `pyproject.toml`. The `build` job runs the extracted sdist's
+  tests against the installed wheel, outside the source tree, with no
+  editable install or `PYTHONPATH` (#28).
+
 ### Documentation
 
 - Dependencies: pandas stays a required dependency. The streaming detector
