@@ -16,6 +16,9 @@ if TYPE_CHECKING:  # pandas is imported where it is used, so the streaming detec
     import pandas as pd
 
 
+RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by")
+
+
 def _unique_columns(df) -> list:
     """Column names of ``df``, which must be unique: each sample is a name -> value mapping."""
     names = list(df.columns)
@@ -48,8 +51,9 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     Returns
     -------
     DataFrame indexed like ``df`` with columns ``label``, ``eta``,
-    ``limiting``, ``since_disturbance_s``, ``forced_by`` and, optionally,
-    ``ratio_<criterion>``.
+    ``limiting``, ``since_disturbance_s``, ``forced_by``, optionally one
+    ``ratio_<criterion>`` per criterion (NaN where it was not evaluated),
+    and ``t_s``. The columns are the same for an empty record.
     """
     import pandas as pd
 
@@ -70,8 +74,11 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
             for name, r in v.results.items():
                 row[f"ratio_{name}"] = r.ratio
         rows.append(row)
-    out = pd.DataFrame(rows, index=df.index)
-    out["t_s"] = t
+    columns = list(RUN_COLUMNS) + ([f"ratio_{c.name}" for c in detector.criteria] if with_results else [])
+    out = pd.DataFrame(rows, index=df.index, columns=columns)  # explicit schema, also for an empty record
+    floats = ["eta", "since_disturbance_s"] + [c for c in columns if c.startswith("ratio_")]
+    out[floats] = out[floats].astype(float)
+    out["t_s"] = np.asarray(t, dtype=float)
     return out
 
 

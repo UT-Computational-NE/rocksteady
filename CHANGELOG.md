@@ -37,6 +37,12 @@
   times could differ from the run that produced the labels. It now rejects
   labels whose length or index do not match `df`, and an explicit `t` that
   conflicts with saved `t_s` (#20).
+- `batch.run` builds its output with an explicit column schema. An empty
+  record used to return only `t_s`, which broke `segments_from` and
+  `batch.fit_report`. With `with_results=True` there is one
+  `ratio_<criterion>` column per criterion. `stats_by_segment`, and the
+  interval tables of `fit_report` and `compare_report`, keep their columns
+  when there are no segments (#21).
 
 ## 0.3.0
 

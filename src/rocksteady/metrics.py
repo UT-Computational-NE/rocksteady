@@ -26,7 +26,7 @@ Autocorrelation is estimated within contiguous pieces only: never across
 segment boundaries or across non-finite samples.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
@@ -222,7 +222,8 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
     for i, s in enumerate(segs):
         es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac)
         rows.append({"segment": i, "state": s.state.value, "start": s.start, "stop": s.stop, **es.as_dict()})
-    return pd.DataFrame(rows)
+    columns = ["segment", "state", "start", "stop"] + [f.name for f in fields(ErrorStats)]
+    return pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
 
 
 __all__ = ["SignalStats", "ErrorStats", "signal_stats", "error_stats", "stats_by_state", "stats_by_segment",
