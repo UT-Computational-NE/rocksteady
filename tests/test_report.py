@@ -105,6 +105,30 @@ def test_batch_fit_report_with_repeated_index_labels():
     np.testing.assert_allclose(rep.fits["raw"].fitted, np.arange(6.0) * 2, atol=1e-9)
 
 
+def test_batch_fit_report_reuses_saved_times():  # #20
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 100, 0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    df = pd.DataFrame({"x": 2 * np.arange(10.0)})
+    t = 1.25 * np.arange(10.0)
+    out = rs.batch.run(det, df, t=t)
+    reused = rs.batch.fit_report(det, df, {"x": 1}, labels=out)
+    explicit = rs.batch.fit_report(det, df, {"x": 1}, labels=out, t=t)
+    for rep in (reused, explicit):
+        assert rep.fits["x"].results[-1].params["slope"] == pytest.approx(1.6)
+        assert rep["x"].by_interval["t_end_s"].iloc[-1] == pytest.approx(11.25)
+    pd.testing.assert_frame_equal(reused["x"].by_interval, explicit["x"].by_interval)
+    with pytest.raises(ValueError, match="conflicts with the t_s"):
+        rs.batch.fit_report(det, df, {"x": 1}, labels=out, t=np.arange(10.0))
+    with pytest.raises(ValueError, match="10 rows"):
+        rs.batch.fit_report(det, df, {"x": 1}, labels=out.iloc[:5])
+    with pytest.raises(ValueError, match="same index"):
+        rs.batch.fit_report(det, df, {"x": 1}, labels=out.set_index(out.index + 100))
+    # A DatetimeIndex keeps its clock times when the saved times agree with it.
+    dfi = df.set_index(pd.date_range("2026-01-12 06:00", periods=10, freq="1s"))
+    rep = rs.batch.fit_report(det, dfi, {"x": 1}, labels=rs.batch.run(det, dfi))
+    assert "06:00:" in str(rep)
+
+
 def test_formatter_snapshot():
     _, _, fits, comp = build()
     text = fits.to_string() + "\n\n" + comp.to_string() + "\n"

@@ -32,6 +32,11 @@
   event already under way at the first sample. The first sample used to
   expire such events before checking them. Events that ended before the
   record began are still not replayed (#19).
+- `batch.fit_report` uses the `t_s` saved in a `batch.run` output passed as
+  `labels`. It used to re-infer times from the index, so fits and interval
+  times could differ from the run that produced the labels. It now rejects
+  labels whose length or index do not match `df`, and an explicit `t` that
+  conflicts with saved `t_s` (#20).
 
 ## 0.3.0
 
