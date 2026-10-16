@@ -25,6 +25,8 @@ from .fit import FitResult, PiecewiseFit, piecewise_fit, resolve_model, validate
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment, State
 
+FIT_INTERVAL_COLUMNS = ["segment", "state", "start", "stop", "t_start_s", "t_end_s", "model", "n", "mean", "std",
+                        "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
 _HIDDEN_PARAMS = {"lambda"}  # derived from tau; shown in DataFrames, not in the text table
 _TIME_PARAMS = {"tau", "T"}
 
@@ -191,7 +193,8 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         import pandas as pd
 
         blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state,
-                                   pd.DataFrame(rows), units.get(name), pw, pw.results, origin))
+                                   pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS),
+                                   units.get(name), pw, pw.results, origin))
     return Report(blocks, origin)
 
 
@@ -207,9 +210,9 @@ def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a"
     t, dt, origin = _times(index_src if index_src is not None else {"a": av}, t, dt)
     by_state = stats_by_state(av, bv, segs, dt=dt, states=states, nrmse=nrmse)
     per = stats_by_segment(av, bv, segs, dt=dt, nrmse=nrmse)
-    if len(per):
-        per["t_start_s"] = t[per["start"].to_numpy()]
-        per["t_end_s"] = t[per["stop"].to_numpy() - 1]
+    starts, stops = per["start"].to_numpy(dtype=int), per["stop"].to_numpy(dtype=int)
+    per["t_start_s"] = t[starts] if len(per) else np.array([], dtype=float)
+    per["t_end_s"] = t[stops - 1] if len(per) else np.array([], dtype=float)
     block = SignalReport(names[0], f"{names[0]} vs {names[1]}", by_state, per, units, time_origin=origin)
     return Report([block], origin)
 

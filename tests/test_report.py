@@ -129,6 +129,28 @@ def test_batch_fit_report_reuses_saved_times():  # #20
     assert "06:00:" in str(rep)
 
 
+@pytest.mark.parametrize("index", [None, "datetime"])
+def test_empty_records_keep_their_schema(index):  # #21
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", 1, 0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    empty = pd.DataFrame({"x": pd.Series(dtype=float)})
+    if index:
+        empty.index = pd.DatetimeIndex([])
+    full = rs.batch.run(det, pd.DataFrame({"x": np.zeros(5)}), with_results=True)
+    for with_results in (False, True):
+        out = rs.batch.run(det, empty, with_results=with_results)
+        expected = ["label", "eta", "limiting", "since_disturbance_s", "forced_by"]
+        expected += ["ratio_x_constant"] if with_results else []
+        assert list(out.columns) == expected + ["t_s"] and len(out) == 0
+    assert list(full.columns) == list(rs.batch.run(det, empty, with_results=True).columns)
+    assert rs.segments_from(det, rs.batch.run(det, empty)) == []
+    rep = rs.batch.fit_report(det, empty, {"x": 0})
+    assert rep["x"].by_state.loc["all", "n"] == 0 and len(rep["x"].by_interval) == 0
+    assert "mean" in rep["x"].by_interval.columns and "x   fit vs data" in str(rep)
+    comp = compare_report(empty["x"], empty["x"], [], names=("a", "b"), dt=1.0)
+    assert {"bias", "t_start_s", "t_end_s"} <= set(comp["a"].by_interval.columns)
+
+
 def test_formatter_snapshot():
     _, _, fits, comp = build()
     text = fits.to_string() + "\n\n" + comp.to_string() + "\n"
