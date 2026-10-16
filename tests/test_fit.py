@@ -8,8 +8,8 @@ import pytest
 
 import rocksteady as rs
 from rocksteady import State, registry, stats
-from rocksteady.fit import (ar1_apply, fit_model, fit_poly, piecewise_fit, resolve_model, sandwich_cov,
-                            validate_models)
+from rocksteady.fit import (ar1_apply, fit_model, fit_poly, piecewise_fit, propagate_cov, resolve_model,
+                            sandwich_cov, validate_models)
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 from coverage_mc import ar1_noise  # noqa: E402
@@ -89,6 +89,46 @@ def test_line_uncertainty_matches_stats_slope_ar1():
     r = fit_poly(t, y, 1)
     assert r.params["slope"] == pytest.approx(b, rel=1e-12)
     assert r.u["slope"] == pytest.approx(u, rel=1e-10)
+
+
+def test_sandwich_is_invariant_to_parameter_units():
+    x = np.linspace(-1, 1, 100)
+    e = np.sin(10 * x)
+    rng = np.random.default_rng(6)
+    ar = ar1_noise(rng, 100, 0.7)
+    for method, resid in (("iid", e), ("ar1", ar)):
+        ref = None
+        for scale in (1.0, 1e-9, 1e9):
+            cov, _ = sandwich_cov(np.column_stack((np.ones(100), scale * x)), resid, method=method)
+            u = np.sqrt(cov[1, 1]) * scale
+            ref = u if ref is None else ref
+            assert u == pytest.approx(ref, rel=1e-8)
+        if method == "iid":
+            assert ref == pytest.approx(0.11947, rel=1e-4)  # the review's reference value
+
+
+def test_sandwich_matches_dense_formula_when_full_rank():
+    rng = np.random.default_rng(7)
+    jac = np.column_stack((np.ones(80), rng.normal(size=80), rng.normal(size=80) ** 2))
+    e = ar1_noise(rng, 80, 0.6)
+    cov, phi = sandwich_cov(jac, e)
+    r = phi ** np.abs(np.subtract.outer(np.arange(80), np.arange(80)))
+    inv = np.linalg.inv(jac.T @ jac)
+    tr_mr = 80 - np.trace(inv @ jac.T @ r @ jac)
+    np.testing.assert_allclose(cov, float(e @ e) / tr_mr * inv @ jac.T @ r @ jac @ inv, rtol=1e-8)
+
+
+def test_undetermined_directions_get_infinite_variance():
+    x = np.linspace(-1, 1, 50)
+    e = np.random.default_rng(8).normal(size=50)
+    cov, _ = sandwich_cov(np.column_stack((np.ones(50), x, np.zeros(50))), e)
+    assert np.isfinite(cov[0, 0]) and np.isfinite(cov[1, 1]) and np.isinf(cov[2, 2])
+    cov, _ = sandwich_cov(np.column_stack((np.ones(50), 2 * np.ones(50))), e)  # collinear columns
+    assert np.isinf(np.diag(cov)).all()
+    out = propagate_cov(np.diag([1.0, np.inf]), np.array([[2.0, 0.0], [0.0, 3.0], [1.0, 1.0]]))
+    assert out[0, 0] == 4.0 and np.isinf(out[1, 1]) and np.isinf(out[2, 2]) and np.isnan(out[0, 1])
+    r = fit_poly(np.full(10, 5.0), np.arange(10.0), 1)  # no spread in time: slope undetermined
+    assert "rank_deficient" in r.flags and np.isinf(r.u["slope"])
 
 
 def test_sandwich_needs_degrees_of_freedom():
