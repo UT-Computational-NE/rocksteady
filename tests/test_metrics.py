@@ -47,6 +47,30 @@ def test_acf_tau_pools_within_pieces_only():
     assert np.isnan(stats.acf_tau([], 1.0)) and stats.acf_tau([np.zeros(10)], 3.0) == 3.0
 
 
+def test_pooled_uncertainty_weights_lags_by_pairs_within_pieces():
+    # 10,000 independent values, each repeated twice: the mean's uncertainty is 1/sqrt(10,000).
+    k = 10_000
+    x = np.random.default_rng(20).normal(size=k)
+    e = np.repeat(x, 2)
+    r = error_stats(e, np.zeros_like(e), dt=1.0, pieces=[(2 * i, 2 * i + 2) for i in range(k)])
+    assert r.tau_int_s == pytest.approx(2.0) and r.n_eff == pytest.approx(k)
+    assert r.u_bias == pytest.approx(x.std(ddof=1) / np.sqrt(k), rel=0.01)
+    # Many independent singletons plus one strongly correlated piece, all with unit variance: the
+    # correlation applies only to the 100 samples that have partners.
+    phi = 0.95
+    ratios = []
+    for seed in range(40):
+        rng = np.random.default_rng(seed)
+        a = np.concatenate((rng.normal(size=10_000), ar1_noise(rng, 100, phi) * np.sqrt(1 - phi**2)))
+        pieces = [(i, i + 1) for i in range(10_000)] + [(10_000, 10_100)]
+        r = error_stats(a, np.zeros_like(a), dt=1.0, pieces=pieces)
+        true_var = (10_000 + 100**2 * _var_mean_ar1(100, phi) * (1 - phi**2)) / 10_100**2
+        ratios.append(r.u_bias / np.sqrt(true_var))
+    assert 0.85 < np.median(ratios) < 1.15
+    # The unweighted time constant is unchanged.
+    assert stats.acf_tau([e[2 * i: 2 * i + 2] for i in range(k)], 1.0) == pytest.approx(3.0)
+
+
 def test_finite_pieces():
     m = np.array([1, 1, 0, 1, 1, 1, 0, 0, 1], dtype=bool)
     assert finite_pieces(m) == [(0, 2), (3, 6), (8, 9)]
