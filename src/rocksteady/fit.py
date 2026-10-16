@@ -85,6 +85,7 @@ class FitResult:
     flags: Set[str] = field(default_factory=set)
     options: Dict[str, Any] = field(default_factory=dict)
     phi: float = float("nan")  # lag-1 autocorrelation used for ``cov``
+    n_params: int = 0  # free parameters fitted (degrees of freedom used)
 
     @property
     def u(self) -> Dict[str, float]:
@@ -274,7 +275,7 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
             full[: p + 1, : p + 1] = cov
             cov = full
     options["order_used"] = p
-    return FitResult("poly", params, cov, fitted, resid, flags, options, phi)
+    return FitResult("poly", params, cov, fitted, resid, flags, options, phi, p + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +428,7 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
     u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, tau, u_tau, span, dt)
     params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
-    return FitResult("first_order", params, cov, fitted, resid, flags, options, phi)
+    return FitResult("first_order", params, cov, fitted, resid, flags, options, phi, n_free)
 
 
 @registry.fit_models.register("exp")
@@ -496,7 +497,7 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
         _undetermine(cov, [2], flags)  # T
     u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, T, u_T, span, dt)
-    return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi)
+    return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi, 3)
 
 
 # ---------------------------------------------------------------------------

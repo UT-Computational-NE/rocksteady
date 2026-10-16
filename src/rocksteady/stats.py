@@ -238,18 +238,75 @@ def tau_int(x: np.ndarray, dt: float, max_lag_frac: float = 0.25) -> float:
     ~360 for white noise with n = 1800) and underestimates the uncertainty
     by about 25 %. The estimator here was within 3 % for ``phi <= 0.9``.
     """
-    n = len(x)
-    tt = np.arange(n, dtype=float)
-    _, _, r = linear_fit(tt, np.asarray(x, dtype=float))
-    var = float((r * r).mean())
-    if var <= 0:
+    x = np.asarray(x, dtype=float)
+    if len(x) < 2:
+        return dt
+    _, _, r = linear_fit(np.arange(len(x), dtype=float), x)
+    return acf_tau([r], dt, max_lag_frac)
+
+
+def _lag_sums(r: np.ndarray, max_lag: int) -> np.ndarray:
+    """``sum_i r_i r_(i+k)`` for ``k = 0 .. max_lag`` within one piece (zero beyond its length)."""
+    n = len(r)
+    lags = min(max_lag, n - 1)
+    out = np.zeros(max_lag + 1)
+    if n * (lags + 1) <= 200_000:
+        out[: lags + 1] = [float(r[: n - k] @ r[k:]) for k in range(lags + 1)]
+    else:  # FFT autocorrelation, O(n log n)
+        m = 1 << int(np.ceil(np.log2(2 * n)))
+        f = np.fft.rfft(r, m)
+        out[: lags + 1] = np.fft.irfft(f * np.conj(f), m)[: lags + 1]
+    return out
+
+
+def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool = False) -> float:
+    """
+    Integrated autocorrelation time pooled over several pieces of a series.
+
+    Each piece is a contiguous run of already-detrended (or de-meaned)
+    values, such as fit residuals in one interval. Lag products are summed
+    within pieces only, never across the boundaries between them, so gaps
+    and interval edges add no spurious correlation. The estimator is the
+    one of ``tau_int``: ``rho(k)`` is the mean lag-``k`` product over the
+    mean square, summed up to the first non-positive ``rho`` or
+    ``max_lag_frac`` of the longest piece, and ``tau = dt (1 + 2 sum)``,
+    floored at ``dt``. Returns NaN when there is no data.
+
+    With ``pair_weighted=True`` it returns the time constant *for the
+    uncertainty of the mean of all pooled samples*. Pieces are taken as
+    independent, so
+
+        Var(mean) = s^2 / N * (1 + 2 sum_k (C_k / N) rho(k)),
+
+    where ``C_k`` is the number of lag-``k`` pairs inside pieces and ``N``
+    the number of samples. Each lag counts only for the samples that have
+    such a partner. Many short pieces then contribute little correlation,
+    whereas the unweighted estimate would apply it to every sample. For a
+    single piece the weight is ``(n - k)/n``, the exact finite-sample
+    factor. ``N_eff = N dt / tau`` then gives the mean's uncertainty.
+    """
+    pieces = [np.asarray(p, dtype=float) for p in pieces if len(p) > 0]
+    if not pieces:
+        return float("nan")
+    lens = np.array([len(p) for p in pieces])
+    max_lag = max(int(lens.max() * max_lag_frac), 1)
+    sums = np.zeros(max_lag + 1)
+    counts = np.zeros(max_lag + 1)
+    ks = np.arange(max_lag + 1)
+    for p in pieces:
+        sums += _lag_sums(p, max_lag)
+        counts += np.maximum(len(p) - ks, 0)
+    var = sums[0] / counts[0]
+    if not var > 0:
         return dt
     s = 0.0
-    for k in range(1, max(int(n * max_lag_frac), 1) + 1):
-        rho = float((r[:-k] * r[k:]).mean()) / var
+    for k in range(1, max_lag + 1):
+        if counts[k] == 0:
+            break
+        rho = sums[k] / counts[k] / var
         if rho <= 0:
             break
-        s += rho
+        s += rho * (counts[k] / counts[0] if pair_weighted else 1.0)
     return dt * max(1.0, 1.0 + 2.0 * s)
 
 
