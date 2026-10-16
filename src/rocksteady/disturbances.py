@@ -15,6 +15,7 @@ from typing import Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
 
+from . import _validate as _v
 from . import registry
 from .core import Disturbance
 
@@ -35,6 +36,9 @@ class StepChange(Disturbance):
     """
 
     def __init__(self, signal: str, threshold: float, m: int = 10, name: str = None):
+        what = f"StepChange {name or signal!r}"
+        threshold = _v.finite(threshold, f"{what}: threshold", positive=True)
+        m = _v.positive_int(m, f"{what}: m")
         self.signal, self.threshold, self.m = signal, threshold, m
         self.name = name or f"{signal}_step"
         self.reset()
@@ -69,7 +73,15 @@ class EventLog(Disturbance):
 
     def __init__(self, events: Iterable[Tuple[float, float]] = (), name: str = "event_log"):
         self.name = name
-        self.events: Sequence[Tuple[float, float]] = sorted((float(s), float(d)) for s, d in events)
+        checked = []
+        for i, ev in enumerate(events):
+            try:
+                start, dur = ev
+            except (TypeError, ValueError):
+                raise ValueError(f"EventLog {name!r}: event {i} must be (start_s, duration_s), got {ev!r}") from None
+            checked.append((_v.finite(start, f"EventLog {name!r}: event {i} start"),
+                            _v.finite(dur, f"EventLog {name!r}: event {i} duration", nonnegative=True)))
+        self.events: Sequence[Tuple[float, float]] = sorted(checked)
         self.reset()
 
     def reset(self) -> None:

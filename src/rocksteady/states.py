@@ -202,9 +202,32 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
     return segments(labels, backfill_samples=n_back, min_samples=min_samples, forced=forced)
 
 
+def check_segments(segs: Sequence[Segment], n: int, *, require_full: bool = False) -> List[Segment]:
+    """
+    Check segments against a record of ``n`` samples: each ``0 <= start <
+    stop <= n``, in order, not overlapping. A subset of the record (partial
+    coverage) is allowed unless ``require_full``. Returns the segments as a
+    list; raises ``ValueError`` naming the first bad segment.
+    """
+    segs = list(segs)
+    prev = 0
+    for i, s in enumerate(segs):
+        if not isinstance(s, Segment):
+            raise ValueError(f"segment {i} is not a Segment: {s!r}")
+        if not 0 <= s.start < s.stop <= n:
+            raise ValueError(f"segment {i} [{s.start}, {s.stop}) is outside a record of {n} samples or empty")
+        if s.start < prev:
+            raise ValueError(f"segment {i} [{s.start}, {s.stop}) overlaps or precedes the previous segment, which "
+                             f"ends at {prev}")
+        prev = s.stop
+    if require_full and sum(len(s) for s in segs) != n:
+        raise ValueError(f"segments cover {sum(len(s) for s in segs)} of {n} samples; full coverage required")
+    return segs
+
+
 def state_runs(segs: Sequence[Segment], state: State) -> List[Segment]:
     """The segments in one state."""
     return [s for s in segs if s.state == State(state)]
 
 
-__all__ = ["State", "Segment", "segments", "segments_from", "state_runs"]
+__all__ = ["State", "Segment", "segments", "segments_from", "state_runs", "check_segments"]
