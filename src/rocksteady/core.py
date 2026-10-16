@@ -213,8 +213,14 @@ class Timing:
     Time scales of the detector.
 
     sample_period_s : spacing of the samples fed to ``update``.
-    block_s         : block length at which criteria are evaluated.
-    window_s        : trailing window length (a multiple of ``block_s``).
+    block_s         : block length at which criteria are evaluated. It is
+                      rounded to a whole number of samples
+                      (``effective_block_s``) and must be at least one sample.
+    window_s        : trailing window length, rounded to whole samples. The
+                      criteria evaluate its last ``n_blocks`` whole blocks
+                      (``evaluated_window_s``); with a window that is not a
+                      whole number of blocks, the leading remainder is history
+                      the detector waits for but does not evaluate.
     settle_s        : quiet time required after a disturbance before a window
                       is evaluated, in addition to the window itself.
     hold_s          : continuous passing time before HOLDING becomes STEADY.
@@ -251,6 +257,8 @@ class Timing:
             raise ValueError("settle_s, hold_s and max_gap_s must be non-negative")
         if not 0 < self.min_block_coverage <= 1:
             raise ValueError("min_block_coverage must be in (0, 1]")
+        if self.block_s < self.sample_period_s * (1 - 1e-9):
+            raise ValueError(f"block_s ({self.block_s}) must be at least one sample period ({self.sample_period_s})")
 
     @property
     def window_samples(self) -> int:
@@ -263,6 +271,29 @@ class Timing:
     @property
     def n_blocks(self) -> int:
         return self.window_samples // self.block_samples
+
+    @property
+    def effective_block_s(self) -> float:
+        """Block duration actually used: a whole number of samples (``block_s`` rounded)."""
+        return self.block_samples * self.sample_period_s
+
+    @property
+    def evaluated_samples(self) -> int:
+        """Samples the criteria evaluate: the last ``n_blocks`` whole blocks of the window."""
+        return self.n_blocks * self.block_samples
+
+    @property
+    def evaluated_window_s(self) -> float:
+        """Duration the criteria evaluate (the certifying window)."""
+        return self.evaluated_samples * self.sample_period_s
+
+    @property
+    def effective(self) -> Dict[str, float]:
+        """The timing as the detector applies it, after rounding to whole samples."""
+        return {"sample_period_s": self.sample_period_s, "block_s": self.effective_block_s,
+                "block_samples": self.block_samples, "n_blocks": self.n_blocks,
+                "window_s": self.window_samples * self.sample_period_s, "window_samples": self.window_samples,
+                "evaluated_window_s": self.evaluated_window_s, "evaluated_samples": self.evaluated_samples}
 
     @property
     def quiet_samples(self) -> int:
@@ -363,7 +394,8 @@ class Detector:
         self._n = timing.window_samples
         self._b = timing.block_samples
         self._nb = timing.n_blocks
-        self._t_blocks = (np.arange(self._nb) - (self._nb - 1) / 2.0) * timing.block_s
+        # Block centre times use the effective (whole-sample) block duration, the spacing of the block means.
+        self._t_blocks = (np.arange(self._nb) - (self._nb - 1) / 2.0) * timing.effective_block_s
         self.reset()
 
     def reset(self) -> None:

@@ -9,6 +9,13 @@
   overwrite an earlier failing one, so acceptance depended on criterion order.
   Every criterion's outcome is now counted independently. `batch.run` and
   `batch.signal_values` reject DataFrames with duplicate column names (#14).
+- Drift slopes use the effective block duration (`block_s` rounded to whole
+  samples) for the block times. With `block_s` not a whole number of
+  samples, the slope was scaled by `block_s / effective_block_s`, and a drift
+  above the limit could be certified. `block_s` shorter than one sample is
+  rejected. `Timing` exposes `effective_block_s`, `evaluated_samples`,
+  `evaluated_window_s` and `effective`. `segments_from` backfills over the
+  evaluated span (#15).
 
 ## 0.3.0
 

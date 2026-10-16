@@ -153,7 +153,7 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
                   min_samples: int = 1) -> List[Segment]:
     """
     ``segments`` for a detector's output, backfilled over the certifying
-    window (the ``window_samples - 1`` samples before each steady run).
+    window (the ``evaluated_samples - 1`` samples before each steady run).
 
     ``run_output`` is the DataFrame returned by ``batch.run`` (preferred:
     its ``forced_by`` column keeps override-forced steady runs from being
@@ -171,8 +171,8 @@ def segments_from(detector: Detector, run_output, *, backfill: bool = True,
         if backfill and detector.overrides:
             warnings.warn("segments_from got labels only for a detector with overrides; pass the batch.run "
                           "output so that override-forced steady runs are not backfilled", stacklevel=2)
-    # The window certifying the first steady sample a covers [a - W + 1, a]: W - 1 samples before it.
-    return segments(labels, backfill_samples=max(detector.timing.window_samples - 1, 0) if backfill else 0,
+    # The window certifying the first steady sample a is its evaluated span [a - W + 1, a]: W - 1 samples before it.
+    return segments(labels, backfill_samples=max(detector.timing.evaluated_samples - 1, 0) if backfill else 0,
                     min_samples=min_samples, forced=forced)
 
 
