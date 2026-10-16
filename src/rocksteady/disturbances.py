@@ -58,9 +58,13 @@ class EventLog(Disturbance):
     Parameters
     ----------
     events : iterable of (start_s, duration_s)
-        Each event is active over ``[start, start + duration]`` and marks
-        every sample whose interval ``(t - dt, t]`` it overlaps. A duration
-        of 0 marks an instant and flags exactly one sample.
+        Each event is active over ``[start, start + duration]``. It marks
+        every sample whose interval ``(t_prev, t]`` it overlaps, so a
+        duration of 0 marks an instant and flags exactly one sample. The
+        first sample after construction or ``reset`` has no previous time:
+        it is flagged by any event whose closed span contains it, including
+        an instantaneous event at that time and an event already under way.
+        Events that ended before the first sample are not replayed.
     """
 
     def __init__(self, events: Iterable[Tuple[float, float]] = (), name: str = "event_log"):
@@ -73,14 +77,20 @@ class EventLog(Disturbance):
         self._last_t = None
 
     def update(self, t: float, sample: Mapping[str, float], values: Mapping[str, float]) -> bool:
-        dt = 0.0 if self._last_t is None else t - self._last_t
+        first = self._last_t is None
+        lo = t if first else self._last_t  # samples cover [t, t] at first, then (t_prev, t]
         self._last_t = t
-        # An event is active for the sample at t if it overlaps (t - dt, t].
-        while self._i < len(self.events) and self.events[self._i][0] + self.events[self._i][1] <= t - dt:
+
+        def ended(end: float) -> bool:
+            return end < lo if first else end <= lo
+
+        events = self.events
+        while self._i < len(events) and ended(events[self._i][0] + events[self._i][1]):
             self._i += 1
-        for start, dur in self.events[self._i :]:
+        for k in range(self._i, len(events)):  # sorted by start: stop at the first event not yet begun
+            start, dur = events[k]
             if start > t:
                 break
-            if start + dur > t - dt:
+            if not ended(start + dur):
                 return True
         return False

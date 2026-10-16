@@ -305,3 +305,21 @@ def test_ramp_near_the_limit_and_effective_timing():  # #15
     assert odd.n_blocks == 3 and odd.evaluated_samples == 6 and odd.evaluated_window_s == 6.0
     with pytest.raises(ValueError, match="at least one sample period"):
         rs.Timing(sample_period_s=1.0, block_s=0.4, window_s=5.0)
+
+
+def test_event_log_first_sample_semantics():  # #19
+    def flags(events, times):
+        log = rs.EventLog(events)
+        return [log.update(float(x), {}, {}) for x in times]
+
+    assert flags([(0.0, 0.0)], range(3)) == [True, False, False]  # instant at the first sample
+    assert flags([(5.0, 0.0)], range(5, 8)) == [True, False, False]  # first time away from zero
+    assert flags([(3.0, 4.0)], range(5, 10)) == [True, True, True, False, False]  # already under way: [3, 7]
+    assert flags([(1.0, 2.0)], range(5, 8)) == [False, False, False]  # ended before the record: not replayed
+    assert flags([(1.0, 4.0)], range(5, 8)) == [True, False, False]  # ends exactly at the first sample
+    assert flags([(2.0, 0.0)], range(5)) == [False, False, True, False, False]  # later instants unchanged
+    assert flags([(1.5, 1.0)], range(5)) == [False, False, True, True, False]  # (1, 2] and (2, 3] overlap [1.5, 2.5]
+    log = rs.EventLog([(0.0, 0.0)])
+    assert [log.update(float(x), {}, {}) for x in range(2)] == [True, False]
+    log.reset()
+    assert log.update(0.0, {}, {}) is True  # reset restores first-sample semantics
