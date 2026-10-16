@@ -53,11 +53,12 @@ their docstrings for the estimator choices.
 
 import math
 from functools import lru_cache
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 from . import registry
+from ._ar1 import ar1_quad
 
 DEFAULT_SLOPE_METHOD = "ar1"
 
@@ -174,16 +175,6 @@ def slope_nw(t: np.ndarray, y: np.ndarray, max_lag_frac: float = 0.25, k: float 
     return b, u, k
 
 
-_LAGS: Dict[int, np.ndarray] = {}
-
-
-def _lag_matrix(n: int) -> np.ndarray:
-    lags = _LAGS.get(n)
-    if lags is None:
-        lags = _LAGS[n] = np.abs(np.subtract.outer(np.arange(n), np.arange(n))).astype(float)
-    return lags
-
-
 @registry.slope_methods.register("ar1")
 def slope_ar1(t: np.ndarray, y: np.ndarray, confidence: float = 0.975,
               phi_max: float = 0.98) -> Tuple[float, float, float]:
@@ -204,12 +195,12 @@ def slope_ar1(t: np.ndarray, y: np.ndarray, confidence: float = 0.975,
         return b, 0.0, t_quantile(confidence, n - 2)
     r1 = float(e[1:] @ e[:-1]) / ee
     phi = min(max(r1 + (2.0 + 4.0 * r1) / n, 0.0), phi_max)  # bias correction for a trend regression
-    corr = phi ** _lag_matrix(n)
     x = np.column_stack((np.ones(n), tc))
+    xrx = ar1_quad(x, phi)  # X'RX in O(n), without forming R
     # E[e'e] = sigma^2 tr(M R) for residual maker M; tr(M R) = n - tr((X'X)^-1 X'RX).
-    tr_mr = n - float(np.trace(np.linalg.solve(x.T @ x, x.T @ corr @ x)))
-    c = tc / stt
-    u = math.sqrt(max(ee / tr_mr * float(c @ corr @ c), 0.0))
+    tr_mr = n - float(np.trace(np.linalg.solve(x.T @ x, xrx)))
+    # Var(b) = sigma^2 c'Rc with c = tc / stt, and tc'R tc = (X'RX)_11.
+    u = math.sqrt(max(ee / tr_mr * float(xrx[1, 1]) / (stt * stt), 0.0))
     nu = max(int(n * (1.0 - phi) / (1.0 + phi)) - 2, 1)
     return b, u, t_quantile(confidence, nu)
 
@@ -246,10 +237,10 @@ def tau_int(x: np.ndarray, dt: float, max_lag_frac: float = 0.25) -> float:
 
 
 def _lag_sums(r: np.ndarray, max_lag: int) -> np.ndarray:
-    """``sum_i r_i r_(i+k)`` for ``k = 0 .. max_lag`` within one piece (zero beyond its length)."""
+    """``sum_i r_i r_(i+k)`` for ``k = 0 .. min(max_lag, n - 1)`` within one piece of length ``n``."""
     n = len(r)
     lags = min(max_lag, n - 1)
-    out = np.zeros(max_lag + 1)
+    out = np.zeros(lags + 1)
     if n * (lags + 1) <= 200_000:
         out[: lags + 1] = [float(r[: n - k] @ r[k:]) for k in range(lags + 1)]
     else:  # FFT autocorrelation, O(n log n)
@@ -293,9 +284,11 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool =
     sums = np.zeros(max_lag + 1)
     counts = np.zeros(max_lag + 1)
     ks = np.arange(max_lag + 1)
-    for p in pieces:
-        sums += _lag_sums(p, max_lag)
-        counts += np.maximum(len(p) - ks, 0)
+    for p in pieces:  # each piece adds only the lags it has, not max_lag of zeros
+        s = _lag_sums(p, max_lag)
+        m = len(s)
+        sums[:m] += s
+        counts[:m] += len(p) - ks[:m]
     var = sums[0] / counts[0]
     if not var > 0:
         return dt

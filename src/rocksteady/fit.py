@@ -55,6 +55,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, 
 import numpy as np
 
 from . import _validate as _v
+from ._ar1 import ar1_apply  # re-exported: rocksteady.fit.ar1_apply
 from . import registry
 from .states import Segment, State, check_segments
 
@@ -112,28 +113,6 @@ def _empty(model: str, t: np.ndarray, names: Sequence[str], options: Dict[str, A
 # ---------------------------------------------------------------------------
 # Autocorrelation-adjusted covariance
 # ---------------------------------------------------------------------------
-
-
-def ar1_apply(x: np.ndarray, phi: float) -> np.ndarray:
-    """
-    ``R @ x`` for the AR(1) correlation matrix ``R_ij = phi^|i-j|``, in O(n).
-
-    ``x`` may be a vector or an (n, m) matrix; columns are treated
-    independently. Uses ``R x = f + b - x`` with the forward and backward
-    recursions ``f_i = x_i + phi f_{i-1}`` and ``b_i = x_i + phi b_{i+1}``.
-    """
-    x = np.asarray(x, dtype=float)
-    if phi == 0.0:
-        return x.copy()
-    f = np.empty_like(x)
-    b = np.empty_like(x)
-    f[0] = x[0]
-    for i in range(1, len(x)):
-        f[i] = x[i] + phi * f[i - 1]
-    b[-1] = x[-1]
-    for i in range(len(x) - 2, -1, -1):
-        b[i] = x[i] + phi * b[i + 1]
-    return f + b - x
 
 
 def residual_phi(e: np.ndarray, n_params: int, phi_max: float = 0.995) -> float:
