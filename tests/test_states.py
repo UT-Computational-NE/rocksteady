@@ -114,7 +114,7 @@ def test_golden_actuator_case():
     filled = rs.segments_from(det, out)
     forced = out["forced_by"].notna().to_numpy()
     disturbed = np.flatnonzero(labels.to_numpy() == DI)
-    window = det.timing.window_samples
+    window = det.timing.window_samples - 1  # samples before the first steady one in its certifying window
     prev = 0
     n_forced = 0
     for (a, b), s in zip(steady, [s for s in filled if s.state == State.STEADY]):
@@ -144,6 +144,20 @@ def test_backfill_skips_forced_runs_and_stops_at_disturbances():
     ]
     with pytest.raises(ValueError, match="one entry per label"):
         rs.segments(labels, forced=[True])
+
+
+def test_backfill_covers_exactly_the_certifying_window():
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", limit=1, noise=0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    out = rs.batch.run(det, pd.DataFrame({"x": [10, 0, 0, 0]}))
+    assert out["label"].tolist() == [IN, IN, SE, ST]
+    # The window that certified sample 3 is samples 1-3; the rejected sample 0 stays out.
+    assert [(s.start, s.stop, s.state) for s in rs.segments_from(det, out)] == [
+        (0, 1, State.INDETERMINATE), (1, 4, State.STEADY)]
+    # After a reset (a missing sample), the missing sample is not backfilled either.
+    out = rs.batch.run(det, pd.DataFrame({"x": [0, 0, 0, np.nan, 0, 0, 0]}))
+    segs = rs.segments_from(det, out)
+    assert [(s.start, s.stop, s.state) for s in segs][-1] == (4, 7, State.STEADY)
 
 
 def test_signal_values():

@@ -44,6 +44,8 @@ correlation matrix with the residuals' bias-corrected lag-1
 autocorrelation, and M the residual-maker matrix. This generalizes
 ``stats.slope_ar1``. ``uncertainty="iid"`` uses R = I (the classical
 result). Consecutive valid samples are treated as one sample apart.
+The covariance is invariant to parameter units, and parameters the data
+cannot determine get infinite variance (flag ``rank_deficient``).
 """
 
 from dataclasses import dataclass, field
@@ -150,28 +152,71 @@ def residual_phi(e: np.ndarray, n_params: int, phi_max: float = 0.995) -> float:
     return float(min(max(r1 + (n_params + (n_params + 2) * r1) / n, 0.0), phi_max))
 
 
-def sandwich_cov(jac: np.ndarray, e: np.ndarray, method: str = "ar1",
-                 phi_max: float = 0.995) -> Tuple[Optional[np.ndarray], float]:
+def sandwich_cov(jac: np.ndarray, e: np.ndarray, method: str = "ar1", phi_max: float = 0.995,
+                 rcond: float = 1e-10) -> Tuple[Optional[np.ndarray], float]:
     """
     Parameter covariance ``(J'J)^-1 J'(s^2 R)J (J'J)^-1`` for residuals ``e``.
 
     ``method`` is ``"ar1"`` or ``"iid"`` (R = I). Returns ``(cov, phi)``;
     ``cov`` is None when there are no residual degrees of freedom.
+
+    The columns of J are scaled to unit norm and J is factorized by SVD, so
+    the result does not depend on the parameters' units. A direction whose
+    singular value is below ``rcond`` times the largest is not determined
+    by the data. Every parameter with a component along such a direction
+    gets an infinite variance (and NaN covariances), never a falsely small
+    one.
     """
     n, m = jac.shape
     if n <= m:
         return None, float("nan")
     if method not in ("ar1", "iid"):
         raise ValueError(f"uncertainty must be 'ar1' or 'iid', got {method!r}")
-    phi = residual_phi(e, m, phi_max) if method == "ar1" else 0.0
-    jtj_inv = np.linalg.pinv(jac.T @ jac)
-    rj = ar1_apply(jac, phi)
-    jrj = jac.T @ rj
-    tr_mr = n - float(np.trace(jtj_inv @ jrj))
+    norms = np.linalg.norm(jac, axis=0)
+    norms = np.where(norms > 0, norms, 1.0)  # an all-zero column shows up as a zero singular value
+    u, sv, vt = np.linalg.svd(jac / norms, full_matrices=False)
+    keep = sv > rcond * sv.max() if sv.max() > 0 else np.zeros(m, dtype=bool)
+    rank = int(keep.sum())
+    phi = residual_phi(e, max(rank, 1), phi_max) if method == "ar1" else 0.0
+    uk = u[:, keep]
+    g = uk.T @ ar1_apply(uk, phi)  # U'RU over the determined directions
+    tr_mr = n - float(np.trace(g))
     if tr_mr <= 0:
         return None, phi
     s2 = float(e @ e) / tr_mr
-    return s2 * (jtj_inv @ jrj @ jtj_inv), phi
+    a_mat = vt[keep].T / sv[keep]  # V S^-1
+    cov = s2 * (a_mat @ g @ a_mat.T)
+    if rank < m:
+        undetermined = np.abs(vt[~keep]).max(axis=0) > 1e-8
+        cov[undetermined, :] = np.nan
+        cov[:, undetermined] = np.nan
+        cov[undetermined, undetermined] = np.inf
+    return cov / np.outer(norms, norms), phi
+
+
+def propagate_cov(cov: Optional[np.ndarray], jac: np.ndarray) -> Optional[np.ndarray]:
+    """
+    ``jac @ cov @ jac.T`` for a change of parameters, keeping infinite
+    variances (undetermined parameters) infinite rather than turning
+    ``0 * inf`` into NaN: an output that depends on an undetermined input
+    is undetermined.
+    """
+    if cov is None:
+        return None
+    bad = ~np.isfinite(np.diag(cov))
+    good = ~bad
+    out = jac[:, good] @ cov[np.ix_(good, good)] @ jac[:, good].T
+    if bad.any():
+        dep = np.abs(jac[:, bad]).max(axis=1) > 0
+        out[dep, :] = np.nan
+        out[:, dep] = np.nan
+        out[dep, dep] = np.inf
+    return out
+
+
+def _flag_undetermined(cov: Optional[np.ndarray], flags: Set[str]) -> None:
+    if cov is not None and np.isinf(np.diag(cov)).any():
+        flags.add("rank_deficient")
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +265,8 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
     names = _poly_names(p)
     params = {k: float(v) for k, v in zip(names, scale * coef)}
     cov_c, phi = sandwich_cov(basis[ok], resid[ok], uncertainty)
-    cov = None if cov_c is None else cov_c * np.outer(scale, scale)
+    cov = propagate_cov(cov_c, np.diag(scale))
+    _flag_undetermined(cov, flags)
     if p < order:  # report the requested parameters, missing ones as NaN
         for k in _poly_names(order)[p + 1:]:
             params[k] = float("nan")
@@ -269,7 +315,13 @@ def _varpro_search(sse: Callable[[float], float], lo: float, hi: float,
 
 
 def _linear_ls(basis: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float]:
-    coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    """Least squares; a candidate whose basis is not finite (or fails to solve) scores infinitely badly."""
+    if not np.all(np.isfinite(basis)):
+        return np.full(basis.shape[1], np.nan), float("inf")
+    try:
+        coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+    except np.linalg.LinAlgError:
+        return np.full(basis.shape[1], np.nan), float("inf")
     r = y - basis @ coef
     return coef, float(r @ r)
 
@@ -348,8 +400,9 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
         jac_h = np.array([[0, 1, 0], [1, 0, 0], [0, 0, tau], [0, 0, -1.0 / tau]])
     else:
         jac_h = np.array([[0, 0], [1, 0], [0, tau], [0, -1.0 / tau]])
-    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    _flag_undetermined(cov, flags)
     u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, tau, u_tau, span, dt)
     params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
@@ -365,8 +418,10 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     ``T > 0`` is growth and ``T < 0`` decay; for reactor power, ``T`` is the
     period. ``t0`` is the first valid sample time, so ``A`` is the
     exponential part at the start. ``|T|`` is searched between ``T_min``
-    (default: the larger of half a sample spacing and span / 300, which
-    keeps ``exp`` finite) and ``T_max`` (default 100 x span), for both signs.
+    (default: the larger of half a sample spacing and span / 300) and
+    ``T_max`` (default 100 x span), for both signs. The basis is evaluated
+    relative to the end of the interval for growth, so it never overflows,
+    and a candidate that still gives non-finite values is skipped.
 
     Parameters reported: ``c``, ``A``, ``T`` (s). Flags as for
     ``first_order``.
@@ -383,26 +438,39 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     span, dt, lo, hi = _time_scales(s_ok, T_min, T_max)
     lo = max(lo, span / 300.0) if T_min is None else lo
 
+    s_end = float(s_ok.max())
+
+    def ref(T):
+        """Reference time for the basis exp((s - ref)/T), chosen so that it never exceeds 1."""
+        return s_end if T > 0 else 0.0
+
+    def basis(T):
+        h = np.exp((s_ok - ref(T)) / T)
+        return np.column_stack((np.ones_like(h), h))
+
     def fit_sign(sign):
         def sse(u):
-            h = np.exp(s_ok / (sign * np.exp(u)))
-            return _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)[1]
+            return _linear_ls(basis(sign * np.exp(u)), y_ok)[1]
         u, at_bound = _varpro_search(sse, np.log(lo), np.log(hi))
         return sse(u), sign * float(np.exp(u)), at_bound
 
     best = min((fit_sign(+1.0), fit_sign(-1.0)), key=lambda r: r[0])
     _, T, at_bound = best
-    h = np.exp(s_ok / T)
+    r0 = ref(T)
+    h = np.exp((s_ok - r0) / T)
     coef, _ = _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)
-    c, A = float(coef[0]), float(coef[1])
-    fitted = c + A * np.exp((t - t0) / T)
+    c, B = float(coef[0]), float(coef[1])  # B: the exponential part at the reference time
+    A = B * float(np.exp(-r0 / T))  # ... and at the interval start (may underflow for steep growth)
+    fitted = c + B * np.exp((t - t0 - r0) / T)
     resid = np.where(ok, y - fitted, np.nan)
-    # Jacobian in theta = (c, A, log|T|); d/dlog|T| of A exp(s/T) is -A h s / T.
-    jac = np.column_stack((np.ones_like(h), h, -A * h * s_ok / T))
+    # Jacobian in theta = (c, B, log|T|); d/dlog|T| of B exp((s - r0)/T) is -B h (s - r0) / T.
+    jac = np.column_stack((np.ones_like(h), h, -B * h * (s_ok - r0) / T))
     cov_th, phi = sandwich_cov(jac, resid[ok], uncertainty)
-    jac_h = np.diag([1.0, 1.0, T])  # T = sign * exp(log|T|)
-    cov = None if cov_th is None else jac_h @ cov_th @ jac_h.T
+    # (c, A, T) from theta: A = B exp(-r0/T), T = sign * exp(log|T|).
+    jac_h = np.array([[1.0, 0.0, 0.0], [0.0, float(np.exp(-r0 / T)), A * r0 / T], [0.0, 0.0, T]])
+    cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
+    _flag_undetermined(cov, flags)
     u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, T, u_T, span, dt)
     return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi, 3)
@@ -500,5 +568,5 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     return PiecewiseFit(fitted, list(segs), results)
 
 
-__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit", "resolve_model",
-           "validate_models", "sandwich_cov", "ar1_apply", "residual_phi"]
+__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit",
+           "resolve_model", "validate_models", "sandwich_cov", "propagate_cov", "ar1_apply", "residual_phi"]
