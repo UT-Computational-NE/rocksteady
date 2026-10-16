@@ -64,6 +64,9 @@ def test_uncertainties_do_not_depend_on_units_and_flat_signals_are_undetermined(
         assert r.u["y_inf"] == pytest.approx(scale * base.u["y_inf"], rel=1e-6)
     for model in (fit_exp, fit_first_order):
         r = model(t, np.full(600, 5.0))  # exactly flat: no time constant to find
+        assert "tau_unidentifiable" in r.flags and "rank_deficient" in r.flags
+        assert np.isinf(r.u["tau" if model is fit_first_order else "T"])
+        r = model(t, np.full(600, 5e-12))  # the same at another scale
         assert "tau_unidentifiable" in r.flags
         flat = model(t, np.full(600, 5.0) + 1e-3 * np.random.default_rng(10).normal(size=600))
         assert "tau_unidentifiable" in flat.flags
