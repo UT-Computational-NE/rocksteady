@@ -148,7 +148,16 @@ Guidance:
 
 ## Gaps and timestamps
 
-Times passed to `update` must increase. By default (`Timing.max_gap_s = 0`),
+Times passed to `update` must increase and lie on a grid of
+`sample_period_s`. Each step must be within `Timing.grid_tolerance` sample
+periods of a whole number of periods. The default, 0.5, rounds any step of
+at least half a period to the grid; set it lower (for example 0.1) to
+reject jittery or drifting clocks. A record sampled faster than
+`sample_period_s` is rejected. Resample it first, for example with
+`df.resample("1s").mean()`, which also leaves NaN rows where samples are
+missing.
+
+By default (`Timing.max_gap_s = 0`),
 the detector clears its history on any of these:
 
 - a non-finite sample;
@@ -159,6 +168,23 @@ With `max_gap_s > 0`, shorter gaps are kept as missing data. Block means
 then ignore the missing samples, and a window is evaluated only if every
 block keeps at least `min_block_coverage` of its samples.
 `rocksteady.batch.run` takes sample times from a `DatetimeIndex` when there is one.
+
+The output of `batch.run` has one row per input row, with the same index:
+
+| Column | Meaning |
+|---|---|
+| `label`, `reason` | the label and why it was given (below) |
+| `eta`, `limiting` | the worst margin ratio and its criterion |
+| `since_disturbance_s` | time since the last disturbance |
+| `forced_by` | the override that forced the label, if any |
+| `valid` | the sample was readable and finite |
+| `window_start_s` | start of the window examined on this row (for a passing row, its certifying window), on the `t_s` clock |
+| `ratio_<criterion>` | with `with_results=True` |
+| `t_s` | sample time in seconds |
+
+`segments_from`, `batch.fit_report` and the statistics use `t_s`. Backfill
+reaches the certifying window by time, and autocorrelation is never
+estimated across omitted timestamps.
 
 A tolerated missing sample is labelled `indeterminate` whatever the
 undecided policy, because no window is evaluated on it. The hold clock

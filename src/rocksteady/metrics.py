@@ -23,7 +23,9 @@ Three kinds of statistics:
   the segments of each state, or per segment.
 
 Autocorrelation is estimated within contiguous pieces only: never across
-segment boundaries or across non-finite samples.
+segment boundaries, across non-finite samples, or (given sample times
+``t``) across omitted timestamps, where consecutive stored rows are more
+than 1.5 sample periods apart.
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -56,6 +58,34 @@ def finite_pieces(mask: np.ndarray, bounds: Optional[Sequence[Tuple[int, int]]] 
     return out
 
 
+def split_at_time_gaps(pieces: Sequence[Tuple[int, int]], t: Optional[np.ndarray], dt: float
+                       ) -> List[Tuple[int, int]]:
+    """
+    ``pieces`` split wherever consecutive times ``t`` step by more than 1.5
+    sample periods ``dt`` (omitted samples), so that stored rows next to
+    each other are adjacent observations. Unchanged when ``t`` is None.
+    """
+    if t is None:
+        return list(pieces)
+    t = np.asarray(t, dtype=float)
+    cuts = np.flatnonzero(np.diff(t) > 1.5 * dt) + 1  # first row after each gap
+    out: List[Tuple[int, int]] = []
+    for lo, hi in pieces:
+        inner = cuts[(cuts > lo) & (cuts < hi)]
+        edges = [lo, *inner.tolist(), hi]
+        out += [(int(a), int(b)) for a, b in zip(edges[:-1], edges[1:])]
+    return out
+
+
+def _check_times(t, n: int):
+    if t is None:
+        return None
+    t = np.asarray(t, dtype=float)
+    if t.shape != (n,):
+        raise ValueError(f"t must have one entry per sample ({n}), got shape {t.shape}")
+    return t
+
+
 # ---------------------------------------------------------------------------
 # One live signal over an interval
 # ---------------------------------------------------------------------------
@@ -82,15 +112,19 @@ class SignalStats:
         return asdict(self)
 
 
-def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: float = 0.25) -> SignalStats:
+def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: float = 0.25,
+                 t: Optional[np.ndarray] = None) -> SignalStats:
     """
     Statistics of ``y`` over one interval, given the interval's ``fit``.
 
     ``std`` is the residual standard deviation with the fit's degrees of
     freedom removed; ``tau_int`` and ``N_eff`` come from the residuals; and
     ``u_mean = std / sqrt(N_eff)`` is the uncertainty of the interval mean.
+    With sample times ``t``, autocorrelation is not estimated across
+    omitted timestamps.
     """
     y = np.asarray(y, dtype=float)
+    t = _check_times(t, len(y))
     e = np.asarray(fit.residuals, dtype=float)
     ok = np.isfinite(e) & np.isfinite(y)
     n = int(ok.sum())
@@ -100,7 +134,8 @@ def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: floa
         return SignalStats(0, 0.0, nan, nan, nan, nan, nan, True, **extra)
     dof = max(n - max(fit.n_params, 1), 1)
     std = float(np.sqrt(np.sum(e[ok] ** 2) / dof))
-    tau = acf_tau([e[a:b] for a, b in finite_pieces(ok)], dt, max_lag_frac, pair_weighted=True)
+    pieces = split_at_time_gaps(finite_pieces(ok), t, dt)
+    tau = acf_tau([e[a:b] for a, b in pieces], dt, max_lag_frac, pair_weighted=True)
     n_eff = max(n * dt / tau, 1.0)
     return SignalStats(n, n * dt, float(y[ok].mean()), std, tau, n_eff, std / np.sqrt(n_eff),
                        n_eff < 10, **extra)
@@ -139,7 +174,7 @@ def _nan_error_stats() -> ErrorStats:
 
 
 def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Sequence[Tuple[int, int]]] = None,
-                nrmse: str = "mean", max_lag_frac: float = 0.25) -> ErrorStats:
+                nrmse: str = "mean", max_lag_frac: float = 0.25, t: Optional[np.ndarray] = None) -> ErrorStats:
     """
     Error statistics of ``a`` against the reference ``b``, with ``e = a - b``.
 
@@ -157,6 +192,10 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     nrmse : "mean" (default), "range", "std" or "none"
         Normalisation of NRMSE: ``|mean(b)|``, ``max(b) - min(b)``,
         ``std(b)``, or not computed (NaN).
+    t : array, optional
+        Sample times in seconds. Pieces are also split where consecutive
+        times step by more than 1.5 ``dt`` (omitted timestamps), so
+        autocorrelation is not estimated across them.
 
     ``r`` is Pearson's correlation of ``a`` and ``b`` (NaN if either is
     constant). ``u_bias = std / sqrt(N_eff)`` with ``N_eff = n dt /
@@ -168,8 +207,9 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     b = np.asarray(b, dtype=float)
     if a.shape != b.shape:
         raise ValueError("a and b must have the same shape")
+    t = _check_times(t, len(a))
     ok = np.isfinite(a) & np.isfinite(b)
-    runs = finite_pieces(ok, pieces)
+    runs = split_at_time_gaps(finite_pieces(ok, pieces), t, dt)
     if not runs:
         return _nan_error_stats()
     idx = np.concatenate([np.arange(lo, hi) for lo, hi in runs])
@@ -195,11 +235,12 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
 
 
 def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt: float,
-                   states: Sequence[str] = STATES, nrmse: str = "mean", max_lag_frac: float = 0.25):
+                   states: Sequence[str] = STATES, nrmse: str = "mean", max_lag_frac: float = 0.25,
+                   t: Optional[np.ndarray] = None):
     """
     ``error_stats`` per state: one row per entry of ``states`` ("all",
     "steady", "transient", "indeterminate"), pooling that state's segments.
-    Returns a DataFrame indexed by state.
+    Returns a DataFrame indexed by state. ``t``: see ``error_stats``.
     """
     import pandas as pd
 
@@ -207,7 +248,8 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
     rows = {}
     for st in states:
         sel = [(s.start, s.stop) for s in segs if st == ALL or s.state == State(st)]
-        es = error_stats(a, b, dt=dt, pieces=sel, nrmse=nrmse, max_lag_frac=max_lag_frac) if sel else _nan_error_stats()
+        es = (error_stats(a, b, dt=dt, pieces=sel, nrmse=nrmse, max_lag_frac=max_lag_frac, t=t) if sel
+              else _nan_error_stats())
         rows[str(st)] = es.as_dict()
     out = pd.DataFrame.from_dict(rows, orient="index")
     out.index.name = "state"
@@ -215,18 +257,18 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
 
 
 def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt: float,
-                     nrmse: str = "mean", max_lag_frac: float = 0.25):
+                     nrmse: str = "mean", max_lag_frac: float = 0.25, t: Optional[np.ndarray] = None):
     """
     ``error_stats`` for each segment. Returns a DataFrame with the segment's
     index, state, ``forced`` (an override forced some of its labels), start
-    and stop.
+    and stop. ``t``: see ``error_stats``.
     """
     import pandas as pd
 
     segs = check_segments(segs, len(np.asarray(a)))
     rows = []
     for i, s in enumerate(segs):
-        es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac)
+        es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac, t=t)
         rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
                      **es.as_dict()})
     columns = ["segment", "state", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
@@ -234,4 +276,4 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
 
 
 __all__ = ["SignalStats", "ErrorStats", "signal_stats", "error_stats", "stats_by_state", "stats_by_segment",
-           "finite_pieces", "STATES"]
+           "finite_pieces", "split_at_time_gaps", "STATES"]

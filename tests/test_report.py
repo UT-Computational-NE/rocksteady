@@ -139,7 +139,7 @@ def test_empty_records_keep_their_schema(index):  # #21
     full = rs.batch.run(det, pd.DataFrame({"x": np.zeros(5)}), with_results=True)
     for with_results in (False, True):
         out = rs.batch.run(det, empty, with_results=with_results)
-        expected = ["label", "eta", "limiting", "since_disturbance_s", "forced_by", "reason"]
+        expected = ["label", "eta", "limiting", "since_disturbance_s", "forced_by", "reason", "valid", "window_start_s"]
         expected += ["ratio_x_constant"] if with_results else []
         assert list(out.columns) == expected + ["t_s"] and len(out) == 0
     assert list(full.columns) == list(rs.batch.run(det, empty, with_results=True).columns)

@@ -16,7 +16,7 @@ if TYPE_CHECKING:  # pandas is imported where it is used, so the streaming detec
     import pandas as pd
 
 
-RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by", "reason")
+RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by", "reason", "valid", "window_start_s")
 
 
 def _unique_columns(df) -> list:
@@ -54,9 +54,18 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     ``limiting``, ``since_disturbance_s``, ``forced_by`` (the override that
     forced the label, or None where the label follows from the data),
     ``reason`` (``core.Reason`` value: why the row has its label),
-    optionally one ``ratio_<criterion>`` per criterion (NaN where it was
-    not evaluated), and ``t_s``. The columns are the same for an empty
-    record.
+    ``valid`` (the row's sample was readable and finite), ``window_start_s``
+    (start of the window examined on this row: the certifying window of a
+    passing row; NaN where none was examined), optionally one
+    ``ratio_<criterion>`` per criterion (NaN where it was not evaluated),
+    and ``t_s`` (the sample time in seconds, on the same clock as
+    ``window_start_s``). The columns are the same for an empty record.
+
+    Rows map one-to-one to the rows of ``df``, in order, with its index.
+    The sample times must follow the sampling contract of
+    ``Timing.grid_tolerance``; resample a record sampled faster than, or
+    off, the grid first (for example ``df.resample("1s").mean()``, which
+    leaves NaN rows where samples are missing).
     """
     import pandas as pd
 
@@ -73,15 +82,17 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         v = detector.update(float(t[i]), dict(zip(cols, data[i])))
         row = {"label": v.label.value, "eta": v.eta, "limiting": v.limiting,
                "since_disturbance_s": v.since_disturbance_s, "forced_by": v.forced_by,
-               "reason": None if v.reason is None else v.reason.value}
+               "reason": None if v.reason is None else v.reason.value, "valid": v.valid,
+               "window_start_s": v.window_start_s}
         if with_results:
             for name, r in v.results.items():
                 row[f"ratio_{name}"] = r.ratio
         rows.append(row)
     columns = list(RUN_COLUMNS) + ([f"ratio_{c.name}" for c in detector.criteria] if with_results else [])
     out = pd.DataFrame(rows, index=df.index, columns=columns)  # explicit schema, also for an empty record
-    floats = ["eta", "since_disturbance_s"] + [c for c in columns if c.startswith("ratio_")]
+    floats = ["eta", "since_disturbance_s", "window_start_s"] + [c for c in columns if c.startswith("ratio_")]
     out[floats] = out[floats].astype(float)
+    out["valid"] = out["valid"].astype(bool)
     out["t_s"] = np.asarray(t, dtype=float)
     return out
 
