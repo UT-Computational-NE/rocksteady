@@ -152,3 +152,16 @@ def test_compare_report_provenance():
     rep = rs.report.compare_report(a, a + 1, [Segment(0, 10, State.STEADY)], names=("model", "data"), dt=1.0)
     assert rep.provenance["error"] == "e = model - data" and rep.provenance["kind"] == "compare_report"
     json.loads(rep.to_json())
+
+
+def test_numpy_option_values_serialize_with_the_standard_encoder():
+    t = np.arange(30.0)
+    y = 2 * (1 - np.exp(-t / 5))
+    for r in (fit_first_order(t, y, y0=np.float32(0)), fit_first_order(t, y, tau_min=np.int64(1)),
+              fit_poly(t, y, np.int64(1))):
+        record = json.loads(json.dumps(r.to_dict()))  # no custom encoder
+        np.testing.assert_array_equal(evaluate(record["model"], record["evaluation"], t), r.fitted)
+    assert json.loads(json.dumps(fit_first_order(t, y, y0=np.float32(0)).to_dict()))["options"]["y0"] == 0.0
+    spec = normalize_model({"model": "first_order", "tau_min": np.int64(1), "y0": np.float32(0)})
+    assert json.loads(json.dumps(spec)) == {"model": "first_order", "y0": 0.0, "tau_min": 1, "tau_max": None,
+                                            "uncertainty": "ar1"}
