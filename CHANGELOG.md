@@ -11,6 +11,15 @@
   optionally backfilled over their certifying window (#1).
 - `batch.signal_values(detector, df)`: the detector's signal values for
   every row (#1).
+- `rocksteady.fit`: fit models for intervals, registered in
+  `registry.fit_models` (#2).
+  - The `"poly"` model fits a polynomial of any order on scaled time.
+    Its parameters are the derivatives at the interval centre: `level`,
+    `slope`, `curvature`, ...
+  - Parameter covariances are corrected for autocorrelation with an
+    AR(1) sandwich, computed in O(n).
+  - `piecewise_fit` fits each segment with the model for its state; the
+    model spec is per signal and optionally per state.
 
 ### Changed
 

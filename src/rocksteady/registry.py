@@ -2,7 +2,7 @@
 Registries of named providers.
 
 Every concrete component (criterion, disturbance, override, signal
-builder, slope-uncertainty method) is registered under a short name, so
+builder, slope-uncertainty method, fit model) is registered under a short name, so
 that it can be created by name (``rocksteady.factory``) and described in a
 plain-data detector spec. The built-in providers register themselves when
 ``rocksteady`` is imported. Register your own the same way:
@@ -88,5 +88,7 @@ overrides = Registry("override", Override)
 signal_builders = Registry("signal builder")
 #: Slope-uncertainty methods: callables ``(t, y) -> (b, u_b, k)`` (see ``stats``).
 slope_methods = Registry("slope method")
+#: Interval fit models: callables ``(t, y, **options) -> FitResult`` (see ``fit``).
+fit_models = Registry("fit model")
 
-__all__ = ["Registry", "criteria", "disturbances", "overrides", "signal_builders", "slope_methods"]
+__all__ = ["Registry", "criteria", "disturbances", "overrides", "signal_builders", "slope_methods", "fit_models"]
