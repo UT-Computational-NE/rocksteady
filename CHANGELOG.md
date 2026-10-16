@@ -16,6 +16,9 @@
   rejected. `Timing` exposes `effective_block_s`, `evaluated_samples`,
   `evaluated_window_s` and `effective`. `segments_from` backfills over the
   evaluated span (#15).
+- `signals.spread` is NaN when any channel is not finite. Python's `max` and
+  `min` handled NaN by position, so a missing channel could be ignored and a
+  record certified on partial data, depending on channel order (#16).
 
 ## 0.3.0
 

@@ -1,6 +1,9 @@
 """Tests of the signal builders and the floor-latch override."""
 
+import itertools
 import pickle
+
+import numpy as np
 
 import pytest
 
@@ -50,3 +53,21 @@ def test_floor_latch_custom_label_and_name():
     o = rs.FloorLatch("p", floor=1.0, label=Label.INDETERMINATE, name="off")
     o.apply(_ctx(2.0))
     assert o.apply(_ctx(0.5)) == Label.INDETERMINATE and o.name == "off"
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_spread_is_missing_when_any_channel_is_not_finite(bad):  # #16
+    cols = ["a", "b", "c"]
+    for pos in range(3):
+        values = [1.0, 2.0, 3.0]
+        values[pos] = bad
+        for perm in itertools.permutations(range(3)):
+            s = spread([cols[i] for i in perm])
+            assert np.isnan(s(dict(zip(cols, values))))
+
+
+def test_detector_treats_a_missing_channel_in_spread_as_missing():  # #16
+    det = rs.Detector([rs.Signal("spread", spread(["a", "b", "c"]))], [rs.DeviationCriterion("spread", 1, 0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    labels = [det.update(t, {"a": 1.0, "b": np.nan, "c": 2.0}).label for t in range(3)]
+    assert labels == [Label.INDETERMINATE] * 3
