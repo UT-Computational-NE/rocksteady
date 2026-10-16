@@ -99,6 +99,22 @@
   Autocorrelation is no longer estimated across omitted timestamps, where
   adjacent stored rows are not adjacent observations
   (`metrics.split_at_time_gaps`) (#22).
+- `tools/benchmark.py`: scaling of `slope_ar1`, `Detector.update`
+  (blocks, channels, window copy), fragmented `acf_tau` and `EventLog` (#25).
+
+### Performance
+
+- `stats.slope_ar1` no longer forms dense n x n lag and correlation
+  matrices, and the unbounded process-wide lag-matrix cache is gone. It
+  uses the O(n) AR(1) primitive `ar1_apply`, moved with a new `ar1_quad` to
+  the dependency-free module `rocksteady._ar1` (`rocksteady.fit.ar1_apply`
+  still works). 10,000 blocks: 624 ms to 1.8 ms per call; 90 blocks: 74 to
+  33 us. Uncertainties agree with the dense algorithm to 1e-11 (relative);
+  slopes and coverage factors are identical (#25).
+- `ar1_apply` runs its recursions on Python floats: same results bit for
+  bit, several times faster (fit covariances of long intervals) (#25).
+- `stats.acf_tau` accumulates only the lags each piece has. One day-long
+  piece plus 10,000 short ones: 461 ms to 52 ms, identical results (#25).
 
 ## 0.3.0
 
