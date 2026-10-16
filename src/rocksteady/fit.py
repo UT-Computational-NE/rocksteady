@@ -336,6 +336,26 @@ def _time_scales(s: np.ndarray, tau_min: Optional[float],
     return span, dt, lo, hi
 
 
+def _undetermine(cov: Optional[np.ndarray], idx: Sequence[int], flags: Set[str]) -> None:
+    """Mark parameters ``idx`` as undetermined: infinite variance, NaN covariances."""
+    if cov is not None:
+        for i in idx:
+            cov[i, :] = np.nan
+            cov[:, i] = np.nan
+            cov[i, i] = np.inf
+    flags.add("rank_deficient")
+
+
+def _negligible_amplitude(amplitude: float, y: np.ndarray) -> bool:
+    """
+    True when an exponential's amplitude is at the round-off level of the
+    data values. The time constant of such a curve is undetermined, and the
+    column scaling that makes covariances unit-invariant would otherwise
+    turn round-off into an apparently determined direction.
+    """
+    return not abs(amplitude) > 1e3 * np.finfo(float).eps * float(np.max(np.abs(y)))
+
+
 def _identifiability(flags: Set[str], tau: float, u_tau: float, span: float, dt: float) -> None:
     """Flag a time constant that the interval cannot determine."""
     if not np.isfinite(u_tau) or u_tau > 0.5 * abs(tau) or span < 0.5 * abs(tau) or abs(tau) < 5.0 * dt:
@@ -403,6 +423,8 @@ def fit_first_order(t: np.ndarray, y: np.ndarray, y0: Optional[float] = None, ta
     cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
     _flag_undetermined(cov, flags)
+    if _negligible_amplitude(y_start - y_inf, y_ok):
+        _undetermine(cov, [2, 3], flags)  # tau, lambda
     u_tau = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, tau, u_tau, span, dt)
     params = {"y0": y_start, "y_inf": y_inf, "tau": tau, "lambda": 1.0 / tau}
@@ -471,6 +493,8 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     cov = propagate_cov(cov_th, jac_h)
     flags: Set[str] = {"tau_at_bound"} if at_bound else set()
     _flag_undetermined(cov, flags)
+    if _negligible_amplitude(B, y_ok):
+        _undetermine(cov, [2], flags)  # T
     u_T = float(np.sqrt(max(cov[2, 2], 0.0))) if cov is not None else float("nan")
     _identifiability(flags, T, u_T, span, dt)
     return FitResult("exp", {"c": c, "A": A, "T": T}, cov, fitted, resid, flags, options, phi, 3)
