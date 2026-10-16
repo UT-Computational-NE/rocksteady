@@ -278,3 +278,30 @@ def test_duplicate_columns_are_rejected():  # #14
         rs.batch.run(det, df)
     with pytest.raises(ValueError, match="duplicate column names"):
         rs.batch.signal_values(det, df)
+
+
+def _ramp_detector(limit, **timing):
+    return rs.Detector([rs.Signal("x", "x")], [rs.DriftCriterion("x", limit_per_s=limit, method="nw", k=2.0)],
+                       timing=rs.Timing(**timing))
+
+
+@pytest.mark.parametrize("block_s, window_s, samples", [(1.4, 5.6, 1), (1.6, 9.6, 2), (2.0, 8.0, 2), (2.6, 13.0, 3)])
+def test_drift_uses_the_effective_block_duration(block_s, window_s, samples):  # #15
+    det = _ramp_detector(0.8, sample_period_s=1.0, block_s=block_s, window_s=window_s)
+    assert det.timing.block_samples == samples and det.timing.effective_block_s == samples
+    v = [det.update(float(t), {"x": float(t)}) for t in range(det.timing.window_samples + 2)][-1]
+    assert v.results["x_drift"].statistic == pytest.approx(1.0)  # the true slope, 1 unit/s
+    assert v.label == Label.SETTLING  # above the 0.8 limit: never certified
+
+
+def test_ramp_near_the_limit_and_effective_timing():  # #15
+    for limit, label in ((1.05, Label.STEADY), (0.95, Label.SETTLING)):
+        det = _ramp_detector(limit, sample_period_s=0.5, block_s=1.4, window_s=6.0)
+        v = [det.update(0.5 * i, {"x": 0.5 * i}) for i in range(20)][-1]
+        assert v.label == label and v.results["x_drift"].statistic == pytest.approx(1.0)
+    eff = rs.Timing(sample_period_s=1.0, block_s=1.4, window_s=5.6).effective
+    assert eff["block_s"] == 1.0 and eff["window_samples"] == 6 and eff["evaluated_samples"] == 6
+    odd = rs.Timing(sample_period_s=1.0, block_s=2.0, window_s=7.0)
+    assert odd.n_blocks == 3 and odd.evaluated_samples == 6 and odd.evaluated_window_s == 6.0
+    with pytest.raises(ValueError, match="at least one sample period"):
+        rs.Timing(sample_period_s=1.0, block_s=0.4, window_s=5.0)
