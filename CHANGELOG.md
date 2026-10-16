@@ -74,6 +74,10 @@
   steady run (`segments(..., bridge=)`, from the `reason` column), so NaN
   rows and omitted timestamps give the same steady intervals. A steady run
   is no longer split by tolerated NaN rows (#24).
+- Sampling contract: `update` rejects a step shorter than half a sample
+  period (a record sampled faster than `sample_period_s`), which was
+  previously counted as a full period. `Timing.grid_tolerance` (default
+  0.5) can be lowered to also reject steps off the sampling grid (#22).
 
 ### Added
 
@@ -85,6 +89,16 @@
   when an override forced a label in the segment, and the interval tables
   of `fit_report`, `compare_report` and `stats_by_segment` carry a `forced`
   column (#24).
+- `batch.run` adds `valid` (the sample was readable and finite) and
+  `window_start_s` (start of the window examined on each row: a passing
+  row's certifying window), from `Verdict.valid` and
+  `Verdict.window_start_s`. Output rows map one-to-one to input rows, with
+  the same index (#22).
+- `error_stats`, `signal_stats`, `stats_by_state` and `stats_by_segment`
+  take sample times `t=`, and `fit_report`/`compare_report` pass them.
+  Autocorrelation is no longer estimated across omitted timestamps, where
+  adjacent stored rows are not adjacent observations
+  (`metrics.split_at_time_gaps`) (#22).
 
 ## 0.3.0
 

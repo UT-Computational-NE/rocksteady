@@ -176,10 +176,10 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
     for name, spec in models.items():
         y = _column(values, name)
         pw = piecewise_fit(t, y, segs, spec)
-        by_state = stats_by_state(pw.fitted, y, segs, dt=dt, states=states, nrmse=nrmse)
+        by_state = stats_by_state(pw.fitted, y, segs, dt=dt, states=states, nrmse=nrmse, t=t)
         rows = []
         for i, (s, r) in enumerate(zip(segs, pw.results)):
-            ss = signal_stats(y[s.slice], r, dt=dt)
+            ss = signal_stats(y[s.slice], r, dt=dt, t=t[s.slice])
             e = r.residuals[np.isfinite(r.residuals)]
             rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
                          "t_start_s": t[s.start], "t_end_s": t[s.stop - 1], "model": r.label,
@@ -208,8 +208,8 @@ def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a"
     index_src = a if hasattr(a, "index") else None
     av, bv = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
     t, dt, origin = _times(index_src if index_src is not None else {"a": av}, t, dt)
-    by_state = stats_by_state(av, bv, segs, dt=dt, states=states, nrmse=nrmse)
-    per = stats_by_segment(av, bv, segs, dt=dt, nrmse=nrmse)
+    by_state = stats_by_state(av, bv, segs, dt=dt, states=states, nrmse=nrmse, t=t)
+    per = stats_by_segment(av, bv, segs, dt=dt, nrmse=nrmse, t=t)
     starts, stops = per["start"].to_numpy(dtype=int), per["stop"].to_numpy(dtype=int)
     per["t_start_s"] = t[starts] if len(per) else np.array([], dtype=float)
     per["t_end_s"] = t[stops - 1] if len(per) else np.array([], dtype=float)

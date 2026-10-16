@@ -332,6 +332,17 @@ class Timing:
                       valid samples every block in the window must have for
                       the criteria to be evaluated; otherwise the window is
                       undecided.
+    grid_tolerance  : sampling contract. Times passed to ``update`` must lie
+                      on a grid of ``sample_period_s``: each step must be
+                      within ``grid_tolerance`` sample periods of a whole
+                      number (at least one) of periods. A step of k periods
+                      (k >= 2) is a gap of k - 1 missing samples. The
+                      default, 0.5, accepts any step of at least half a
+                      period and rounds it to the grid; a smaller value
+                      rejects jittery or drifting clocks. Steps shorter than
+                      ``1 - grid_tolerance`` periods (sampling faster than
+                      ``sample_period_s``) are always rejected: resample the
+                      record first.
     """
 
     sample_period_s: float = 1.0
@@ -343,6 +354,7 @@ class Timing:
     undecided_counts_toward_hold: bool = True
     max_gap_s: float = 0.0
     min_block_coverage: float = 0.5
+    grid_tolerance: float = 0.5
 
     def __post_init__(self):
         _v.finite(self.sample_period_s, "Timing.sample_period_s", positive=True)
@@ -353,6 +365,9 @@ class Timing:
         _v.finite(self.min_block_coverage, "Timing.min_block_coverage")
         if not 0 < self.min_block_coverage <= 1:
             raise ValueError("min_block_coverage must be in (0, 1]")
+        _v.finite(self.grid_tolerance, "Timing.grid_tolerance")
+        if not 0 < self.grid_tolerance <= 0.5:
+            raise ValueError(f"grid_tolerance must be in (0, 0.5] sample periods, got {self.grid_tolerance!r}")
         if self.block_s < self.sample_period_s * (1 - 1e-9):
             raise ValueError(f"block_s ({self.block_s}) must be at least one sample period ({self.sample_period_s})")
 
@@ -411,6 +426,8 @@ class Verdict:
     since_disturbance_s: float = 0.0
     forced_by: Optional[str] = None
     reason: Optional[Reason] = None
+    valid: bool = True  # the sample was readable and finite, and is in the detector's history
+    window_start_s: float = float("nan")  # time of the first evaluated sample of the window examined, if any
 
     @property
     def eta(self) -> float:
@@ -457,8 +474,9 @@ class Detector:
         label wins.
     timing : Timing
 
-    Times passed to ``update`` must increase. A step of more than 1.5
-    sample periods is a gap; see ``Timing.max_gap_s``.
+    Times passed to ``update`` must increase and lie on the sampling grid
+    (``Timing.grid_tolerance``). A step of more than 1.5 sample periods is
+    a gap; see ``Timing.max_gap_s``.
     """
 
     def __init__(
@@ -578,6 +596,14 @@ class Detector:
             step = t - self._last_t
             if not step > 0:
                 raise ValueError(f"times must increase: t={t} follows t={self._last_t}")
+            k = step / dt
+            tol = self.timing.grid_tolerance
+            if k < 1 - tol:
+                raise ValueError(f"t={t} follows t={self._last_t} by {step:g} s, less than the sample period "
+                                 f"({dt:g} s): the record is sampled faster than sample_period_s; resample it")
+            if abs(k - round(k)) > tol:
+                raise ValueError(f"t={t} follows t={self._last_t} by {k:.3g} sample periods, off the sampling "
+                                 f"grid by more than grid_tolerance={tol:g}")
             if step > 1.5 * dt:
                 gap_reset = not self._tolerate_gap(int(round(step / dt)) - 1)
 
@@ -595,7 +621,7 @@ class Detector:
             self._last_t = t
             since_s = self._since_disturbance * dt if tolerated else 0.0
             return Verdict(t, Label.INDETERMINATE, since_disturbance_s=since_s,
-                           reason=missing if tolerated else Reason.GAP_RESET)
+                           reason=missing if tolerated else Reason.GAP_RESET, valid=False)
         self._last_t = t
         self._gap_run = 0
         self._push(row)
@@ -638,6 +664,7 @@ class Detector:
             return Verdict(t, Label.SETTLING, since_disturbance_s=since_s, reason=Reason.SETTLING_TIME)
 
         blocks = self._blocks()
+        w0 = t - (self.timing.evaluated_samples - 1) * dt  # the window's history is on the sample grid
         results = {}
         if blocks is None:
             outcomes = [Outcome.UNDECIDED]
@@ -651,18 +678,18 @@ class Detector:
 
         if Outcome.FAIL in outcomes:
             self._record(False)
-            return Verdict(t, Label.SETTLING, results, since_s, reason=Reason.FAILED)
+            return Verdict(t, Label.SETTLING, results, since_s, reason=Reason.FAILED, window_start_s=w0)
         if all(o == Outcome.PASS for o in outcomes):
             self._record(True)
-            return Verdict(t, self._passing_label(), results, since_s, reason=Reason.CERTIFIED)
+            return Verdict(t, self._passing_label(), results, since_s, reason=Reason.CERTIFIED, window_start_s=w0)
         # Undecided.
         if self.timing.hold_when_undecided and self._last_decided is not None:
             if not (self._last_decided and not self.timing.undecided_counts_toward_hold):
                 self._record(self._last_decided)
             label = self._passing_label() if self._last_decided else Label.SETTLING
-            return Verdict(t, label, results, since_s, reason=undecided)
+            return Verdict(t, label, results, since_s, reason=undecided, window_start_s=w0)
         self._record(None)
-        return Verdict(t, Label.INDETERMINATE, results, since_s, reason=undecided)
+        return Verdict(t, Label.INDETERMINATE, results, since_s, reason=undecided, window_start_s=w0)
 
 
 __all__ = [
