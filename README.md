@@ -178,9 +178,9 @@ report.by_interval     # DataFrame, one row per (signal, interval)
 ```
 level   fit vs data   (models: steady poly 0, transient first_order, indeterminate first_order)
   state              n       time    bias    std    MAE   RMSE  max|e|  NRMSE       r  u(bias)  tau_int  N_eff
-  all            7,200     2.00 h  +0.000  2.458  1.228  2.458  23.123  0.79%  1.0000   0.2282     62 s    116
-  steady         6,459  107.7 min  +0.000  2.548  1.267  2.548  23.123  0.81%  1.0000   0.2517     63 s    103
-  transient        741   12.3 min  +0.000  1.455  0.892  1.454   6.146  0.51%  1.0000   0.0535      1 s    741
+  all            7,200     2.00 h  +0.000  2.438  1.223  2.438  23.136  0.78%  1.0000   0.2183     58 s    125
+  steady         6,457  107.6 min  +0.000  2.527  1.261  2.526  23.136  0.80%  1.0000   0.2434     60 s    108
+  transient        743   12.4 min  +0.000  1.453  0.891  1.453   6.138  0.51%  1.0000   0.0533      1 s    743
 ```
 
 ### States
@@ -198,7 +198,8 @@ The "all" rows cover every sample.
 
 Labels are causal: a sample is called steady only once the window *ending*
 at it passes. `segments_from` therefore **backfills** each steady
-interval over the window that certified it. It does not backfill runs that
+interval over the window that certified it: the `W - 1` samples before
+its first steady sample, for a window of `W` samples. It does not backfill runs that
 an override forced to steady (they were not certified by data), and it
 never backfills across a disturbance. During slow approaches, labels can
 flicker between `settling` and `indeterminate`. `min_samples=` merges runs

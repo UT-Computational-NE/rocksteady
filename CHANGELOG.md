@@ -54,8 +54,13 @@ Interval fits and statistics by state (milestone v0.3.0, #1-#6).
 
 ### Notes
 
-- `segments_from` takes the `batch.run` output. Override-forced steady
-  runs are not backfilled, and backfill never crosses a disturbance.
+- `segments_from` takes the `batch.run` output and backfills exactly the
+  certifying window (`window_samples - 1` samples). Override-forced
+  steady runs are not backfilled, and backfill never crosses a
+  disturbance.
+- Fit parameter covariances do not depend on parameter units. Parameters
+  the data cannot determine get infinite variance and the flag
+  `rank_deficient`.
 
 ### Changed
 
