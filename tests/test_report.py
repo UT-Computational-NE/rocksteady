@@ -96,6 +96,15 @@ def test_batch_fit_report_runs_detector():
     assert "level   fit vs data" in str(rep)
 
 
+def test_batch_fit_report_with_repeated_index_labels():
+    det = rs.Detector([rs.Signal("x", "x")], [rs.DeviationCriterion("x", limit=100, noise=0)],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    df = pd.DataFrame({"x": np.arange(6.0), "raw": np.arange(6.0) * 2}, index=[0, 0, 1, 1, 2, 2])
+    rep = rs.batch.fit_report(det, df, {"x": 1, "raw": 1})
+    assert rep["raw"].by_state.loc["all", "n"] == 6
+    np.testing.assert_allclose(rep.fits["raw"].fitted, np.arange(6.0) * 2, atol=1e-9)
+
+
 def test_formatter_snapshot():
     _, _, fits, comp = build()
     text = fits.to_string() + "\n\n" + comp.to_string() + "\n"
