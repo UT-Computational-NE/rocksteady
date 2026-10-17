@@ -5,7 +5,7 @@ Every concrete component (criterion, disturbance, override, signal
 builder, slope-uncertainty method, fit model) is registered under a short name, so
 that it can be created by name (``rocksteady.factory``) and described in a
 plain-data detector spec. The built-in providers register themselves when
-``rocksteady`` is imported. Register your own the same way:
+``rocksteady`` is imported. Register your own the same way::
 
     from rocksteady import registry, Criterion, CriterionResult
 

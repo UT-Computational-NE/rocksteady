@@ -1,11 +1,11 @@
 """
-Factories: build components and whole detectors from registered names.
+Factories: build components and whole detectors from registered names::
 
     rs.criterion("drift", signal="T1", limit_per_s=1.7e-4)
     rs.factory.signal("T_avg", builder="mean", cols=["T1", "T2"])
     rs.build_detector(spec)
 
-A detector spec is a plain mapping (JSON, YAML or TOML compatible):
+A detector spec is a plain mapping (JSON, YAML or TOML compatible)::
 
     {
       "timing": {"sample_period_s": 1.0, "block_s": 30.0, "window_s": 1200.0},

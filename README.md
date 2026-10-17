@@ -16,6 +16,8 @@ changes, after the fact. `rocksteady` answers a different question,
 continuously: *has the system settled, and can that be demonstrated from
 the data?*
 
+Documentation: https://rocksteady.readthedocs.io
+
 ## Install
 
 ```
@@ -71,10 +73,10 @@ spec = {
 detector = rs.build_detector(spec)
 ```
 
-Runnable examples with synthetic data are in [`examples/`](examples):
+Runnable examples with synthetic data are in [`examples/`](https://github.com/UT-Computational-NE/rocksteady/tree/main/examples):
 
-- [`thermal_drift.py`](examples/thermal_drift.py): channels relaxing to a setpoint, with an event log, settling time and hold time. It then fits the approach to the new setpoint with a first-order model (τ recovered as 600 ± 1 s) and compares two channels by state.
-- [`actuator_steps.py`](examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown rule. It ends with a fit report by state.
+- [`thermal_drift.py`](https://github.com/UT-Computational-NE/rocksteady/blob/main/examples/thermal_drift.py): channels relaxing to a setpoint, with an event log, settling time and hold time. It then fits the approach to the new setpoint with a first-order model (τ recovered as 600 ± 1 s) and compares two channels by state.
+- [`actuator_steps.py`](https://github.com/UT-Computational-NE/rocksteady/blob/main/examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown rule. It ends with a fit report by state.
 
 ## Concepts
 
@@ -483,8 +485,8 @@ python -m pytest -m "not slow"      # skip the Monte Carlo calibration
 python tests/test_regression.py     # regenerate golden snapshots after an intended label change
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for changes between versions.
+See [CHANGELOG.md](https://github.com/UT-Computational-NE/rocksteady/blob/main/CHANGELOG.md) for changes between versions.
 
 ## License
 
-BSD 3-Clause. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](https://github.com/UT-Computational-NE/rocksteady/blob/main/LICENSE).

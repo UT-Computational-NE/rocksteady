@@ -34,6 +34,18 @@ jobs:
       - run: python -c "import numpy, pandas; print('numpy', numpy.__version__, 'pandas', pandas.__version__)"
       - run: python -m pytest -m "not slow"
 
+  # The Read the Docs site (https://rocksteady.readthedocs.io), built as Read the Docs builds it:
+  # any Sphinx warning (for example a malformed docstring) fails the job.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r docs/requirements.txt -e .
+      - run: python -m sphinx -W --keep-going -b html docs/source docs/_build/html
+
   calibration:
     runs-on: ubuntu-latest
     steps:

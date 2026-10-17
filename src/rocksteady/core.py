@@ -66,24 +66,24 @@ class Reason(str, Enum):
     """
     Why a verdict has its label.
 
-    CERTIFIED       all criteria pass on the window (HOLDING or STEADY).
-    FORCED          an override forced the label (``Verdict.forced_by``).
-    DISTURBANCE     a disturbance is active (DISTURBED).
-    SETTLING_TIME   the quiet time after a disturbance, or at the start of a
-                    record, has not yet elapsed.
-    FAILED          at least one criterion fails beyond its uncertainty.
-    UNDECIDED       statistical overlap: the uncertainty straddles a limit.
-    INVALID_RESULT  a criterion returned an unusable result
-                    (``CriterionResult.invalid_reason``).
-    LOW_COVERAGE    some block has too few valid samples
-                    (``Timing.min_block_coverage``).
-    INSUFFICIENT_HISTORY  fewer samples than one window since the start or
-                    the last reset.
-    MISSING         this sample is non-finite, and the gap is tolerated.
-    UNREADABLE      a signal could not be computed from this sample (a
-                    missing key or a bad value), and the gap is tolerated.
-    GAP_RESET       missing data (this sample, or a jump in time before it)
-                    exceeded ``Timing.max_gap_s`` and cleared the history.
+    - ``CERTIFIED``: all criteria pass on the window (HOLDING or STEADY).
+    - ``FORCED``: an override forced the label (``Verdict.forced_by``).
+    - ``DISTURBANCE``: a disturbance is active (DISTURBED).
+    - ``SETTLING_TIME``: the quiet time after a disturbance, or at the start
+      of a record, has not yet elapsed.
+    - ``FAILED``: at least one criterion fails beyond its uncertainty.
+    - ``UNDECIDED``: statistical overlap; the uncertainty straddles a limit.
+    - ``INVALID_RESULT``: a criterion returned an unusable result
+      (``CriterionResult.invalid_reason``).
+    - ``LOW_COVERAGE``: some block has too few valid samples
+      (``Timing.min_block_coverage``).
+    - ``INSUFFICIENT_HISTORY``: fewer samples than one window since the start
+      or the last reset.
+    - ``MISSING``: this sample is non-finite, and the gap is tolerated.
+    - ``UNREADABLE``: a signal could not be computed from this sample (a
+      missing key or a bad value), and the gap is tolerated.
+    - ``GAP_RESET``: missing data (this sample, or a jump in time before it)
+      exceeded ``Timing.max_gap_s`` and cleared the history.
 
     The last three label a sample INDETERMINATE whatever the hold policy.
     UNDECIDED, INVALID_RESULT and LOW_COVERAGE may keep the last decided
@@ -308,31 +308,53 @@ class Timing:
     """
     Time scales of the detector.
 
-    sample_period_s : spacing of the samples fed to ``update``.
-    block_s         : block length at which criteria are evaluated. It is
-                      rounded to a whole number of samples
-                      (``effective_block_s``) and must be at least one sample.
-    window_s        : trailing window length, rounded to whole samples. The
-                      criteria evaluate its last ``n_blocks`` whole blocks
-                      (``evaluated_window_s``); with a window that is not a
-                      whole number of blocks, the leading remainder is history
-                      the detector waits for but does not evaluate.
-    settle_s        : quiet time required after a disturbance before a window
-                      is evaluated, in addition to the window itself.
-    hold_s          : continuous passing time before HOLDING becomes STEADY.
-    hold_when_undecided : an undecided window (statistical overlap, an
-                      invalid criterion result, or low block coverage) keeps
-                      the last decided state instead of returning
-                      INDETERMINATE.
-    undecided_counts_toward_hold : when an undecided window keeps a passing
-                      state, it also advances the hold clock. If False, the
-                      hold clock pauses until a window passes again.
-    max_gap_s       : longest run of missing data that is tolerated without
-                      clearing the history. Missing data are non-finite or
-                      unreadable samples, and the samples implied by a jump
-                      in ``t`` of more than 1.5 sample periods. With 0 (the
-                      default) any missing data resets the detector.
+    Parameters
+    ----------
+    sample_period_s
+        Spacing of the samples fed to ``update``.
+    block_s
+        Block length at which criteria are evaluated. It is rounded to a
+        whole number of samples (``effective_block_s``) and must be at least
+        one sample.
+    window_s
+        Trailing window length, rounded to whole samples. The criteria
+        evaluate its last ``n_blocks`` whole blocks (``evaluated_window_s``).
+        With a window that is not a whole number of blocks, the leading
+        remainder is history the detector waits for but does not evaluate.
+    settle_s
+        Quiet time required after a disturbance before a window is
+        evaluated, in addition to the window itself.
+    hold_s
+        Continuous passing time before HOLDING becomes STEADY.
+    hold_when_undecided
+        An undecided window (statistical overlap, an invalid criterion
+        result, or low block coverage) keeps the last decided state instead
+        of returning INDETERMINATE.
+    undecided_counts_toward_hold
+        When an undecided window keeps a passing state, it also advances the
+        hold clock. If False, the hold clock pauses until a window passes
+        again.
+    max_gap_s
+        Longest run of missing data that is tolerated without clearing the
+        history. Missing data are non-finite or unreadable samples, and the
+        samples implied by a jump in ``t`` of more than 1.5 sample periods.
+        With 0 (the default) any missing data resets the detector.
+    min_block_coverage
+        When gaps are tolerated, the smallest fraction of valid samples
+        every block in the window must have for the criteria to be
+        evaluated; otherwise the window is undecided.
+    grid_tolerance
+        Sampling contract. Times passed to ``update`` must lie on a grid of
+        ``sample_period_s``: each step must be within ``grid_tolerance``
+        sample periods of a whole number (at least one) of periods. A step
+        of k periods (k >= 2) is a gap of k - 1 missing samples. The default,
+        0.5, accepts any step of at least half a period and rounds it to the
+        grid; a smaller value rejects jittery or drifting clocks. Steps
+        shorter than ``1 - grid_tolerance`` periods (sampling faster than
+        ``sample_period_s``) are always rejected: resample the record first.
 
+    Notes
+    -----
     Missing data and the hold clock: a tolerated missing sample is labelled
     INDETERMINATE (reason MISSING or UNREADABLE) whatever the two undecided
     options, because no window is evaluated on it. The hold clock *pauses*:
@@ -343,21 +365,6 @@ class Timing:
     steady run, so a gap given as NaN rows and the same gap given as
     omitted timestamps yield the same steady intervals. The quiet time
     after a disturbance does advance over a tolerated gap.
-    min_block_coverage : when gaps are tolerated, the smallest fraction of
-                      valid samples every block in the window must have for
-                      the criteria to be evaluated; otherwise the window is
-                      undecided.
-    grid_tolerance  : sampling contract. Times passed to ``update`` must lie
-                      on a grid of ``sample_period_s``: each step must be
-                      within ``grid_tolerance`` sample periods of a whole
-                      number (at least one) of periods. A step of k periods
-                      (k >= 2) is a gap of k - 1 missing samples. The
-                      default, 0.5, accepts any step of at least half a
-                      period and rounds it to the grid; a smaller value
-                      rejects jittery or drifting clocks. Steps shorter than
-                      ``1 - grid_tolerance`` periods (sampling faster than
-                      ``sample_period_s``) are always rejected: resample the
-                      record first.
     """
 
     sample_period_s: float = 1.0
