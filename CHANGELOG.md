@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `rs.optimal_segments`: best-fit segments under limits (#45).
+  - **Objective:** breakpoints and per-segment states that minimise the total
+    squared error of each segment's fit, the model chosen per state, plus a
+    per-segment penalty (default `"bic"`).
+  - **Limits:** at most N segments of a state per period (`per`,
+    `max_counts`); a segment counts against every period it touches, and
+    periods follow a `DatetimeIndex`'s wall clock. Also allowed
+    `transitions` (default: any) and per-state `min_duration_s` /
+    `max_duration_s`.
+  - **Methods:** `subset` (among given candidates, e.g. the detector's
+    boundaries), `refine` (local search around them) and `exact` (every
+    sample, or a grid). All three share one dynamic program; `exact`
+    matches brute force.
+  - **Speed:** constant and linear costs come from running sums. Other
+    models are fitted with `fit.fit_model`, with a bound on known feasible
+    cost to prune.
+  - **Output:** `OptimalSegmentation` with `segments` (for `fit_report`),
+    RMS, SSE and per-period counts.
+  - **Helpers:** `rs.compare_segments` (sample agreement and confusion
+    against, e.g., the detector) and `optimal.count_by_period`.
+  - `tools/benchmark.py optimal`: a week at 1 Hz.
+
 ## 0.4.0
 
 Fixes from the 0.3.0 review (#14-#21), validation, verdict reasons and the

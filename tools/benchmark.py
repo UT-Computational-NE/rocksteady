@@ -13,6 +13,11 @@ Sections:
 - ``acf``: ``stats.acf_tau`` on one long piece plus many short ones
   (fragmented intervals).
 - ``events``: ``EventLog.update`` against the number of logged events.
+- ``optimal``: ``optimal_segments`` on a synthetic week at 1 Hz (five
+  operating days, a weekend shutdown), per day at most 3 steady and 2
+  transient segments: ``subset`` and ``refine`` from 60 imprecise candidate
+  breakpoints, with exponential and with linear transients, and ``exact``
+  on 5- and 1-minute grids with polynomial models.
 
 Times are per call, the best of a few repeats. Absolute numbers depend on
 the machine; the scaling is what matters.
@@ -111,7 +116,49 @@ def bench_events():
         print(f"  {n_events:7d} events: {_us(_best(step, repeat=3))}")
 
 
-SECTIONS = {"slope": bench_slope, "detector": bench_detector, "acf": bench_acf, "events": bench_events}
+def _week(seed=0):
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2026-03-02", periods=7 * 86400, freq="1s", tz="America/Chicago")
+    s = np.arange(len(idx), dtype=float)
+    p = np.zeros(len(idx))
+    changes = []
+    for d in range(5):
+        up, down = d * 86400 + 8 * 3600, d * 86400 + 16 * 3600
+        p[up:up + 900] = np.minimum(1e-3 * np.exp((s[up:up + 900] - up) / 66.0), 950.0)  # 66 s period
+        p[up + 900:down] = 950.0
+        p[down:down + 3600] = 950.0 * np.exp(-(s[down:down + 3600] - down) / 60.0)
+        changes += [up, up + 900, down, down + 600]
+    y = p + rng.normal(0, 1, len(p)) * (0.01 * p + 0.05)
+    # Detector-like candidates: late or early by minutes, plus spurious ones.
+    cands = sorted({int(x + rng.integers(-200, 400)) for x in changes} | set(rng.integers(0, len(y), 40).tolist()))
+    return idx, y, cands
+
+
+def bench_optimal():
+    print("optimal_segments on a week at 1 Hz (604,800 samples), per day <= 3 steady and <= 2 transient")
+    idx, y, cands = _week()
+    kw = dict(per="1D", max_counts={"steady": 3, "transient": 2}, max_duration_s={"transient": 7200.0})
+    runs = [
+        ("subset, exp transients", dict(method="subset", candidates=cands), "exp"),
+        ("refine, exp transients", dict(method="refine", candidates=cands, refine_s=600.0), "exp"),
+        ("subset, linear transients", dict(method="subset", candidates=cands), 1),
+        ("refine, linear transients", dict(method="refine", candidates=cands, refine_s=600.0), 1),
+        ("exact, 5 min grid, linear", dict(method="exact", grid_s=300.0), 1),
+        ("exact, 1 min grid, linear", dict(method="exact", grid_s=60.0), 1),
+    ]
+    for label, opts, transient in runs:
+        spec = {"model": "exp", "T_min": 5.0, "T_max": 1e4} if transient == "exp" else transient
+        t0 = time.perf_counter()
+        r = rs.optimal_segments(idx, y, {"steady": 0, "transient": spec}, **kw, **opts)
+        dt = time.perf_counter() - t0
+        print(f"  {label:28s} {dt:7.1f} s   RMS {r.rms:7.3f}   {len(r.segments)} segments, "
+              f"{r.n_candidates} candidates, {r.n_fits} model fits")
+
+
+SECTIONS = {"slope": bench_slope, "detector": bench_detector, "acf": bench_acf, "events": bench_events,
+            "optimal": bench_optimal}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or SECTIONS:
