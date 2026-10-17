@@ -352,6 +352,63 @@ cannot underflow. `FitResult.predict(t)`, or
 `fit.evaluate(model, evaluation, t)` on an exported record, reproduces the
 fitted curve at any time on the same clock.
 
+## Best-fit segments under limits
+
+`rs.optimal_segments` answers a different question from the detector: *what
+is the best piecewise description of this record, given a budget of
+segments?* It chooses breakpoints and a state for each segment, fits each
+segment with the model for its state, and minimises the total squared error
+(so the RMS of fit − data), subject to your limits:
+
+```python
+res = rs.optimal_segments(
+    df.index, df["power"],                       # a DatetimeIndex, or seconds
+    models={"steady": 0, "transient": "exp"},
+    per="1D", max_counts={"steady": 3, "transient": 2},
+    min_duration_s={"steady": 600},
+    max_duration_s={"transient": 7200},          # the main lever on run time
+    method="refine",
+    candidates=rs.segments_from(detector, out),  # detector boundaries as a starting point
+    refine_s=detector.timing.evaluated_window_s,
+)
+print(res)                                       # RMS, counts, candidates
+res.counts                                       # segments per period and state
+report = rs.report.fit_report(values, res.segments, {"power": {"steady": 0, "transient": "exp"}})
+rs.compare_segments(res.segments, rs.segments_from(detector, out))  # agreement with the detector
+```
+
+These are **best-fit segments, not certified steady states**: the optimiser
+uses the segments it is allowed, whether or not the data would pass the
+detector's criteria.
+
+| Limit | Meaning |
+|---|---|
+| `per`, `max_counts` | at most N segments of a state per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
+| `transitions` | which state may follow which; default any. This constrains labels only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
+| `min_duration_s`, `max_duration_s` | per state |
+| `penalty` | added per segment. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. |
+
+| `method` | Candidate breakpoints | Result |
+|---|---|---|
+| `"subset"` | `candidates` (e.g. detector boundaries) | the best choice among them |
+| `"refine"` | `subset`, then each boundary moved within `refine_s` | a local optimum, never worse than `subset` |
+| `"exact"` | every sample, or every `grid_s`, plus `candidates` | the global optimum on that grid |
+
+Optimal breakpoints for fewer segments are generally not a subset of those
+for more. For example, fit `y = t` with constants: the best 2-segment split
+is at 0.5, the best 3-segment split at 1/3 and 2/3. So `subset` is exact
+only when the candidates contain the optimum.
+
+On a synthetic week at 1 Hz (`python tools/benchmark.py optimal`):
+- `subset` takes about 1 s;
+- `refine` takes about 25 s with exponential transients, almost all of it in
+  the exponential fits, and under 1 s with linear ones;
+- `exact` with polynomial models takes under 1 s on a 5-minute grid and about
+  14 s on a 1-minute grid.
+
+Constant and linear segment costs come from running sums. Other models are
+fitted exactly as `fit_report` fits them.
+
 ## Extending rocksteady
 
 Every component is registered by name, so your own components work in Python
