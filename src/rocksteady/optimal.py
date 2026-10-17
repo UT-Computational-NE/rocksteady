@@ -290,7 +290,8 @@ class _Costs:
                 sxx_c = sxx - sx * sx / nn
                 sxy_c = sxy - sx * sy / nn
                 e_sxx = e_xx + 2.0 * np.abs(sx) * e_x / nn + 4.0 * _EPS * np.abs(sxx)
-                e_sxy = e_xy + (np.abs(sx) * e_y + np.abs(sy) * e_x) / nn + 4.0 * _EPS * (np.abs(sxy) + np.abs(sx * sy) / nn)
+                e_sxy = (e_xy + (np.abs(sx) * e_y + np.abs(sy) * e_x) / nn
+                         + 4.0 * _EPS * (np.abs(sxy) + np.abs(sx * sy) / nn))
                 use = (n >= 3) & (sxx_c > 0)  # fit_poly reduces the order below order + 2 valid samples
                 den = np.where(use, sxx_c, 1.0)
                 gain = sxy_c * sxy_c / den
