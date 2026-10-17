@@ -297,8 +297,10 @@ class _Costs:
                 gain = sxy_c * sxy_c / den
                 sse = np.where(use, sse - gain, sse)
                 err = err + np.where(use, (2.0 * np.abs(sxy_c) * e_sxy + gain * e_sxx) / den + 4.0 * _EPS * gain, 0.0)
-                # A slope term that the rounding could create or remove: no reliable fast answer.
-                err = np.where(use & (e_sxx > 1e-6 * sxx_c), math.inf, err)
+                # With three or more valid samples (distinct times, as t increases) the slope term exists. If
+                # the time variance is not resolved above its rounding, including when it rounds to zero or
+                # below (a short segment in a record with a large time gap), there is no reliable fast answer.
+                err = np.where((n >= 3) & ~(sxx_c > 1e6 * e_sxx), math.inf, err)
         sse = np.maximum(sse, 0.0)
         # Not resolved above the rounding: fit those segments directly.
         bad = np.flatnonzero(~(sse > 16.0 * err) & (n > 0))

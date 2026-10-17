@@ -379,3 +379,22 @@ def test_count_limits_hold_across_a_dst_fall_back():
         segs = [Segment(0, len(idx), ST)]
         assert count_by_period(segs, idx, "1D")["steady"].tolist() == [1] * len(
             pd.unique(idx.tz_localize(None).normalize()))
+
+
+def test_linear_costs_survive_a_large_time_gap():
+    """A gap elsewhere can round a short segment's time variance to zero; the slope must not be dropped."""
+    t = np.array([0.0, 0.001, 0.002, 0.003, 1e6])
+    y = np.array([0.0, 1.0, 2.0, 3.0, 0.0])
+    r = optimal_segments(t, y, {"transient": 1}, method="exact", max_counts={"transient": 2}, penalty=0)
+    assert [(s.start, s.stop) for s in r.segments] == [(0, 4), (4, 5)]
+    assert r.sse == pytest.approx(0.0, abs=1e-12)
+    from rocksteady.optimal import _Costs
+
+    rng = np.random.default_rng(10)
+    t = np.concatenate((1e-3 * np.arange(50), 1e7 + np.arange(50.0)))  # a 1e7 s gap; 1 ms spacing before it
+    y = np.concatenate((2.0 + 3e3 * t[:50], 5.0 - 0.1 * (t[50:] - 1e7))) + rng.normal(0, 1e-3, 100)
+    c = _Costs(t, y, {"transient": 1}, ["transient"])
+    for p, q in [(0, 3), (0, 10), (5, 40), (0, 50), (50, 60), (45, 55), (0, 100)]:
+        e = fit_poly(t[p:q], y[p:q], 1).residuals
+        e = e[np.isfinite(e)]
+        assert c.cost("transient", p, q) == pytest.approx(float(e @ e), rel=1e-6, abs=1e-9), (p, q)
