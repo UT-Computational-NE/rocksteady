@@ -198,8 +198,8 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
         autocorrelation is not estimated across them.
 
     ``r`` is Pearson's correlation of ``a`` and ``b`` (NaN if either is
-    constant). ``u_bias = std / sqrt(N_eff)`` with ``N_eff = n dt /
-    tau_int`` from the de-meaned error.
+    constant). ``u_bias = std / sqrt(N_eff)`` with
+    ``N_eff = n dt / tau_int`` from the de-meaned error.
     """
     if nrmse not in NRMSE_NORMS:
         raise ValueError(f"nrmse must be one of {NRMSE_NORMS}, got {nrmse!r}")

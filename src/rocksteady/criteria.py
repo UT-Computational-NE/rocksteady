@@ -51,7 +51,7 @@ class DeviationCriterion(Criterion):
         from the OLS line, which admits a steady drift (for example, an
         actuator slowly compensating for a slow process change).
     relative : bool
-        Divide deviations by max(|window mean|, ``scale_floor``).
+        Divide deviations by ``max(|window mean|, scale_floor)``.
     scale_floor : float
         Floor for the relative scale, so near-zero signals are judged on an
         absolute basis.

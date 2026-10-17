@@ -26,6 +26,20 @@
     against, e.g., the detector) and `optimal.count_by_period`.
   - `tools/benchmark.py optimal`: a week at 1 Hz.
 
+### Documentation
+
+- A Read the Docs site, https://rocksteady.readthedocs.io (#47).
+  - **Build:** Sphinx with the Read the Docs theme, configured by
+    `.readthedocs.yaml`, `docs/requirements.txt` and `docs/source/conf.py`.
+  - **Guide:** the pages include the README's sections, so the README stays
+    the single source.
+  - **API reference:** one page per public module, generated from the
+    docstrings. The `Timing` and `Reason` docstrings and a few others were
+    reformatted as valid reStructuredText.
+  - **CI:** a `docs` job builds with warnings as errors.
+  - **README:** links to the site; its example, changelog and licence links
+    are now absolute.
+
 ## 0.4.0
 
 Fixes from the 0.3.0 review (#14-#21), validation, verdict reasons and the
