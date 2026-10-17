@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+Fixes from the 0.3.0 review (#14-#21), validation, verdict reasons and the
+missing-sample policy, run-output time metadata, performance, provenance,
+provider contracts, and invariant tests and CI (#22-#28).
+
+Upgrading from 0.3.0. Behaviour changes to check:
+- A record sampled faster than `sample_period_s` (a step under half a period)
+  now raises instead of being counted as full periods (#22).
+- Tolerated NaN rows no longer split a steady interval; segmentation bridges
+  them (#24).
+- `batch.run` has new columns: `reason`, `valid` and `window_start_s`
+  (#22, #24).
+- Configurations, and criterion results, that were silently accepted may now
+  be rejected or undecided (#23). So may duplicate signal or criterion names
+  (#14).
 
 ### Fixed
 

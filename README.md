@@ -19,7 +19,7 @@ the data?*
 ## Install
 
 ```
-pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.3.0"
+pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.4.0"
 ```
 
 Python 3.10 or later, with numpy and pandas; both are installed with the
