@@ -303,3 +303,79 @@ def test_clock_origin_does_not_matter():
     b = optimal_segments(t + 3e8, y, models, period_origin=3e8, **kw)
     assert [(s.start, s.stop, s.state) for s in a.segments] == [(s.start, s.stop, s.state) for s in b.segments]
     assert b.objective == pytest.approx(a.objective, rel=1e-6)
+
+
+# -- review regressions (PR #46) -------------------------------------------------------
+
+
+@pytest.mark.parametrize("order", [2, 3])
+def test_pruning_waits_for_the_full_polynomial_order(order):
+    """fit_poly reduces the order of short segments, so a longer one can fit much better."""
+    t = np.arange(order + 2.0)  # the fewest samples at which fit_poly uses the full order
+    kw = dict(method="exact", max_counts={"steady": 1}, penalty=0)
+    r = optimal_segments(t, t ** order, {"steady": order}, **kw)
+    assert r.sse == pytest.approx(0.0, abs=1e-12) and len(r.segments) == 1
+    rng = np.random.default_rng(order)
+    t = np.arange(60.0)
+    y = np.where(t < 30, 0.01 * (t - 15) ** 2, 5 - 0.002 * (t - 45) ** 3) + rng.normal(0, 0.05, 60)
+    models = {"steady": order, "transient": {"model": "exp", "T_min": 1.0, "T_max": 1e3}}
+    for kw in (dict(method="exact", grid_s=3), dict(method="subset", candidates=[0, 10, 20, 28, 31, 40, 50, 60])):
+        a = optimal_segments(t, y, models, max_counts={"steady": 2, "transient": 1}, prune=True, **kw)
+        b = optimal_segments(t, y, models, max_counts={"steady": 2, "transient": 1}, prune=False, **kw)
+        assert a.objective == pytest.approx(b.objective, rel=1e-12)
+
+
+def test_fast_costs_are_stable_across_large_level_changes():
+    r = optimal_segments(np.arange(4.0), np.array([1e9, 1.0, 2.0, 3.0]), {"steady": 0}, method="exact",
+                         max_counts={"steady": 2}, penalty=0)
+    assert [(s.start, s.stop) for s in r.segments] == [(0, 1), (1, 4)]
+    assert r.sse == pytest.approx(2.0) and r.rms == pytest.approx(math.sqrt(0.5))
+    from rocksteady.optimal import _Costs
+
+    rng = np.random.default_rng(7)
+    n = 500
+    t = np.arange(float(n))
+    y = np.where(t % 100 < 50, 1e9, 0.0) + rng.normal(0, 1e-3, n)  # 12 orders of magnitude apart
+    y[[3, 260]] = np.nan
+    for order in (0, 1):
+        c = _Costs(t, y, {"steady": order}, ["steady"])
+        for p, q in [(0, 50), (50, 100), (60, 70), (149, 152), (150, 200), (250, 270), (40, 60), (0, 500)]:
+            fitted = fit_poly(t[p:q], y[p:q], order)
+            e = fitted.residuals[np.isfinite(fitted.residuals)]
+            want = float(e @ e)
+            got = c.cost("steady", p, q)
+            assert got == pytest.approx(want, rel=1e-6, abs=1e-6 * max(1.0, want)), (order, p, q, got, want)
+        # Vectorised over starts: the same values.
+        ps = np.arange(100, 199)
+        v = c.vector("steady", ps, 200)
+        for p, got in zip(ps[::7], v[::7]):
+            e = fit_poly(t[p:200], y[p:200], order).residuals
+            e = e[np.isfinite(e)]
+            assert got == pytest.approx(float(e @ e), rel=1e-6, abs=1e-12)
+
+
+def test_range_sums_bound_their_error():
+    from rocksteady.optimal import _RangeSum
+
+    rng = np.random.default_rng(8)
+    x = np.concatenate((rng.normal(0, 1, 300) * 1e12, rng.normal(0, 1, 300), rng.normal(5, 1e-6, 300)))
+    rs_ = _RangeSum(x)
+    for _ in range(300):
+        p, q = sorted(rng.integers(0, len(x) + 1, 2))
+        v, err = rs_.range(int(p), int(q))
+        assert abs(v - math.fsum(x[p:q])) <= err + 1e-300
+
+
+def test_count_limits_hold_across_a_dst_fall_back():
+    t = pd.date_range("2026-11-01 00:30", periods=8, freq="30min", tz="America/Chicago")  # 01:00-02:00 twice
+    r = optimal_segments(t, np.arange(8.0), {"steady": 0}, method="exact", per="30min",
+                         max_counts={"steady": 1}, penalty=0)
+    assert r.counts["steady"].max() <= 1
+    assert count_by_period(r.segments, t, "30min")["steady"].max() <= 1
+    assert r.counts.index.is_monotonic_increasing and r.counts.index.is_unique
+    # Days are unaffected by the fall-back and the spring-forward days.
+    for start in ("2026-10-31", "2026-03-07"):
+        idx = pd.date_range(start, periods=3 * 24 * 6, freq="10min", tz="America/Chicago")
+        segs = [Segment(0, len(idx), ST)]
+        assert count_by_period(segs, idx, "1D")["steady"].tolist() == [1] * len(
+            pd.unique(idx.tz_localize(None).normalize()))

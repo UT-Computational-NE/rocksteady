@@ -404,7 +404,7 @@ On a synthetic week at 1 Hz (`python tools/benchmark.py optimal`):
 - `refine` takes about 25 s with exponential transients, almost all of it in
   the exponential fits, and under 1 s with linear ones;
 - `exact` with polynomial models takes under 1 s on a 5-minute grid and about
-  11 s on a 1-minute grid.
+  14 s on a 1-minute grid.
 
 Constant and linear segment costs come from running sums. Other models are
 fitted exactly as `fit_report` fits them.

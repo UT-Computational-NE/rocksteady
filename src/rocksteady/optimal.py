@@ -25,7 +25,10 @@ Limits
   every period it touches, so one segment from 16:00 to 08:00 the next day
   counts against both days. Periods are half-open, and a segment touches a
   period when one of its samples lies in it. For a ``DatetimeIndex``,
-  periods follow its wall clock (local days for a local time zone).
+  periods follow its wall clock (local days for a local time zone). When
+  the clock falls back an hour, the repeated wall time stays in the period
+  already in progress, so a period shorter than an hour is not counted
+  twice; days are unaffected.
 - ``transitions``: which state may follow which. Default: any. This
   constrains the sequence of labels only. Segments are fitted independently,
   so consecutive fits need not meet: a level change can sit at any boundary.
@@ -59,17 +62,23 @@ approximation unless the candidates contain the optimum.
 
 Cost
 ----
-Constant and linear (``poly`` order 0 or 1) segment costs are computed in
-O(1) from running sums, so they are cheap even for ``"exact"``. Any other
-model is fitted with ``fit.fit_model``, exactly as ``report.fit_report`` will
-fit it, and dominates the run time; ``max_duration_s`` is the main lever on
-it. The search drops a candidate segment as soon as its own cost exceeds the
-cost of a known feasible solution (``prune=True``). That is exact when a
-longer segment never fits better than a shorter one it contains, as for
-least squares with fixed search bounds. The exponential models' default
-time-constant bounds scale with the segment's span; give explicit bounds
-(``T_min``/``T_max``, ``tau_min``/``tau_max``) for a strict guarantee, or
-pass ``prune=False``.
+Constant and linear (``poly`` order 0 or 1) segment costs come from range
+sums, so they are cheap even for ``"exact"``. The sums carry an error bound
+(``_RangeSum``); where rounding could hide a segment's residual (a quiet
+segment next to a much larger level), that segment is fitted directly
+instead. Any other model is fitted with ``fit.fit_model``, exactly as
+``report.fit_report`` will fit it, and dominates the run time;
+``max_duration_s`` is the main lever on it.
+
+The search drops a candidate segment once its own cost exceeds the cost of a
+known feasible solution (``prune=True``). That is exact when a longer segment
+never fits better than a shorter one it contains, which holds for least
+squares once the model is fitted in full. So pruning waits while a
+polynomial is still fitted with a reduced order (``order_reduced``, too few
+samples), and segments too short for a model never stop the search. The
+exponential models' default time-constant bounds scale with the segment's
+span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
+for a strict guarantee, or pass ``prune=False``.
 """
 
 import math
@@ -115,7 +124,11 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         step = pd.Timedelta(per)
         if step <= pd.Timedelta(0):
             raise ValueError(f"per must be positive, got {per!r}")
-        return ((wall - origin) // step).to_numpy().astype(np.int64)
+        ids = ((wall - origin) // step).to_numpy().astype(np.int64)
+        # When the clock falls back (end of daylight saving), wall time repeats an hour, and a period shorter
+        # than that would recur. Period numbers never go back: the repeated time stays in the period in
+        # progress, so each period has one count budget, and the optimiser's counters stay valid.
+        return np.maximum.accumulate(ids) if len(ids) else ids
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
     step = float(per)
@@ -164,11 +177,56 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
 # ---------------------------------------------------------------------------
 
 
+_EPS = float(np.finfo(float).eps)
+_REDUCED_FLAGS = frozenset({"order_reduced"})  # the fit used fewer parameters than the model has
+
+
+class _RangeSum:
+    """
+    Sums of ``x`` over ``[p, q)`` from prefix sums, with an error bound.
+
+    Prefix sums lose a short range's sum when the record elsewhere is much
+    larger. Here the prefix is kept in blocks of ``B`` samples: a running sum
+    within each block, and the block totals accumulated with compensated
+    (Neumaier) summation. The error of a range sum is then bounded by the
+    range's own magnitude and the magnitudes of the two blocks at its ends,
+    not by the whole record before it. ``range`` returns the sum and that bound.
+    """
+
+    B = 64
+
+    def __init__(self, x: np.ndarray):
+        n = len(x)
+        nb = n // self.B + 1  # so that index n is in range
+        xp = np.zeros(nb * self.B)
+        xp[:n] = x
+        blocks = xp.reshape(nb, self.B)
+        local = np.cumsum(blocks, axis=1)
+        self.loc = np.concatenate((np.zeros((nb, 1)), local[:, :-1]), axis=1).ravel()  # within-block, exclusive
+        self.mass = np.abs(blocks).sum(axis=1)
+        self.hi = np.zeros(nb)
+        self.lo = np.zeros(nb)
+        acc, comp = 0.0, 0.0
+        for b, v in enumerate(local[:, -1].tolist()):  # exclusive block prefix, compensated
+            self.hi[b], self.lo[b] = acc, comp
+            t = acc + v
+            comp += (acc - t) + v if abs(acc) >= abs(v) else (v - t) + acc
+            acc = t
+
+    def range(self, p, q):
+        bp, bq = p // self.B, q // self.B
+        v = (self.hi[bq] - self.hi[bp]) + ((self.lo[bq] - self.lo[bp]) + (self.loc[q] - self.loc[p]))
+        err = 4.0 * _EPS * (np.abs(v) + self.B * (self.mass[bp] + self.mass[bq]))
+        return v, err
+
+
 class _Costs:
     """
     SSE of each state's model over samples ``[p, q)``. Constant and linear
-    polynomials use running sums (vectorised over many starts); other models
-    are fitted with ``fit.fit_model`` and cached.
+    polynomials use range sums (vectorised over many starts) with an error
+    bound; where cancellation could hide the residual, the segment is fitted
+    directly instead. Other models are fitted with ``fit.fit_model`` and
+    cached.
     """
 
     def __init__(self, ts: np.ndarray, y: np.ndarray, models: Mapping[str, Any], states: Sequence[str]):
@@ -179,37 +237,73 @@ class _Costs:
         mid = 0.5 * (ts[0] + ts[-1]) if len(ts) else 0.0
         x = np.where(ok, (ts - mid) / (0.5 * span if span > 0 else 1.0), 0.0)
         yc = np.where(ok, y - (np.mean(y[ok]) if ok.any() else 0.0), 0.0)
-        w = ok.astype(float)
-
-        def cum(a):
-            return np.concatenate(([0.0], np.cumsum(a)))
-
-        self.N, self.Sx, self.Sy = cum(w), cum(x), cum(yc)
-        self.Sxx, self.Sxy, self.Syy = cum(x * x), cum(x * yc), cum(yc * yc)
+        self.N = np.concatenate(([0.0], np.cumsum(ok.astype(float))))  # integers: exact
+        self.Sx, self.Sy = _RangeSum(x), _RangeSum(yc)
+        self.Sxx, self.Sxy, self.Syy = _RangeSum(x * x), _RangeSum(x * yc), _RangeSum(yc * yc)
         self.fast: Dict[str, Optional[int]] = {}
         for st in self.states:
             name, opts = _fit.resolve_model(models[st])
             order = opts.get("order", 0) if name == "poly" else None
             self.fast[st] = int(order) if name == "poly" and int(order) <= 1 else None
         self.cache: Dict[Tuple[str, int, int], float] = {}
+        self.reduced: Dict[Tuple[str, int, int], bool] = {}
         self.n_fits = 0
+        self.n_direct = 0
 
     def is_fast(self, st: str) -> bool:
         return self.fast[st] is not None
 
+    def _direct(self, order: int, p: int, q: int) -> float:
+        """Constant or linear least-squares SSE of ``[p, q)``, computed on the segment itself."""
+        self.n_direct += 1
+        m = self.ok[p:q]
+        yy = self.y[p:q][m]
+        if len(yy) == 0:
+            return 0.0
+        if order == 0 or len(yy) < 3:  # fit_poly's order reduction
+            d = yy - yy.mean()
+            return float(d @ d)
+        tt = self.ts[p:q][m]
+        xx = tt - tt.mean()
+        if not np.any(xx):
+            d = yy - yy.mean()
+            return float(d @ d)
+        a = np.column_stack((np.ones_like(xx), xx / np.max(np.abs(xx))))
+        coef, *_ = np.linalg.lstsq(a, yy, rcond=None)
+        r = yy - a @ coef
+        return float(r @ r)
+
     def vector(self, st: str, ps: np.ndarray, q: int) -> np.ndarray:
         """Costs of ``[p, q)`` for an array of starts ``ps`` (fast models only)."""
+        ps = np.asarray(ps, dtype=np.int64)
         n = self.N[q] - self.N[ps]
-        sy = self.Sy[q] - self.Sy[ps]
-        with np.errstate(invalid="ignore", divide="ignore"):
-            sse = (self.Syy[q] - self.Syy[ps]) - np.where(n > 0, sy * sy / np.where(n > 0, n, 1.0), 0.0)
+        nn = np.where(n > 0, n, 1.0)
+        syy, e_yy = self.Syy.range(ps, q)
+        sy, e_y = self.Sy.range(ps, q)
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+            sse = np.where(n > 0, syy - sy * sy / nn, 0.0)
+            err = e_yy + (2.0 * np.abs(sy) * e_y + e_y * e_y) / nn + 4.0 * _EPS * (np.abs(syy) + sy * sy / nn)
             if self.fast[st] == 1:
-                sx = self.Sx[q] - self.Sx[ps]
-                sxx = (self.Sxx[q] - self.Sxx[ps]) - np.where(n > 0, sx * sx / np.where(n > 0, n, 1.0), 0.0)
-                sxy = (self.Sxy[q] - self.Sxy[ps]) - np.where(n > 0, sx * sy / np.where(n > 0, n, 1.0), 0.0)
-                use = (n >= 3) & (sxx > 0)  # fit_poly reduces the order below order + 2 valid samples
-                sse = np.where(use, sse - sxy * sxy / np.where(use, sxx, 1.0), sse)
-        return np.maximum(sse, 0.0)
+                sx, e_x = self.Sx.range(ps, q)
+                sxx, e_xx = self.Sxx.range(ps, q)
+                sxy, e_xy = self.Sxy.range(ps, q)
+                sxx_c = sxx - sx * sx / nn
+                sxy_c = sxy - sx * sy / nn
+                e_sxx = e_xx + 2.0 * np.abs(sx) * e_x / nn + 4.0 * _EPS * np.abs(sxx)
+                e_sxy = e_xy + (np.abs(sx) * e_y + np.abs(sy) * e_x) / nn + 4.0 * _EPS * (np.abs(sxy) + np.abs(sx * sy) / nn)
+                use = (n >= 3) & (sxx_c > 0)  # fit_poly reduces the order below order + 2 valid samples
+                den = np.where(use, sxx_c, 1.0)
+                gain = sxy_c * sxy_c / den
+                sse = np.where(use, sse - gain, sse)
+                err = err + np.where(use, (2.0 * np.abs(sxy_c) * e_sxy + gain * e_sxx) / den + 4.0 * _EPS * gain, 0.0)
+                # A slope term that the rounding could create or remove: no reliable fast answer.
+                err = np.where(use & (e_sxx > 1e-6 * sxx_c), math.inf, err)
+        sse = np.maximum(sse, 0.0)
+        # Not resolved above the rounding: fit those segments directly.
+        bad = np.flatnonzero(~(sse > 16.0 * err) & (n > 0))
+        for i in bad:
+            sse[i] = self._direct(self.fast[st], int(ps[i]), int(q))
+        return sse
 
     def cost(self, st: str, p: int, q: int) -> float:
         if self.fast[st] is not None:
@@ -220,14 +314,20 @@ class _Costs:
             self.n_fits += 1
             yy = self.y[p:q]
             if not np.isfinite(yy).any():
-                c = 0.0  # nothing to explain
+                c, reduced = 0.0, False  # nothing to explain
             else:
                 r = _fit.fit_model(self.models[st], self.ts[p:q], yy, st)
                 e = r.residuals[np.isfinite(r.residuals)]
                 # A model that cannot be fitted to this segment (too few samples) cannot describe it.
                 c = float(e @ e) if len(e) else math.inf
+                reduced = bool(set(r.flags) & _REDUCED_FLAGS)
             self.cache[key] = c
+            self.reduced[key] = reduced
         return c
+
+    def full_model(self, st: str, p: int, q: int) -> bool:
+        """The fit of ``[p, q)`` used the whole model (no order reduction): costs grow from here on."""
+        return not self.reduced.get((st, p, q), False)
 
 
 def _n_params(models: Mapping[str, Any], st: str, ts: np.ndarray, y: np.ndarray) -> int:
@@ -432,8 +532,11 @@ class _Problem:
                         c = self.costs.cost(st, int(starts[j]), q)
                         C[j] = c
                         # Too short for the model is infinite but not monotone (a longer segment can be fitted);
-                        # only a finite cost above the bound ends the search.
-                        if prune and math.isfinite(c) and c + self.pen[s] > ub:
+                        # only a finite cost above the bound, with the model fitted in full, ends the search.
+                        # Costs only grow with the segment once the model is fitted in full: a polynomial
+                        # fitted with a reduced order (too few samples) can fit a longer segment better.
+                        if prune and math.isfinite(c) and c + self.pen[s] > ub and \
+                                self.costs.full_model(st, int(starts[j]), q):
                             break
                 C = C + self.pen[s]
                 if not np.isfinite(C).any():
@@ -536,11 +639,12 @@ class _Problem:
 
 
 def _poly0(costs: _Costs, ps: np.ndarray, q: int) -> np.ndarray:
-    """Constant-fit SSE for starts ``ps``: the cheap surrogate used to find a feasible bound."""
+    """Constant-fit SSE for starts ``ps``: the cheap surrogate used only to find a feasible bound."""
     n = costs.N[q] - costs.N[ps]
-    sy = costs.Sy[q] - costs.Sy[ps]
+    syy, _ = costs.Syy.range(ps, q)
+    sy, _ = costs.Sy.range(ps, q)
     with np.errstate(invalid="ignore", divide="ignore"):
-        sse = (costs.Syy[q] - costs.Syy[ps]) - np.where(n > 0, sy * sy / np.where(n > 0, n, 1.0), 0.0)
+        sse = np.where(n > 0, syy - sy * sy / np.where(n > 0, n, 1.0), 0.0)
     return np.maximum(sse, 0.0)
 
 
