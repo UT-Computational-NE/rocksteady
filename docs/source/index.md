@@ -14,7 +14,15 @@ guide/gaps
 guide/intervals
 guide/optimal
 guide/extending
+guide/adapters
 guide/performance
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Methods
+
+guide/methods
 ```
 
 ```{toctree}

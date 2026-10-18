@@ -10,6 +10,7 @@ version = release
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",   # NumPy-style docstrings
     "sphinx.ext.viewcode",
     "sphinx.ext.mathjax",
