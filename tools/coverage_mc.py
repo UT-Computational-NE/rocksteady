@@ -54,15 +54,17 @@ def asymptote_pass_rate(n_blocks: int, phi: float, span_over_tau: float, reps: i
     window end equal to ``remaining_over_limit``. At 1 this is the false-pass
     rate; below 1 it is the power.
     """
-    from rocksteady import AsymptoteCriterion, Outcome
+    from rocksteady import AsymptoteCriterion, Outcome, Timing
 
     rng = np.random.default_rng(seed)
     t = (np.arange(n_blocks) - (n_blocks - 1) / 2.0) * block_s
     s = t - t[0]
-    s_end = (n_blocks - 0.5) * block_s  # the end of the last block
+    timing = Timing(sample_period_s=1.0, block_s=block_s, window_s=n_blocks * block_s)  # 1 s samples
+    s_end = s[-1] + 0.5 * (timing.block_samples - 1) * timing.sample_period_s  # the current sample
     tau = s_end / span_over_tau
     amp = remaining_over_limit * np.exp(s_end / tau)
     crit = AsymptoteCriterion("x", 1.0, tau_max=tau_factor * tau)
+    crit.bind_timing(timing)  # as a Detector does
     scale = noise_over_limit * np.sqrt(1 - phi * phi)  # block-mean noise with standard deviation noise_over_limit
     passes = sum(crit.evaluate(t, -amp * np.exp(-s / tau) + scale * ar1_noise(rng, n_blocks, phi)).outcome
                  == Outcome.PASS for _ in range(reps))

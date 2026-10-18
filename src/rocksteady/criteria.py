@@ -30,6 +30,16 @@ from .stats import DEFAULT_SLOPE_METHOD, linear_fit, t_quantile, tau_int
 NoiseModel = Union[float, Callable[[float], float]]
 
 
+def _zero_scale(name: str, limit: float, k: float) -> CriterionResult:
+    """
+    Relative mode with a zero scale (a zero level and ``scale_floor`` 0): no
+    relative deviation exists, so the result is undecided (an invalid,
+    infinite statistic). Set ``scale_floor > 0`` to judge near-zero signals
+    on an absolute basis.
+    """
+    return CriterionResult(name, float("inf"), 0.0, limit, k)
+
+
 def _sigma(noise: NoiseModel, level: float) -> float:
     return float(noise(level)) if callable(noise) else float(noise)
 
@@ -95,7 +105,10 @@ class DeviationCriterion(Criterion):
         dev = float(np.max(np.abs(resid)))
         sigma = _sigma(self.noise, mean)  # relative when ``relative`` is True
         if self.relative:
-            dev = dev / max(abs(mean), self.scale_floor)
+            scale = max(abs(mean), self.scale_floor)
+            if not scale > 0:
+                return _zero_scale(self.name, self.limit, self.k)
+            dev = dev / scale
         return CriterionResult(self.name, dev, sigma, self.limit, self.k)
 
 
@@ -193,9 +206,13 @@ class AsymptoteCriterion(Criterion):
 
     For a signal approaching a final value as
     ``y(t) = y_inf + A exp(-(t - t0) / tau)``, the remaining approach at the
-    end of the window (the current sample) is
+    current sample is
 
         d(tau) = A exp(-(t_end - t0) / tau) = -tau * y'(t_end).
+
+    In a ``Detector``, ``t_end`` is the current sample, half of
+    ``block_samples - 1`` sample periods after the last block centre (see
+    ``bind_timing``). An instance is bound to one detector's timing.
 
     ``tau`` is rarely determined well by one window, and a test that trusts a
     fitted ``tau`` passes too often: noise that makes the curve look sharper
@@ -240,9 +257,11 @@ class AsymptoteCriterion(Criterion):
         For the default ``k`` and the confidence set.
     relative : bool
         Divide by ``max(|y_inf|, scale_floor)`` at the best-fitting ``tau``.
+        A zero scale gives an undecided result; set ``scale_floor > 0`` to
+        judge near-zero signals on an absolute basis.
     scale_floor : float
     n_grid : int
-        Points on the ``tau`` grid.
+        Points on the ``tau`` grid, at least 2 (both bounds are always on it).
     name : str, optional
 
     Notes
@@ -270,18 +289,37 @@ class AsymptoteCriterion(Criterion):
             raise ValueError(f"{what}: confidence must be in (0.5, 1), got {confidence!r}")
         self.scale_floor = _v.finite(scale_floor, f"{what}: scale_floor", nonnegative=True)
         self.n_grid = _v.positive_int(n_grid, f"{what}: n_grid")
+        if self.n_grid < 2:
+            raise ValueError(f"{what}: n_grid must be at least 2, so the grid holds both tau_min and tau_max")
         self.signal, self.confidence, self.relative = signal, confidence, bool(relative)
         self.name = name or f"{signal}_asymptote"
+        self._end_offset = 0.0  # from the last block centre to the current sample; set by bind_timing
+        self._bound = None
+
+    def bind_timing(self, timing) -> None:
+        """
+        The current sample is ``(block_samples - 1) * sample_period_s / 2``
+        after the last block centre. Without a timing (``evaluate`` called on
+        its own) the remaining approach is taken at the last block centre,
+        which is conservative for an approach that slows down.
+        """
+        key = (timing.block_samples, timing.sample_period_s)
+        if self._bound is not None and self._bound != key:
+            raise ValueError(f"AsymptoteCriterion {self.name!r} is already used with another timing; build one "
+                             "instance per detector")
+        self._bound = key
+        self._end_offset = 0.5 * (timing.block_samples - 1) * timing.sample_period_s
 
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
         from ._ar1 import ar1_apply
+        from .fit import golden_refine  # the same refinement the fit models use
 
         t = np.asarray(t_blocks, dtype=float)
         y = np.asarray(y_blocks, dtype=float)
         n = len(y)
         step = float(t[1] - t[0]) if n > 1 else 1.0
         s = t - t[0]
-        s_end = float(s[-1]) + 0.5 * step  # the end of the last block: the current sample
+        s_end = float(s[-1]) + self._end_offset  # the current sample (see bind_timing)
         lo = self.tau_min if self.tau_min is not None else max(0.5 * step, (s_end or 1.0) / 1e4)
         lo = min(lo, self.tau_max)
         grid = np.exp(np.linspace(np.log(lo), np.log(self.tau_max), self.n_grid))
@@ -301,20 +339,8 @@ class AsymptoteCriterion(Criterion):
         # near a sharp optimum are systematic, and would read as strong autocorrelation.
         sse_grid = fixed(grid)[6]
         i = int(np.argmin(sse_grid))
-        a_lo, a_hi = np.log(grid[max(i - 1, 0)]), np.log(grid[min(i + 1, len(grid) - 1)])
-        gold = (np.sqrt(5.0) - 1.0) / 2.0
-        c_, d_ = a_hi - gold * (a_hi - a_lo), a_lo + gold * (a_hi - a_lo)
-        fc, fd = fixed(np.exp([c_]))[6][0], fixed(np.exp([d_]))[6][0]
-        for _ in range(40):
-            if fc < fd:
-                a_hi, d_, fd = d_, c_, fc
-                c_ = a_hi - gold * (a_hi - a_lo)
-                fc = fixed(np.exp([c_]))[6][0]
-            else:
-                a_lo, c_, fc = c_, d_, fd
-                d_ = a_lo + gold * (a_hi - a_lo)
-                fd = fixed(np.exp([d_]))[6][0]
-        t_best = float(np.exp(0.5 * (a_lo + a_hi)))
+        t_best = float(np.exp(golden_refine(lambda u: fixed(np.exp([u]))[6][0], np.log(grid[max(i - 1, 0)]),
+                                            np.log(grid[min(i + 1, len(grid) - 1)]), iters=40)))
         if fixed(np.array([t_best]))[6][0] > sse_grid[i]:
             t_best = float(grid[i])
         taus = np.unique(np.append(grid, t_best))
@@ -343,6 +369,8 @@ class AsymptoteCriterion(Criterion):
         u_d = u_a * decay
         level = float(y_inf[best])
         scale = max(abs(level), self.scale_floor) if self.relative else 1.0
+        if not scale > 0:  # relative to a zero level: no scale to judge by
+            return _zero_scale(self.name, self.limit, k)
         upper = float(np.max(np.abs(d) + k * u_d)) / scale
         lower = max(float(np.min(np.abs(d) - k * u_d)), 0.0) / scale
         k_rep = k if k > 0 else 1.0

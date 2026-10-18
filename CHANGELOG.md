@@ -21,8 +21,15 @@
   - **Cost:** about 0.8 ms per evaluation.
 - `CriterionResult.details` (optional numeric diagnostics) and
   `Criterion.detail_keys`. `batch.run(with_results=True)` adds
-  `detail_<criterion>_<key>` columns, the same for an empty record (#7).
-
+  `detail_<criterion>_<key>` columns, the same for an empty record, and
+  rejects two diagnostics that would share a column name, before reading any
+  input (#7).
+- `Criterion.bind_timing(timing)`: an optional hook the `Detector` calls once
+  with its `Timing`. `AsymptoteCriterion` uses it to evaluate at the current
+  sample, `(block_samples - 1) * sample_period_s / 2` after the last block
+  centre (#7).
+- `fit.golden_refine`: the golden-section refinement shared by the fit
+  models and `AsymptoteCriterion`; fit results are unchanged (#7).
 - `rs.optimal_segments`: best-fit segments under limits (#45).
   - **Objective:** breakpoints and per-segment states that minimise the total
     squared error of each segment's fit, the model chosen per state, plus a
@@ -44,6 +51,12 @@
   - **Helpers:** `rs.compare_segments` (sample agreement and confusion
     against, e.g., the detector) and `optimal.count_by_period`.
   - `tools/benchmark.py optimal`: a week at 1 Hz.
+
+### Fixed
+
+- `DeviationCriterion(relative=True)` on a window whose mean and
+  `scale_floor` are both zero is undecided; it raised `ZeroDivisionError`
+  (#7).
 
 ### Documentation
 

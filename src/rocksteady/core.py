@@ -237,6 +237,11 @@ class Criterion(ABC):
     detector refuses a window shorter than the largest ``min_blocks``.
     ``detail_keys`` names the entries the criterion puts in
     ``CriterionResult.details`` (none by default).
+
+    ``bind_timing(timing)`` is called once by the ``Detector`` that uses the
+    criterion, before any data, for a criterion that needs more than the
+    block times, such as where the current sample lies relative to the last
+    block centre. The default does nothing.
     """
 
     name: str
@@ -247,6 +252,9 @@ class Criterion(ABC):
     @abstractmethod
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
         """``t_blocks`` are block centre times in seconds; ``y_blocks`` the block means."""
+
+    def bind_timing(self, timing: "Timing") -> None:
+        """Called once by the ``Detector``, with its ``Timing``; override to use it."""
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +556,10 @@ class Detector:
                 if (kind == "criterion" or ref is not None) and ref not in names:
                     raise ValueError(f"{kind} {getattr(item, 'name', type(item).__name__)!r} refers to unknown "
                                      f"signal {ref!r}; signals are {sorted(names)}")
+        for c in self.criteria:
+            bind = getattr(c, "bind_timing", None)
+            if callable(bind):
+                bind(timing)
         need = max([3] + [getattr(c, "min_blocks", 3) for c in self.criteria])
         if timing.n_blocks < need:
             raise ValueError(f"window_s must span at least {need} blocks for these criteria "

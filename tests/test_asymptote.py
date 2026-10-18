@@ -18,7 +18,9 @@ B = 30.0
 
 def _blocks(n=40):
     t = (np.arange(n) - (n - 1) / 2.0) * B
-    return t, t - t[0], (n - 0.5) * B  # centred block times; time from the first block centre to the window end
+    # Centred block times; time from the first block centre; and the evaluation time of a criterion used on
+    # its own (no bound timing): the last block centre.
+    return t, t - t[0], (n - 1) * B
 
 
 @pytest.mark.parametrize("tau, outcome", [(200.0, Outcome.PASS), (600.0, Outcome.FAIL)])
@@ -128,3 +130,77 @@ def test_false_pass_rate_at_the_limit(phi, ratio):
     passes = sum(crit.evaluate(t, -amp * np.exp(-s / tau) + 0.1 * np.sqrt(1 - phi * phi) * ar1_noise(rng, 40, phi))
                  .outcome == Outcome.PASS for _ in range(reps))
     assert passes / reps <= 0.05  # at most twice nominal (binomial sd about 0.6 % at 2.5 %)
+
+
+# -- review fixes (PR #52) ------------------------------------------------------------
+
+
+def test_remaining_approach_is_taken_at_the_current_sample():
+    """One-sample blocks: the last block centre is the current sample; nothing may be extrapolated."""
+    det = rs.Detector([rs.Signal("x", "x")], [rs.AsymptoteCriterion("x", 1.0, tau_max=60)],
+                      timing=rs.Timing(sample_period_s=30, block_s=30, window_s=300))
+    t = np.arange(10) * 30.0
+    x = 5 - 1.3 * np.exp((270 - t) / 30)  # 1.3 left at the last sample: above the limit of 1
+    v = [det.update(float(ti), {"x": xi}) for ti, xi in zip(t, x)][-1]
+    assert v.label != rs.Label.STEADY
+    assert v.results["x_asymptote"].details["remaining"] == pytest.approx(-1.3, rel=1e-6)
+
+
+@pytest.mark.parametrize("block_samples", [1, 3, 10])
+def test_offset_to_the_current_sample_follows_the_block_length(block_samples):
+    dt = 2.0
+    timing = rs.Timing(sample_period_s=dt, block_s=block_samples * dt, window_s=40 * block_samples * dt)
+    crit = rs.AsymptoteCriterion("x", 1.0, tau_max=1e4)
+    det = rs.Detector([rs.Signal("x", "x")], [crit], timing=timing)
+    t = np.arange(40 * block_samples) * dt
+    tau = 0.3 * t[-1]
+    x = 10 - 4 * np.exp(-t / tau)
+    v = [det.update(float(ti), {"x": xi}) for ti, xi in zip(t, x)][-1]
+    # Noiseless data: the remaining approach is the one at the last sample. A block mean of a convex
+    # exponential exceeds its value at the block centre by the same factor in every block, so the fitted
+    # amplitude is slightly large: the estimate errs on the conservative side, by well under 0.1 %.
+    got, want = v.results["x_asymptote"].details["remaining"], -4 * np.exp(-t[-1] / tau)
+    assert got == pytest.approx(want, rel=1e-3) and abs(got) >= abs(want) * (1 - 1e-9)
+    with pytest.raises(ValueError, match="already used with another timing"):
+        other = rs.Timing(sample_period_s=dt, block_s=(block_samples + 1) * dt, window_s=40 * (block_samples + 1) * dt)
+        rs.Detector([rs.Signal("x", "x")], [crit], timing=other)
+
+
+def test_grid_must_hold_both_bounds():
+    with pytest.raises(ValueError, match="n_grid must be at least 2"):
+        rs.AsymptoteCriterion("x", 0.05, tau_max=7110, n_grid=1)
+    t = np.arange(40) * 30.0
+    y = 5 - 3 * np.exp(-t / 3555)
+    r = rs.AsymptoteCriterion("x", 0.05, tau_max=7110, n_grid=2).evaluate(t, y)
+    assert r.outcome != Outcome.PASS and r.details["tau_hi"] == pytest.approx(7110)
+
+
+def test_relative_mode_with_a_zero_level_is_undecided():
+    for crit in (rs.AsymptoteCriterion("x", 0.05, tau_max=3000, relative=True),
+                 rs.DeviationCriterion("x", 0.05, 0.0, relative=True)):
+        r = crit.evaluate(np.arange(40) * 30.0, np.zeros(40))
+        assert r.outcome == Outcome.UNDECIDED and r.invalid_reason is not None
+    det = rs.Detector([rs.Signal("x", "x")], [rs.AsymptoteCriterion("x", 0.05, tau_max=3000, relative=True)],
+                      timing=rs.Timing(block_s=30, window_s=1200))
+    out = rs.batch.run(det, pd.DataFrame({"x": np.zeros(1300)}))
+    assert out["reason"].iloc[-1] == "invalid_result"  # a controlled result, not an exception
+    floor = rs.AsymptoteCriterion("x", 0.05, tau_max=3000, relative=True, scale_floor=1.0)
+    assert floor.evaluate(np.arange(40) * 30.0, np.zeros(40)).outcome == Outcome.PASS
+
+
+def test_colliding_diagnostic_columns_are_rejected_before_reading_input():
+    class Diag(rs.Criterion):
+        min_blocks = 3
+
+        def __init__(self, name, key):
+            self.name, self.signal, self.detail_keys = name, "x", (key,)
+
+        def evaluate(self, t_blocks, y_blocks):
+            return rs.CriterionResult(self.name, 0.0, 0.0, 1.0, 1.0, {self.detail_keys[0]: 1.0})
+
+    det = rs.Detector([rs.Signal("x", "x")], [Diag("a", "b_c"), Diag("a_b", "c")],
+                      timing=rs.Timing(block_s=1, window_s=3))
+    for df in (pd.DataFrame({"x": np.zeros(4)}), pd.DataFrame({"x": []})):
+        with pytest.raises(ValueError, match="'detail_a_b_c' comes from both criterion 'a' key 'b_c' and criterion"):
+            rs.batch.run(det, df, with_results=True)
+    assert len(rs.batch.run(det, pd.DataFrame({"x": np.zeros(4)}))) == 4  # without results, no diagnostic columns

@@ -188,8 +188,10 @@ $\tau_{\text{int}}$, and so $u$, is unreliable.
 
 {py:class}`~rocksteady.criteria.AsymptoteCriterion` assumes a first-order
 approach, $y(s) = y_\infty + A\,e^{-s/\tau}$ with $s = t - t_0$ from the
-first block centre, and bounds the **remaining approach** at the window end
-$s_e$, which is the current sample:
+first block centre, and bounds the **remaining approach** at the current
+sample, $s_e = s_n + (B - 1)\Delta/2$, where $s_n$ is the last block centre,
+$B$ the samples per block and $\Delta$ the sample period (the detector
+supplies them through `Criterion.bind_timing`):
 
 $$
 d(\tau) = A\,e^{-s_e/\tau} = -\tau\, y'(s_e).
@@ -242,8 +244,8 @@ replications; nominal 2.5 %):
 
 | blocks, $\phi$ | span $0.5\tau$ | $1\tau$ | $2\tau$ | $4\tau$ | $8\tau$ |
 |---|---|---|---|---|---|
-| 20, 0 / 0.5 / 0.8 | 2.0 / 3.1 / 5.0 | 1.4 / 3.0 / 4.7 | 0.7 / 2.1 / 3.9 | 0.0 / 0.4 / 0.5 | 0 |
-| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.2 / 1.1 / 1.5 | 0 | 0 |
+| 20, 0 / 0.5 / 0.8 | 2.0 / 3.1 / 5.0 | 1.4 / 3.0 / 4.8 | 0.7 / 2.1 / 3.9 | 0.0 / 0.4 / 0.6 | 0 |
+| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.2 / 1.0 / 1.5 | 0 | 0 |
 | 90, 0 / 0.5 / 0.8 | 1.6 / 1.9 / 2.0 | 1.1 / 1.5 / 1.5 | 0.4 / 0.4 / 1.0 | 0 | 0 |
 
 With $\tau_{\max}$ equal to the true $\tau$, the true value sits at the edge
