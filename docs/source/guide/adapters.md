@@ -287,8 +287,14 @@ Contract rules:
   undecided, never a pass.
 - Disturbances see every valid sample, in time order. They are reset with
   the detector and after a gap that clears the history.
-- Overrides see every sample's {py:class}`~rocksteady.core.Context`, but a
-  disturbance takes precedence over a label they force.
+- Overrides are called with the {py:class}`~rocksteady.core.Context` of every
+  readable, finite sample, disturbed ones included. A disturbance still takes
+  precedence over a label they force. A sample with a missing, non-finite or
+  unreadable signal skips them: the detector labels it INDETERMINATE (reason
+  `missing` or `unreadable`) without calling `apply`. So an override that
+  tracks a raw column can miss a change made while another required signal
+  is unavailable. A gap that exceeds `Timing.max_gap_s` resets overrides with
+  the history.
 - Names must be unique among a detector's signals and among its criteria.
 
 ## Checklist for a new adapter

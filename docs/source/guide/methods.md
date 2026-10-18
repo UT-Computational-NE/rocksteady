@@ -187,8 +187,15 @@ $\tau_{\text{int}}$, and so $u$, is unreliable.
 ## Integrated autocorrelation time and the uncertainty of a mean
 
 For a stationary series with autocorrelation $\rho(j)$, the variance of the
-mean of $N$ samples is $\frac{\sigma^2}{N}\left[1 + 2\sum_{j \ge 1}(1 - j/N)\rho(j)\right]$
-(Zhang 2006; Sokal 1997). rocksteady estimates
+mean of $N$ samples is exactly
+
+$$
+\operatorname{Var}(\bar r) = \frac{\sigma^2}{N}\left[1 + 2\sum_{j=1}^{N-1}\left(1 - \frac{j}{N}\right)\rho(j)\right] ,
+$$
+
+with no terms beyond lag $N - 1$, where there are no sample pairs
+(Zhang 2006; Sokal 1997). rocksteady estimates the correlations and
+truncates the sum at an estimated cutoff $J \le N - 1$:
 
 $$
 \hat\rho(j) = \frac{\overline{r_i r_{i+j}}}{\overline{r_i^2}}, \qquad
@@ -234,9 +241,11 @@ sample:
 1. A disturbance labels the sample DISTURBED and resets the clocks.
 2. An override may force a label.
 3. Until $W$ samples have arrived, the label is INDETERMINATE.
-4. Until $\max\!\left(W, \operatorname{round}\big((W\Delta + T_{\text{settle}})/\Delta\big)\right)$
+4. Until $\max\!\left(W, \operatorname{round}\big((T_{\text{window}} + T_{\text{settle}})/\Delta\big)\right)$
    quiet samples have passed since the last disturbance, the label is
-   SETTLING (INDETERMINATE at the start of a record).
+   SETTLING (INDETERMINATE at the start of a record). Here
+   $T_{\text{window}}$ and $T_{\text{settle}}$ are `window_s` and `settle_s`
+   as given, not rounded first (`Timing.quiet_samples`).
 5. Then the criteria are evaluated. FAIL gives SETTLING. PASS gives HOLDING
    until the run of passing windows has lasted `hold_s`, then STEADY.
    UNDECIDED gives INDETERMINATE, or keeps the last decided label with

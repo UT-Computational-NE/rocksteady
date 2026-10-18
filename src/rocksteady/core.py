@@ -286,6 +286,12 @@ class Override(ABC):
 
     Like a ``Disturbance``, an instance may keep state and belongs to one
     detector.
+
+    ``apply`` is called for every readable, finite sample, disturbed ones
+    included (a disturbance still takes precedence over a forced label). A
+    sample with a missing, non-finite or unreadable signal is labelled
+    INDETERMINATE without calling it, and a gap that exceeds
+    ``Timing.max_gap_s`` resets the override with the history.
     """
 
     name: str
@@ -661,8 +667,8 @@ class Detector:
         self._since_disturbance = 0 if disturbed else self._since_disturbance + 1
         since_s = self._since_disturbance * dt
 
-        # Overrides observe every sample (they may keep state), but a
-        # disturbance takes precedence over any label they force.
+        # Overrides observe every readable, finite sample (they may keep state), but a
+        # disturbance takes precedence over any label they force. Missing samples returned above.
         ctx = Context(t, sample, values, disturbed, onset, since_s)
         forced = [(o.name, o.apply(ctx)) for o in self.overrides]
 
