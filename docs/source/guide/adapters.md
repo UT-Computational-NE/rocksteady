@@ -35,6 +35,7 @@ The two examples on this page are complete, runnable files in
    DeviationCriterion
    DriftCriterion
    BoundCriterion
+   AsymptoteCriterion
    StepChange
    EventLog
    FloorLatch
@@ -123,6 +124,10 @@ builder over several columns.
    :no-members:
 
 .. autoclass:: rocksteady.BoundCriterion
+   :no-index:
+   :no-members:
+
+.. autoclass:: rocksteady.AsymptoteCriterion
    :no-index:
    :no-members:
 ```

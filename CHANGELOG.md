@@ -4,6 +4,25 @@
 
 ### Added
 
+- `rs.AsymptoteCriterion` (`"asymptote"` in specs): certifies that a
+  first-order approach has reached its asymptote, i.e. that the remaining
+  approach `d = A exp(-t_end / tau)` at the window end is within a limit
+  (#7).
+  - **The test** takes the worst case over every `tau` the data allow (a
+    profile-likelihood confidence set on a `tau` grid up to the caller's
+    `tau_max`), each `d(tau)` with an AR(1) uncertainty. A test that trusts
+    a fitted `tau` passed falsely up to 15 % of the time in calibration
+    when the window spanned about `tau`.
+  - **Flat or unresolved windows** are bounded by about `tau_max × |slope|`,
+    with no separate mode.
+  - **Calibration:** at the limit, with `tau_max` = 2 tau, the false-pass
+    rate is at most 2.5 % for 40 or more blocks and at most 5 % at 20
+    (nominal 2.5 %); `tools/coverage_mc.py --asymptote` reproduces it.
+  - **Cost:** about 0.8 ms per evaluation.
+- `CriterionResult.details` (optional numeric diagnostics) and
+  `Criterion.detail_keys`. `batch.run(with_results=True)` adds
+  `detail_<criterion>_<key>` columns, the same for an empty record (#7).
+
 - `rs.optimal_segments`: best-fit segments under limits (#45).
   - **Objective:** breakpoints and per-segment states that minimise the total
     squared error of each segment's fit, the model chosen per state, plus a

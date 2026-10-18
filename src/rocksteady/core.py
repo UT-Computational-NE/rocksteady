@@ -44,7 +44,7 @@ modules and are registered by name in ``rocksteady.registry``.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, Mapping, Optional, Sequence, Union
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -162,6 +162,11 @@ class CriterionResult:
     The true value of the statistic is taken to lie within
     ``statistic +/- k * uncertainty``. Comparing that interval with the limit
     gives the three-way test.
+
+    ``details`` holds optional numeric diagnostics (for example a fitted
+    time constant). A criterion that fills it declares the keys in
+    ``Criterion.detail_keys``, so ``batch.run(with_results=True)`` can give
+    them columns; they never affect the outcome.
     """
 
     name: str
@@ -169,6 +174,7 @@ class CriterionResult:
     uncertainty: float
     limit: float
     k: float
+    details: Dict[str, float] = field(default_factory=dict)
 
     @property
     def upper(self) -> float:
@@ -229,11 +235,14 @@ class Criterion(ABC):
 
     ``min_blocks`` is the fewest blocks the criterion can decide on; the
     detector refuses a window shorter than the largest ``min_blocks``.
+    ``detail_keys`` names the entries the criterion puts in
+    ``CriterionResult.details`` (none by default).
     """
 
     name: str
     signal: str
     min_blocks: int = 3
+    detail_keys: Tuple[str, ...] = ()
 
     @abstractmethod
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:

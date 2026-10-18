@@ -46,7 +46,9 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         ``df`` has a ``DatetimeIndex``, otherwise the row number times the
         sample period. Times in an ``EventLog`` must use the same origin.
     with_results : bool
-        Also return one column per criterion with its margin ratio.
+        Also return one column per criterion with its margin ratio, and one
+        per declared diagnostic (``Criterion.detail_keys``) named
+        ``detail_<criterion>_<key>``.
 
     Returns
     -------
@@ -87,10 +89,16 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         if with_results:
             for name, r in v.results.items():
                 row[f"ratio_{name}"] = r.ratio
+                for key, value in r.details.items():
+                    row[f"detail_{name}_{key}"] = value
         rows.append(row)
-    columns = list(RUN_COLUMNS) + ([f"ratio_{c.name}" for c in detector.criteria] if with_results else [])
+    columns = list(RUN_COLUMNS)
+    if with_results:
+        columns += [f"ratio_{c.name}" for c in detector.criteria]
+        columns += [f"detail_{c.name}_{key}" for c in detector.criteria for key in getattr(c, "detail_keys", ())]
     out = pd.DataFrame(rows, index=df.index, columns=columns)  # explicit schema, also for an empty record
-    floats = ["eta", "since_disturbance_s", "window_start_s"] + [c for c in columns if c.startswith("ratio_")]
+    floats = ["eta", "since_disturbance_s", "window_start_s"] + [c for c in columns
+                                                                 if c.startswith(("ratio_", "detail_"))]
     out[floats] = out[floats].astype(float)
     out["valid"] = out["valid"].astype(bool)
     out["t_s"] = np.asarray(t, dtype=float)

@@ -50,7 +50,7 @@ def test_user_provider_by_name(range_registered):
 def test_registry_errors(range_registered):
     with pytest.raises(ValueError, match="already registered"):
         registry.criteria.register("range", _Range)
-    with pytest.raises(KeyError, match="registered: bound, deviation, drift, range"):
+    with pytest.raises(KeyError, match="registered: asymptote, bound, deviation, drift, range"):
         rs.criterion("nope")
     with pytest.raises(TypeError, match="subclass of Criterion"):
         registry.criteria.register("bad", object)

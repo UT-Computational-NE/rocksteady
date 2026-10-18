@@ -86,7 +86,7 @@ combines them is shared.
 | Part | What it is | Built in |
 |---|---|---|
 | **Signals** | Named scalars computed from each raw sample: a column, or a derived quantity | column, `mean`, `spread`, `difference` |
-| **Criteria** | Tests on one signal over the trailing window of block means. Each returns a statistic, its uncertainty, and a limit | `DriftCriterion` (no resolvable slope), `DeviationCriterion` (stays within a tolerance of a constant or a line), `BoundCriterion` (mean inside a band) |
+| **Criteria** | Tests on one signal over the trailing window of block means. Each returns a statistic, its uncertainty, and a limit | `DriftCriterion` (no resolvable slope), `DeviationCriterion` (stays within a tolerance of a constant or a line), `BoundCriterion` (mean inside a band), `AsymptoteCriterion` (a first-order approach is within a limit of its final value) |
 | **Disturbances** | External action, found in the signals or read from a log; resets the clocks | `StepChange` (a discrete move in a signal), `EventLog` (logged events with durations) |
 | **Timing** | Sample period, block length, window, settling time after a disturbance, hold time, gap tolerance, and what an undecided window means | `Timing` |
 | **Overrides** | Domain rules that force a label | `FloorLatch` (below a floor the system is steady by definition, for example when shut down) |
@@ -150,6 +150,43 @@ Guidance:
 - **Window length:** use at least about 40 blocks per window. With 10 blocks, no method here is reliable.
 - **Strong autocorrelation:** when φ is high, `"ar1"` makes `k` large (up to 12.7). A window then certifies only a limit well above its apparent drift. With φ = 0.9, a 40-block window holds about two independent samples, so this is the honest answer. Longer blocks lower φ.
 - **Your own method:** register it in `rocksteady.registry.slope_methods`. The harness calibrates every registered method.
+
+### Slow approaches: the asymptote test
+
+During a slow approach to a final value (a thermal relaxation, for
+example), the residuals about a line stay strongly correlated, and the drift
+test certifies little even with generous limits. `AsymptoteCriterion` tests
+the approach itself. It certifies that the **remaining approach**
+`d = A·exp(−t_end/τ)` of a first-order curve `y∞ + A·exp(−t/τ)` is within a
+limit:
+
+```python
+rs.AsymptoteCriterion("T_avg", limit=0.05, tau_max=3000.0)   # 0.05 K left, tau at most 50 min
+```
+
+`τ` is rarely well determined by one window, and trusting a fitted `τ`
+passes too often: noise that makes the curve look sharper makes `τ` look
+shorter. So the test takes the **worst case over every `τ` up to `tau_max`
+that the data allow** (a profile-likelihood confidence set), each with its
+AR(1) uncertainty. `tau_max` is your upper bound on the process's time
+constant. It makes every window decidable: a flat window, or one too short
+to resolve the curve, is bounded by about `tau_max × |slope|`.
+
+Monte Carlo false-pass rates at the limit (the true remaining approach equal
+to the limit, AR(1) block-mean noise at 0.1 × the limit, `tau_max` = 2 τ),
+for windows spanning 0.5 to 8 τ; nominal 2.5 %. Reproduce it with
+`python tools/coverage_mc.py --asymptote`:
+
+| blocks, φ | 0.5 τ | 1 τ | 2 τ | 4 τ | 8 τ |
+|---|---|---|---|---|---|
+| 20, 0 / 0.5 / 0.8 | 2.0 / 3.1 / 5.0 | 1.4 / 3.0 / 4.7 | 0.7 / 2.1 / 3.9 | 0.0 / 0.4 / 0.5 | 0 |
+| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.2 / 1.1 / 1.5 | 0 | 0 |
+| 90, 0 / 0.5 / 0.8 | 1.6 / 1.9 / 2.0 | 1.1 / 1.5 / 1.5 | 0.4 / 0.4 / 1.0 | 0 | 0 |
+
+Give `tau_max` some margin. With `tau_max` equal to the true τ, the rates
+rise to at most 6 % at 40 blocks. Power grows with the window's span and
+the number of blocks. A window with a quarter of the limit left passes 96 %
+of the time at 40 blocks spanning one τ (φ = 0), and 58 % at φ = 0.5.
 
 ## Gaps and timestamps
 

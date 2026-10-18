@@ -184,6 +184,72 @@ $\tau_{\text{int}}$ (in blocks) is the integrated autocorrelation time of
 the linearly detrended block means. With fewer than about 10 blocks,
 $\tau_{\text{int}}$, and so $u$, is unreliable.
 
+### Asymptote: the remaining approach
+
+{py:class}`~rocksteady.criteria.AsymptoteCriterion` assumes a first-order
+approach, $y(s) = y_\infty + A\,e^{-s/\tau}$ with $s = t - t_0$ from the
+first block centre, and bounds the **remaining approach** at the window end
+$s_e$, which is the current sample:
+
+$$
+d(\tau) = A\,e^{-s_e/\tau} = -\tau\, y'(s_e).
+$$
+
+For a fixed $\tau$ the model is linear in $(y_\infty, A)$. With
+$g = e^{-s/\tau}$ centred, $g_c = g - \bar g$:
+
+$$
+\hat A(\tau) = \frac{g_c^\top (y - \bar y)}{g_c^\top g_c}, \qquad
+\operatorname{SSE}(\tau), \qquad
+u\big(\hat d(\tau)\big) = e^{-s_e/\tau}\, \frac{\hat\sigma_\tau \sqrt{g_c^\top R\, g_c}}{g_c^\top g_c},
+\qquad \hat\sigma_\tau^2 = \frac{\operatorname{SSE}(\tau)}{\operatorname{tr}(M_\tau R)} ,
+$$
+
+with $R$ the AR(1) correlation, as in the drift test. Its $\hat\phi$ is taken
+from the residuals at the best $\hat\tau$ (refined between grid points) and
+bias-corrected for three parameters: $r_1 + (3 + 5 r_1)/n$, clipped to
+$[0, 0.98]$.
+
+A test that trusts $\hat\tau$ passes too often: noise that makes the curve
+look sharper makes $\hat\tau$ shorter and $\hat d$ smaller. So the test uses
+every $\tau$ the data allow. The profile-likelihood confidence set is
+
+$$
+\mathcal T = \left\{ \tau \in [\tau_{\min}, \tau_{\max}] :\; \operatorname{SSE}(\tau) \le \operatorname{SSE}(\hat\tau) \left(1 + \frac{t^2_{0.975,\nu}}{\nu}\right) \right\},
+\qquad \nu = \max\!\left(\left\lfloor n \tfrac{1 - \hat\phi}{1 + \hat\phi}\right\rfloor - 3,\; 1\right),
+$$
+
+on a log-spaced grid, widened by one grid point at each end. With
+$k = t_{0.975,\nu}$, the interval for $|d|$ is
+
+$$
+\Big[\, \min_{\tau \in \mathcal T} \big(|\hat d(\tau)| - k\,u(\tau)\big)^+ ,\;\; \max_{\tau \in \mathcal T} \big(|\hat d(\tau)| + k\,u(\tau)\big) \Big],
+$$
+
+and the three-way test compares it with the limit.
+
+$\tau_{\max}$ is the caller's bound on the process's time constant. A
+first-order approach is monotone and slows down, so $|y'(s_e)|$ is at most
+the window's mean slope $|b|$ and $|d| \le \tau_{\max} |b|$. When the window
+cannot resolve the curve (a flat window, or one much shorter than $\tau$),
+$\mathcal T$ reaches $\tau_{\max}$. There $g$ is nearly linear in $s$, and
+$\hat d(\tau_{\max}) \approx -\tau_{\max} b$: the bound applies by itself,
+with no separate mode and no data-dependent switch.
+
+Monte Carlo false-pass rates at the limit (noise $0.1\,L$,
+$\tau_{\max} = 2\tau$, `tools/coverage_mc.py --asymptote`, 2000
+replications; nominal 2.5 %):
+
+| blocks, $\phi$ | span $0.5\tau$ | $1\tau$ | $2\tau$ | $4\tau$ | $8\tau$ |
+|---|---|---|---|---|---|
+| 20, 0 / 0.5 / 0.8 | 2.0 / 3.1 / 5.0 | 1.4 / 3.0 / 4.7 | 0.7 / 2.1 / 3.9 | 0.0 / 0.4 / 0.5 | 0 |
+| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.2 / 1.1 / 1.5 | 0 | 0 |
+| 90, 0 / 0.5 / 0.8 | 1.6 / 1.9 / 2.0 | 1.1 / 1.5 / 1.5 | 0.4 / 0.4 / 1.0 | 0 | 0 |
+
+With $\tau_{\max}$ equal to the true $\tau$, the true value sits at the edge
+of the search, and the rates reach at most 6.0 % at 40 blocks and 5.1 % at
+90. Give $\tau_{\max}$ a margin. One evaluation costs about 0.8 ms.
+
 ## Integrated autocorrelation time and the uncertainty of a mean
 
 For a stationary series with autocorrelation $\rho(j)$, the variance of the
