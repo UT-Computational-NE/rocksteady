@@ -2,3 +2,4 @@ include CHANGELOG.md
 recursive-include tests *.py *.csv *.txt
 recursive-include examples *.py
 recursive-include tools *.py
+recursive-include docs *.py *.md *.rst *.txt

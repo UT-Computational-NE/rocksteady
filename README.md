@@ -470,11 +470,26 @@ measures the scaling.
 
 ## References
 
-- Newey, W. K. and West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica* 55(3), 703–708. (The `"nw"` method.)
-- Marriott, F. H. C. and Pope, J. A. (1954). Bias in the estimation of autocorrelations. *Biometrika* 41, 390–402. (First-order bias of the lag-1 autocorrelation. `"ar1"` uses the analogous correction for a series detrended by a line, and is validated by the Monte Carlo above.)
-- Zhang, N. F. (2006). Calculation of the uncertainty of the mean of autocorrelated measurements. *Metrologia* 43, S276–S281. (Uncertainty of a mean with autocorrelation, and combining Type A and Type B. `tau_int` uses a different autocorrelation cutoff; see its docstring.)
+- Bellman, R. (1961). On the approximation of curves by line segments using dynamic programming. *Communications of the ACM* 4(6), 284. (Optimal segmentation by dynamic programming.)
 - Cao, S. and Rhinehart, R. R. (1995). An efficient method for on-line identification of steady state. *Journal of Process Control* 5(6), 363–374.
 - Cao, S. and Rhinehart, R. R. (1997). Critical values for a steady-state identifier. *Journal of Process Control* 7(2), 149–152. (The filtered R-statistic, a planned criterion.)
+- Golub, G. H. and Pereyra, V. (1973). The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. *SIAM Journal on Numerical Analysis* 10(2), 413–432. (Variable projection, used by the exponential fit models.)
+- Golub, G. and Pereyra, V. (2003). Separable nonlinear least squares: the variable projection method and its applications. *Inverse Problems* 19(2), R1–R26.
+- Jackson, B. et al. (2005). An algorithm for optimal partitioning of data on an interval. *IEEE Signal Processing Letters* 12(2), 105–108. (Optimal partitioning, the basis of `optimal_segments`.)
+- JCGM 100:2008. *Evaluation of measurement data — Guide to the expression of uncertainty in measurement* (GUM). (Type A and Type B standard uncertainties.)
+- Marriott, F. H. C. and Pope, J. A. (1954). Bias in the estimation of autocorrelations. *Biometrika* 41, 390–402. (First-order bias of the lag-1 autocorrelation. `"ar1"` uses the analogous correction for a series detrended by a line, and is validated by Monte Carlo.)
+- Neumaier, A. (1974). Rundungsfehleranalyse einiger Verfahren zur Summation endlicher Summen. *ZAMM* 54(1), 39–51. (Compensated summation, used for the segment-cost range sums.)
+- Newey, W. K. and West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica* 55(3), 703–708. (The `"nw"` method.)
+- Schuirmann, D. J. (1987). A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability. *Journal of Pharmacokinetics and Biopharmaceutics* 15(6), 657–680. (Equivalence testing.)
+- Schwarz, G. (1978). Estimating the dimension of a model. *Annals of Statistics* 6(2), 461–464. (The BIC, the default segment penalty.)
+- Sokal, A. (1997). Monte Carlo methods in statistical mechanics: foundations and new algorithms. In *Functional Integration: Basics and Applications*, NATO ASI Series B 361, 131–192. (The integrated autocorrelation time and its windowed estimation.)
+- Truong, C., Oudre, L. and Vayatis, N. (2020). Selective review of offline change point detection methods. *Signal Processing* 167, 107299. (Context: `ruptures`.)
+- Wellek, S. (2010). *Testing Statistical Hypotheses of Equivalence and Noninferiority*, 2nd ed. Chapman & Hall/CRC. (The three-way test as an equivalence test.)
+- White, H. (1980). A heteroskedasticity-consistent covariance matrix estimator and a direct test for heteroskedasticity. *Econometrica* 48(4), 817–838. (Sandwich covariance.)
+- Zhang, N. F. (2006). Calculation of the uncertainty of the mean of autocorrelated measurements. *Metrologia* 43, S276–S281. (Uncertainty of a mean with autocorrelation, and combining Type A and Type B. `tau_int` uses a different autocorrelation cutoff; see its docstring.)
+
+The mathematics of each method, as implemented, is on the documentation's
+[Methods](https://rocksteady.readthedocs.io/en/latest/guide/methods.html) page.
 
 ## Development
 

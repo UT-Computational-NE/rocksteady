@@ -28,6 +28,26 @@
 
 ### Documentation
 
+- An adapter guide and a methods page on the documentation site (#49).
+  - **Writing an adapter:** the four-part pattern (configuration, a
+    detector from a spec, streaming, batch), the signatures of the calls
+    adapters make (rendered from the code), and the contracts and
+    registration of custom criteria, disturbances, overrides, slope
+    methods and fit models.
+  - **Two runnable examples** in `docs/source/examples/`. The test suite
+    runs them (`tests/test_docs_examples.py`), and the sdist now includes
+    `docs/`.
+  - **Methods:** the mathematics as implemented, with links to each
+    function. It covers block means, the three-way equivalence test and the
+    margin ratio, the deviation, drift (`ar1`, `nw`, with the calibration
+    table) and band criteria, the integrated autocorrelation time and
+    `N_eff`, disturbances and the state machine, fit models with variable
+    projection and the AR(1) sandwich covariance, the comparison statistics,
+    and constrained optimal segmentation by dynamic programming.
+  - **The README's references** are now alphabetical and extended (Bellman;
+    Golub and Pereyra; Jackson et al.; JCGM 100; Neumaier; Schuirmann;
+    Schwarz; Sokal; Truong et al.; Wellek; White), still the single
+    bibliography.
 - A Read the Docs site, https://rocksteady.readthedocs.io (#47).
   - **Build:** Sphinx with the Read the Docs theme, configured by
     `.readthedocs.yaml`, `docs/requirements.txt` and `docs/source/conf.py`.
