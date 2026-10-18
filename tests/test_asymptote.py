@@ -204,3 +204,43 @@ def test_colliding_diagnostic_columns_are_rejected_before_reading_input():
         with pytest.raises(ValueError, match="'detail_a_b_c' comes from both criterion 'a' key 'b_c' and criterion"):
             rs.batch.run(det, df, with_results=True)
     assert len(rs.batch.run(det, pd.DataFrame({"x": np.zeros(4)}))) == 4  # without results, no diagnostic columns
+
+
+@pytest.mark.parametrize("noise_sd, seed", [(0.0, 0)] + [(0.001, s) for s in range(5)])
+def test_partial_blocks_are_not_extrapolated(noise_sd, seed):
+    """Tolerated gaps: each two-sample block is [NaN, valid], so its mean was measured at its last sample."""
+    t = np.arange(22) * 30.0
+    x = 5 - 1.15 * np.exp((t[-1] - t) / 60.0) + np.random.default_rng(seed).normal(0, noise_sd, len(t))
+    x[::2] = np.nan
+    timing = rs.Timing(sample_period_s=30, block_s=60, window_s=600, max_gap_s=30, min_block_coverage=0.5)
+    det = rs.Detector([rs.Signal("x", "x")], [rs.AsymptoteCriterion("x", 1.0, tau_max=120)], timing=timing)
+    v = [det.update(float(ti), {"x": float(xi)}) for ti, xi in zip(t, x)][-1]
+    assert v.label != rs.Label.STEADY  # 1.15 left at the last sample, above the limit of 1
+    if noise_sd == 0:
+        assert v.results["x_asymptote"].details["remaining"] == pytest.approx(-1.15, rel=1e-6)
+
+
+def test_criteria_receive_the_times_their_block_means_were_measured_at():
+    seen = []
+
+    class Spy(rs.Criterion):
+        min_blocks = 3
+
+        def __init__(self):
+            self.name, self.signal = "spy", "x"
+
+        def evaluate(self, t_blocks, y_blocks):
+            seen.append(np.array(t_blocks))
+            return rs.CriterionResult("spy", 0.0, 0.0, 1.0, 1.0)
+
+    timing = rs.Timing(sample_period_s=1, block_s=4, window_s=12, max_gap_s=3, min_block_coverage=0.25)
+    det = rs.Detector([rs.Signal("x", "x")], [Spy()], timing=timing)
+    for i in range(12):
+        det.update(float(i), {"x": 0.0})
+    nominal = seen[-1].copy()
+    np.testing.assert_array_equal(nominal, [-4.0, 0.0, 4.0])  # complete blocks: the block centres
+    # The next window, samples 12-23, after valid history: block 1 keeps only its last sample (offset +1.5);
+    # block 3 loses its third sample, so its valid offsets are -1.5, -0.5, +1.5 (mean -1/6).
+    for i in range(12, 24):
+        det.update(float(i), {"x": float("nan") if i in (12, 13, 14, 22) else 0.0})
+    np.testing.assert_allclose(seen[-1], [-4.0 + 1.5, 0.0, 4.0 - 1.0 / 6.0])

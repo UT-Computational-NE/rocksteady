@@ -52,6 +52,15 @@
     against, e.g., the detector) and `optimal.count_by_period`.
   - `tools/benchmark.py optimal`: a week at 1 Hz.
 
+### Changed
+
+- Criteria receive the times at which the block means were measured. A
+  block with tolerated missing samples is placed at the mean time of its
+  valid samples rather than at its nominal centre; complete blocks are
+  unchanged. This corrects the drift slope's timing on partial blocks, and
+  keeps `AsymptoteCriterion` from extrapolating a partial block's mean
+  (#7).
+
 ### Fixed
 
 - `DeviationCriterion(relative=True)` on a window whose mean and

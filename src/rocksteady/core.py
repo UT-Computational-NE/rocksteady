@@ -251,7 +251,12 @@ class Criterion(ABC):
 
     @abstractmethod
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
-        """``t_blocks`` are block centre times in seconds; ``y_blocks`` the block means."""
+        """
+        ``y_blocks`` are the block means; ``t_blocks`` the times they were
+        measured at, in seconds from the window's centre: the block centres
+        for complete blocks, the mean time of the valid samples for a block
+        with tolerated missing samples.
+        """
 
     def bind_timing(self, timing: "Timing") -> None:
         """Called once by the ``Detector``, with its ``Timing``; override to use it."""
@@ -617,18 +622,24 @@ class Detector:
         """Window samples in time order, shape (n, n_signals)."""
         return np.concatenate((self._buf[self._head :], self._buf[: self._head]))
 
-    def _blocks(self) -> Optional[np.ndarray]:
+    def _blocks(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
-        Block means over the window, shape (n_blocks, n_signals), or None if
-        some block has too few valid samples (``Timing.min_block_coverage``).
+        ``(t_blocks, block_means)`` over the window, or None if some block has
+        too few valid samples (``Timing.min_block_coverage``). The means have
+        shape (n_blocks, n_signals). ``t_blocks`` is the mean time of each
+        block's valid samples: the block centre for a complete block, moved
+        towards the valid samples in a partial one, since that is where its
+        mean was measured.
         """
         w = self._window()[self._n - self._nb * self._b :].reshape(self._nb, self._b, -1)
         valid = np.isfinite(w[:, :, 0])  # missing samples are whole NaN rows
         if valid.all():
-            return w.mean(axis=1)
+            return self._t_blocks, w.mean(axis=1)
         if (valid.mean(axis=1) < self.timing.min_block_coverage).any():
             return None
-        return np.nanmean(w, axis=1)
+        slot = np.arange(self._b) - (self._b - 1) / 2.0  # sample offsets from the block centre, in samples
+        shift = (valid * slot).sum(axis=1) / valid.sum(axis=1) * self.timing.sample_period_s
+        return self._t_blocks + shift, np.nanmean(w, axis=1)
 
     def _record(self, passing: Optional[bool]) -> None:
         if passing is not None:
@@ -716,14 +727,15 @@ class Detector:
             self._record(False)
             return Verdict(t, Label.SETTLING, since_disturbance_s=since_s, reason=Reason.SETTLING_TIME)
 
-        blocks = self._blocks()
+        evaluable = self._blocks()
         w0 = t - (self.timing.evaluated_samples - 1) * dt  # the window's history is on the sample grid
         results = {}
-        if blocks is None:
+        if evaluable is None:
             outcomes = [Outcome.UNDECIDED]
             undecided = Reason.LOW_COVERAGE
         else:
-            evaluated = [c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
+            t_blocks, blocks = evaluable
+            evaluated = [c.evaluate(t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
             outcomes = [r.outcome for r in evaluated]  # every criterion counts, whatever its name
             results = {c.name: r for c, r in zip(self.criteria, evaluated)}
             invalid = any(r.invalid_reason is not None for r in evaluated)

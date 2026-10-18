@@ -34,6 +34,10 @@ $$
 $$
 
 so slopes are per second, and the intercept is the window's mid-level.
+These are the times of complete blocks. A block with tolerated missing
+samples is placed at the mean time of its valid samples, which is where its
+mean was measured, so criteria never treat a partial block as if it were
+centred.
 Block means average out sample-to-sample noise and much of its short-range
 correlation.
 
@@ -188,10 +192,11 @@ $\tau_{\text{int}}$, and so $u$, is unreliable.
 
 {py:class}`~rocksteady.criteria.AsymptoteCriterion` assumes a first-order
 approach, $y(s) = y_\infty + A\,e^{-s/\tau}$ with $s = t - t_0$ from the
-first block centre, and bounds the **remaining approach** at the current
-sample, $s_e = s_n + (B - 1)\Delta/2$, where $s_n$ is the last block centre,
-$B$ the samples per block and $\Delta$ the sample period (the detector
-supplies them through `Criterion.bind_timing`):
+first block time, and bounds the **remaining approach** at the current
+sample. That is $(B - 1)\Delta/2$ after the nominal centre of the last block,
+for $B$ samples per block and sample period $\Delta$; the detector supplies
+them through `Criterion.bind_timing`. The current sample is always a valid
+one, so this holds even when tolerated gaps have moved the block times:
 
 $$
 d(\tau) = A\,e^{-s_e/\tau} = -\tau\, y'(s_e).

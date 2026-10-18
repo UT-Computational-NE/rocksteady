@@ -293,22 +293,26 @@ class AsymptoteCriterion(Criterion):
             raise ValueError(f"{what}: n_grid must be at least 2, so the grid holds both tau_min and tau_max")
         self.signal, self.confidence, self.relative = signal, confidence, bool(relative)
         self.name = name or f"{signal}_asymptote"
-        self._end_offset = 0.0  # from the last block centre to the current sample; set by bind_timing
+        self._t_now = None  # the current sample's time in the detector's block-time frame; set by bind_timing
         self._bound = None
 
     def bind_timing(self, timing) -> None:
         """
-        The current sample is ``(block_samples - 1) * sample_period_s / 2``
-        after the last block centre. Without a timing (``evaluate`` called on
-        its own) the remaining approach is taken at the last block centre,
-        which is conservative for an approach that slows down.
+        Where the current sample is, in the detector's block-time frame (block
+        times are measured from the window's centre): half of
+        ``block_samples - 1`` sample periods after the nominal centre of the
+        last block. It is always a valid sample, whatever the coverage of the
+        blocks before it. Without a timing (``evaluate`` called on its own)
+        the remaining approach is taken at the last block time, which is
+        conservative for an approach that slows down.
         """
-        key = (timing.block_samples, timing.sample_period_s)
+        key = (timing.n_blocks, timing.block_samples, timing.sample_period_s)
         if self._bound is not None and self._bound != key:
             raise ValueError(f"AsymptoteCriterion {self.name!r} is already used with another timing; build one "
                              "instance per detector")
         self._bound = key
-        self._end_offset = 0.5 * (timing.block_samples - 1) * timing.sample_period_s
+        self._t_now = (0.5 * (timing.n_blocks - 1) * timing.effective_block_s
+                       + 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
 
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
         from ._ar1 import ar1_apply
@@ -319,7 +323,10 @@ class AsymptoteCriterion(Criterion):
         n = len(y)
         step = float(t[1] - t[0]) if n > 1 else 1.0
         s = t - t[0]
-        s_end = float(s[-1]) + self._end_offset  # the current sample (see bind_timing)
+        # The current sample (see bind_timing). Block times are where each mean was measured, so a partial
+        # block's mean is not extrapolated from its nominal centre.
+        t_now = self._t_now if self._t_now is not None else float(t[-1])
+        s_end = max(t_now, float(t[-1])) - float(t[0])
         lo = self.tau_min if self.tau_min is not None else max(0.5 * step, (s_end or 1.0) / 1e4)
         lo = min(lo, self.tau_max)
         grid = np.exp(np.linspace(np.log(lo), np.log(self.tau_max), self.n_grid))

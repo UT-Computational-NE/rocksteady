@@ -60,7 +60,7 @@ def asymptote_pass_rate(n_blocks: int, phi: float, span_over_tau: float, reps: i
     t = (np.arange(n_blocks) - (n_blocks - 1) / 2.0) * block_s
     s = t - t[0]
     timing = Timing(sample_period_s=1.0, block_s=block_s, window_s=n_blocks * block_s)  # 1 s samples
-    s_end = s[-1] + 0.5 * (timing.block_samples - 1) * timing.sample_period_s  # the current sample
+    s_end = s[-1] + 0.5 * (timing.block_samples - 1) * timing.sample_period_s  # the current sample (full blocks)
     tau = s_end / span_over_tau
     amp = remaining_over_limit * np.exp(s_end / tau)
     crit = AsymptoteCriterion("x", 1.0, tau_max=tau_factor * tau)
