@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+Best-fit segments under limits (#45), the documentation site (#47, #49), the
+asymptote criterion (#7), and data-driven timing (#51).
+
+Upgrading from 0.4.0. Behaviour changes to check:
+- **Breaking:** `Timing` requires `block_s` and `window_s`, and `Detector`
+  requires a `timing` (#51). Code that relied on the old 30 s / 300 s
+  defaults raises a clear error; `rs.suggest_timing` proposes values.
+- A detector whose window has fewer blocks than a criterion's calibration
+  needs issues a `CalibrationWarning` (#51).
+- Criteria receive the times at which block means were measured. This
+  differs from 0.4.0 only for blocks with tolerated missing samples (#7).
+- `batch.run(with_results=True)` adds `detail_<criterion>_<key>` columns for
+  criteria that declare diagnostics (#7).
 
 ### Added
 

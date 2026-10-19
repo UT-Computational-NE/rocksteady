@@ -29,7 +29,7 @@ from .optimal import compare_segments, optimal_segments
 from .timing import TimingSuggestion, suggest_timing
 from . import batch, factory, fit, metrics, optimal, registry, report, signals, states, stats, timing
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "Context", "Criterion", "CriterionResult", "Detector", "Disturbance", "Label", "Override", "Reason",
