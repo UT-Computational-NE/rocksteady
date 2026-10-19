@@ -11,9 +11,12 @@
   - optionally, a typical transient's time constant, which caps the block
     length.
 
-  The window is 40 blocks unless `max_window_s` limits it. It returns a
-  `TimingSuggestion` with the measurements and the reasoning (including
-  conflicts), and `.timing(...)` builds a `Timing`. It sets nothing itself.
+  Missing samples keep their place on the time grid: correlations are
+  measured within contiguous runs, never across a gap. The window is 40
+  blocks unless `max_window_s` limits it, and never exceeds that limit. It
+  returns a `TimingSuggestion` with the measurements and the reasoning
+  (including conflicts), and `.timing(...)` builds a `Timing`. It sets
+  nothing itself.
 - `rocksteady.CalibrationWarning` and `Criterion.recommended_blocks`: a
   detector whose window has fewer blocks than a criterion's calibration needs
   warns. The thresholds are 20 for `DriftCriterion` and `AsymptoteCriterion`

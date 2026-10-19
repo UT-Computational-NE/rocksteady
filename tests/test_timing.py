@@ -73,6 +73,8 @@ def test_suggest_timing_reports_conflicts_and_limits():
     assert fast.n_blocks == 25 and any("holds only 25 blocks" in note for note in fast.notes)
     with pytest.raises(ValueError, match="at least 20 finite samples"):
         rs.suggest_timing(np.ones(10), 1.0)
+    with pytest.raises(ValueError, match="holds 1 block.* needs at least 3"):
+        rs.suggest_timing(np.random.default_rng(0).normal(size=10000), 1.0, max_window_s=5.0)
     with pytest.raises(ValueError, match="dt must be a positive"):
         rs.suggest_timing(steady, 0.0)
     unresolved = rs.suggest_timing(steady, 1.0, transient=np.zeros(200))
@@ -95,3 +97,28 @@ def test_a_suggested_timing_keeps_the_drift_test_calibrated():
         bv, ub, k = stats.slope_ar1(t_blocks, x.reshape(n, b).mean(axis=1))
         passes += abs(bv) + k * ub <= limit
     assert passes / reps <= 0.05
+
+
+
+def test_missing_samples_keep_their_place_on_the_time_grid():
+    """Correlation is measured within contiguous runs, never across a gap (the time axis is not compressed)."""
+    x = ar1_noise(np.random.default_rng(2026), 100000, 0.9)  # tau_int = 19 s at 1 Hz
+    full = rs.suggest_timing(x, 1.0)
+    runs = x.copy()
+    runs[(np.arange(len(x)) % 1000) < 50] = np.nan  # 50-sample gaps at known positions
+    gapped = rs.suggest_timing(runs, 1.0)
+    assert gapped.noise_tau_s == pytest.approx(full.noise_tau_s, rel=0.05)
+    assert abs(gapped.block_s - full.block_s) <= 2 and gapped.block_mean_phi < 0.25
+    assert any("never across a gap" in note for note in gapped.notes)
+    # Nine in ten missing: no run to measure a correlation in. Compressing the gaps would have given a
+    # correlation time ten times too short and blocks that look independent but are strongly correlated.
+    sparse = x.copy()
+    sparse[np.arange(len(x)) % 10 != 0] = np.nan
+    with pytest.raises(ValueError, match="no run of at least 20 consecutive valid samples"):
+        rs.suggest_timing(sparse, 1.0)
+
+
+@pytest.mark.parametrize("cap", [9.0, 10.0, 50.0, 119.0, 1e6])
+def test_the_window_never_exceeds_max_window_s(cap):
+    s = rs.suggest_timing(np.random.default_rng(3).normal(size=10000), 1.0, max_window_s=cap)
+    assert 3 <= s.n_blocks <= 40 and s.window_s <= cap

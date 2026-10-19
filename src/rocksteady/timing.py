@@ -24,7 +24,7 @@ from typing import List, Optional
 import numpy as np
 
 from .core import Timing
-from .stats import linear_fit, tau_int
+from .stats import acf_tau, linear_fit
 
 
 @dataclass
@@ -78,9 +78,12 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
     Parameters
     ----------
     steady : array
-        A stretch of one signal known to be steady (non-finite samples are
-        dropped), sampled every ``dt`` seconds. Longer is better: a few
-        hundred noise correlation times.
+        A stretch of one signal known to be steady, sampled every ``dt``
+        seconds. Non-finite samples are missing samples: they keep their
+        place on the time grid, and correlations are measured within the
+        contiguous runs of valid samples, never across a gap. At least one
+        run of 20 valid samples is needed. Longer is better: a few hundred
+        noise correlation times.
     dt : float
         Sample period in seconds.
     transient : array, optional
@@ -93,8 +96,11 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
         Blocks per window (default 40, where the ``"ar1"`` drift test holds
         its calibration).
     max_window_s : float, optional
-        The longest window the application accepts (its reaction time). If
-        ``min_blocks`` blocks do not fit, fewer are used and a note says so.
+        The longest window the application accepts (its reaction time). The
+        returned window never exceeds it. If ``min_blocks`` blocks do not
+        fit, fewer are used and a note says so; if not even 3 fit, a
+        ``ValueError`` explains the choices (a longer window, or shorter,
+        correlated blocks).
     block_to_process : float
         Largest block length as a fraction of the process time constant
         (default 0.2), so blocks follow the transient.
@@ -111,13 +117,29 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
     if not block_factor > 0 or not 0 < block_to_process <= 1 or int(min_blocks) < 3:
         raise ValueError("block_factor must be > 0, block_to_process in (0, 1], min_blocks >= 3")
     y = np.asarray(steady, dtype=float)
-    y = y[np.isfinite(y)]
-    if len(y) < 20:
-        raise ValueError(f"steady needs at least 20 finite samples, got {len(y)}")
+    ok = np.isfinite(y)
+    if int(ok.sum()) < 20:
+        raise ValueError(f"steady needs at least 20 finite samples, got {int(ok.sum())}")
+    # Missing samples keep their place on the time grid: samples either side of a gap are not adjacent
+    # observations. The line is fitted at the samples' true times, and lag products are pooled within
+    # contiguous runs of valid samples only (stats.acf_tau).
+    pos = np.arange(len(y), dtype=float)
+    _, _, r = linear_fit(pos[ok], y[ok])
+    resid = np.full(len(y), np.nan)
+    resid[ok] = r
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], ok.astype(np.int8), [0]))))
+    pieces = [resid[a:b] for a, b in zip(edges[::2], edges[1::2])]
+    longest = max(len(p) for p in pieces)
+    if longest < 20:
+        raise ValueError(f"steady has no run of at least 20 consecutive valid samples (the longest is {longest}); "
+                         "the correlation time cannot be measured across gaps. Give a gap-free steady stretch.")
     notes: List[str] = []
-    noise_tau = float(tau_int(y, dt))
-    if len(y) * dt < 100 * noise_tau:
-        notes.append(f"the steady stretch spans only {len(y) * dt / noise_tau:.0f} noise correlation times; the "
+    noise_tau = float(acf_tau(pieces, dt))
+    if not ok.all():
+        notes.append(f"{int((~ok).sum())} missing samples: correlation measured within {len(pieces)} contiguous "
+                     f"runs (longest {longest} samples), never across a gap")
+    if ok.sum() * dt < 100 * noise_tau:
+        notes.append(f"the valid samples span only {ok.sum() * dt / noise_tau:.0f} noise correlation times; the "
                      "estimate is rough (a few hundred are better)")
     samples = max(1, int(round(block_factor * noise_tau / dt)))
     notes.append(f"block: {block_factor:g} x the noise correlation time {noise_tau:.3g} s, rounded to "
@@ -150,11 +172,17 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
     n_blocks = int(min_blocks)
     if max_window_s is not None:
         fit_blocks = int(math.floor(float(max_window_s) / block_s + 1e-9))
+        if fit_blocks < 3:
+            raise ValueError(
+                f"max_window_s = {max_window_s:g} s holds {fit_blocks} block(s) of {block_s:g} s, and a detector "
+                f"needs at least 3 (the drift test 4, and about 20-40 for its calibration). Accept a longer "
+                f"window (at least {3 * block_s:g} s), or shorter blocks (a smaller block_factor), knowing that "
+                "block means then stay correlated.")
         if fit_blocks < n_blocks:
             notes.append(f"max_window_s = {max_window_s:g} s holds only {fit_blocks} blocks, fewer than "
                          f"{min_blocks}; the drift test's calibration weakens below about 40 blocks and fails "
                          "below about 20 (see the calibration tables)")
-            n_blocks = max(fit_blocks, 3)
+            n_blocks = fit_blocks
     window_s = n_blocks * block_s
     notes.append(f"window: {n_blocks} blocks = {window_s:g} s; a steady call lags by about one window")
     if math.isfinite(process_tau) and window_s < process_tau:
@@ -162,11 +190,20 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
                      "test (AsymptoteCriterion) has little power on approaches that slow, and a drift test sees "
                      "a nearly linear approach")
 
+    # Block means on the original grid; only complete blocks, and only pairs of consecutive complete blocks.
     nb = len(y) // samples
     phi_b = float("nan")
-    if nb >= 10:
-        phi_b = _lag1(linear_fit(np.arange(nb, dtype=float), y[: nb * samples].reshape(nb, samples).mean(axis=1))[2])
-        notes.append(f"measured lag-1 autocorrelation of block means on the steady stretch: {phi_b:.2f}")
+    if nb >= 2:
+        grid = resid[: nb * samples].reshape(nb, samples)
+        full = np.isfinite(grid).all(axis=1)
+        means = np.full(nb, np.nan)
+        means[full] = grid[full].mean(axis=1)
+        pair = full[1:] & full[:-1]
+        if int(pair.sum()) >= 10:
+            m = means - np.nanmean(means)
+            phi_b = float((m[1:][pair] * m[:-1][pair]).mean() / np.nanmean(m[full] ** 2))
+            notes.append(f"measured lag-1 autocorrelation of block means on the steady stretch: {phi_b:.2f} "
+                         f"({int(pair.sum())} pairs of consecutive complete blocks)")
     return TimingSuggestion(dt, block_s, window_s, n_blocks, noise_tau, process_tau, phi_b, notes)
 
 
