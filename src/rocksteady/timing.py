@@ -63,12 +63,6 @@ class TimingSuggestion:
         return "\n".join([head] + [f"- {n}" for n in self.notes])
 
 
-def _lag1(x: np.ndarray) -> float:
-    x = x - x.mean()
-    xx = float(x @ x)
-    return float(x[1:] @ x[:-1]) / xx if xx > 0 and len(x) > 2 else float("nan")
-
-
 def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block_factor: float = 3.0,
                    min_blocks: int = 40, max_window_s: Optional[float] = None,
                    block_to_process: float = 0.2) -> TimingSuggestion:
@@ -201,9 +195,13 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
         pair = full[1:] & full[:-1]
         if int(pair.sum()) >= 10:
             m = means - np.nanmean(means)
-            phi_b = float((m[1:][pair] * m[:-1][pair]).mean() / np.nanmean(m[full] ** 2))
-            notes.append(f"measured lag-1 autocorrelation of block means on the steady stretch: {phi_b:.2f} "
-                         f"({int(pair.sum())} pairs of consecutive complete blocks)")
+            var = float(np.mean(m[full] ** 2))
+            if var > 0:
+                phi_b = float((m[1:][pair] * m[:-1][pair]).mean() / var)
+                notes.append(f"measured lag-1 autocorrelation of block means on the steady stretch: {phi_b:.2f} "
+                             f"({int(pair.sum())} pairs of consecutive complete blocks)")
+            else:  # undefined, not zero: the data have no scatter to correlate
+                notes.append("the steady stretch is constant: block-mean correlation is undefined")
     return TimingSuggestion(dt, block_s, window_s, n_blocks, noise_tau, process_tau, phi_b, notes)
 
 

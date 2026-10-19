@@ -122,3 +122,12 @@ def test_missing_samples_keep_their_place_on_the_time_grid():
 def test_the_window_never_exceeds_max_window_s(cap):
     s = rs.suggest_timing(np.random.default_rng(3).normal(size=10000), 1.0, max_window_s=cap)
     assert 3 <= s.n_blocks <= 40 and s.window_s <= cap
+
+
+@pytest.mark.parametrize("level", [0.0, 5.0])
+def test_constant_steady_data_give_an_undefined_correlation_quietly(level):
+    with np.errstate(all="raise"), warnings.catch_warnings():
+        warnings.simplefilter("error")
+        s = rs.suggest_timing(np.full(1000, level), 1.0)
+    assert np.isnan(s.block_mean_phi) and any("constant" in note for note in s.notes)
+    assert s.block_s >= 1.0 and s.window_s <= 40 * s.block_s
