@@ -91,7 +91,7 @@ registry.slope_methods.register("iid", slope_iid)
 
 # [spec]
 SPEC = {
-    "timing": {"sample_period_s": 1.0, "block_s": 10.0, "window_s": 120.0, "settle_s": 30.0},
+    "timing": {"sample_period_s": 1.0, "block_s": 5.0, "window_s": 120.0, "settle_s": 30.0},  # 24 blocks
     "signals": ["level", "command"],
     "criteria": [
         {"type": "range", "signal": "level", "limit": 0.5, "noise": 0.02},

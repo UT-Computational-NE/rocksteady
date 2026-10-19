@@ -143,6 +143,7 @@ class DriftCriterion(Criterion):
     """
 
     min_blocks = 4
+    recommended_blocks = 20  # the "ar1" false-pass rate stays near nominal from about 20-40 blocks
 
     def __init__(self, signal: str, limit_per_s: float, *, k: Optional[float] = None,
                  method: Union[str, Callable] = DEFAULT_SLOPE_METHOD,
@@ -177,6 +178,8 @@ class BoundCriterion(Criterion):
     understate it. With fewer than about 10 blocks the autocorrelation
     estimate, and so the uncertainty, is unreliable.
     """
+
+    recommended_blocks = 10  # tau_int of the block means is unreliable below about 10 blocks
 
     def __init__(self, signal: str, low: float, high: float, k: float = 2.0, name: str = None):
         what = f"BoundCriterion {name or signal!r}"
@@ -277,6 +280,7 @@ class AsymptoteCriterion(Criterion):
     """
 
     min_blocks = 10
+    recommended_blocks = 20  # calibrated false-pass rate about 5 % at 20 blocks, nominal from 40
     detail_keys = ("tau_s", "tau_hi", "y_inf", "remaining")
     uses_block_masks = True
 

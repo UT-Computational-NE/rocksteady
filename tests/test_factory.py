@@ -96,14 +96,20 @@ def test_spec_may_mix_objects_and_data():
     assert det.overrides[1].label == rs.Label.INDETERMINATE
 
 
+T = {"block_s": 1.0, "window_s": 5.0}
+
+
 @pytest.mark.parametrize("spec, match", [
     ({"signals": ["x"], "criterion": []}, "unknown detector spec keys"),
     ({"criteria": []}, "at least one signal"),
-    ({"signals": ["x"], "criteria": [{"signal": "x"}]}, "needs a 'type'"),
-    ({"signals": ["x"], "criteria": [{"type": "drift", "signal": "x", "limit": 1.0}]}, "bad parameters"),
-    ({"signals": ["x"], "criteria": [{"type": "drift", "signal": "y", "limit_per_s": 1.0}]}, "unknown signal"),
+    ({"signals": ["x"], "timing": T, "criteria": [{"signal": "x"}]}, "needs a 'type'"),
+    ({"signals": ["x"], "timing": T, "criteria": [{"type": "drift", "signal": "x", "limit": 1.0}]}, "bad parameters"),
+    ({"signals": ["x"], "timing": T, "criteria": [{"type": "drift", "signal": "y", "limit_per_s": 1.0}]},
+     "unknown signal"),
     ({"signals": ["x"], "timing": {"window": 10}}, "bad timing"),
-    ({"signals": [{"builder": "mean", "cols": ["x"]}]}, "needs a 'name'"),
+    ({"signals": ["x"]}, "Timing needs block_s and window_s"),
+    ({"signals": ["x"], "timing": {"block_s": 1.0}}, "Timing needs window_s: block and window lengths"),
+    ({"signals": [{"builder": "mean", "cols": ["x"]}], "timing": T}, "needs a 'name'"),
 ])
 def test_spec_errors(spec, match):
     with pytest.raises(ValueError, match=match):

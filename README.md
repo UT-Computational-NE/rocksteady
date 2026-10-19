@@ -88,7 +88,7 @@ combines them is shared.
 | **Signals** | Named scalars computed from each raw sample: a column, or a derived quantity | column, `mean`, `spread`, `difference` |
 | **Criteria** | Tests on one signal over the trailing window of block means. Each returns a statistic, its uncertainty, and a limit | `DriftCriterion` (no resolvable slope), `DeviationCriterion` (stays within a tolerance of a constant or a line), `BoundCriterion` (mean inside a band), `AsymptoteCriterion` (a first-order approach is within a limit of its final value) |
 | **Disturbances** | External action, found in the signals or read from a log; resets the clocks | `StepChange` (a discrete move in a signal), `EventLog` (logged events with durations) |
-| **Timing** | Sample period, block length, window, settling time after a disturbance, hold time, gap tolerance, and what an undecided window means | `Timing` |
+| **Timing** | Sample period, block length, window, settling time after a disturbance, hold time, gap tolerance, and what an undecided window means. Block and window lengths are required: `rs.suggest_timing` proposes them from your data | `Timing` |
 | **Overrides** | Domain rules that force a label | `FloorLatch` (below a floor the system is steady by definition, for example when shut down) |
 
 ### Labels

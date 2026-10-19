@@ -41,6 +41,7 @@ criteria, disturbances, overrides and signal builders live in their own
 modules and are registered by name in ``rocksteady.registry``.
 """
 
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -229,12 +230,23 @@ class CriterionResult:
         return Outcome.UNDECIDED
 
 
+class CalibrationWarning(UserWarning):
+    """
+    A detector is configured outside the range in which a criterion's
+    uncertainty is calibrated (for example, too few blocks per window). It
+    still runs; filter the warning with ``warnings.filterwarnings`` if the
+    choice is deliberate.
+    """
+
+
 class Criterion(ABC):
     """
     A test on one signal over the trailing window of block means.
 
     ``min_blocks`` is the fewest blocks the criterion can decide on; the
     detector refuses a window shorter than the largest ``min_blocks``.
+    ``recommended_blocks`` (optional) is the fewest at which its uncertainty
+    is calibrated; the detector issues a ``CalibrationWarning`` below it.
     ``detail_keys`` names the entries the criterion puts in
     ``CriterionResult.details`` (none by default).
 
@@ -253,6 +265,7 @@ class Criterion(ABC):
     name: str
     signal: str
     min_blocks: int = 3
+    recommended_blocks: Optional[int] = None
     detail_keys: Tuple[str, ...] = ()
     uses_block_masks: bool = False
 
@@ -403,8 +416,8 @@ class Timing:
     """
 
     sample_period_s: float = 1.0
-    block_s: float = 30.0
-    window_s: float = 300.0
+    block_s: Optional[float] = None
+    window_s: Optional[float] = None
     settle_s: float = 0.0
     hold_s: float = 0.0
     hold_when_undecided: bool = False
@@ -414,6 +427,12 @@ class Timing:
     grid_tolerance: float = 0.5
 
     def __post_init__(self):
+        missing = [k for k in ("block_s", "window_s") if getattr(self, k) is None]
+        if missing:
+            raise ValueError(
+                f"Timing needs {' and '.join(missing)}: block and window lengths depend on the application's "
+                "noise and time scales, and there is no safe default. rs.suggest_timing(steady, dt) proposes "
+                "them from data known to be steady; see 'Choosing block and window lengths' in the docs.")
         _v.finite(self.sample_period_s, "Timing.sample_period_s", positive=True)
         _v.finite(self.block_s, "Timing.block_s", positive=True)
         _v.finite(self.window_s, "Timing.window_s", positive=True)
@@ -546,8 +565,10 @@ class Detector:
         criteria: Sequence[Criterion],
         disturbances: Sequence[Disturbance] = (),
         overrides: Sequence[Override] = (),
-        timing: Timing = Timing(),
+        timing: Optional[Timing] = None,
     ):
+        if timing is None:
+            raise ValueError("Detector needs a timing: rs.Timing(block_s=..., window_s=...); see rs.suggest_timing")
         self.signals = list(signals)
         self.criteria = list(criteria)
         self.disturbances = list(disturbances)
@@ -576,6 +597,12 @@ class Detector:
         if timing.n_blocks < need:
             raise ValueError(f"window_s must span at least {need} blocks for these criteria "
                              f"(it spans {timing.n_blocks})")
+        for c in self.criteria:
+            rec = getattr(c, "recommended_blocks", None)
+            if rec is not None and timing.n_blocks < rec:
+                warnings.warn(f"{type(c).__name__} {c.name!r}: the window holds {timing.n_blocks} blocks; at least "
+                              f"{rec} are recommended for its calibration (see the calibration tables in the "
+                              "docs, and rs.suggest_timing)", CalibrationWarning, stacklevel=2)
         self._index = {s.name: i for i, s in enumerate(self.signals)}
         self._n = timing.window_samples
         self._b = timing.block_samples
@@ -770,5 +797,5 @@ class Detector:
 __all__ = [
     "Label", "Reason", "MISSING_REASONS", "Outcome", "Signal", "Criterion", "CriterionResult", "Disturbance",
     "Override",
-    "Context", "Timing", "Verdict", "Detector", "Source",
+    "Context", "Timing", "Verdict", "Detector", "Source", "CalibrationWarning",
 ]
