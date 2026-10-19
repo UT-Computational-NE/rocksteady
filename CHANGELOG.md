@@ -4,6 +4,37 @@
 
 ### Added
 
+- `rs.AsymptoteCriterion` (`"asymptote"` in specs): certifies that a
+  first-order approach has reached its asymptote, i.e. that the remaining
+  approach `d = A exp(-t_end / tau)` at the window end is within a limit
+  (#7).
+  - **The test** takes the worst case over every `tau` the data allow (a
+    profile-likelihood confidence set on a `tau` grid up to the caller's
+    `tau_max`), each `d(tau)` with an AR(1) uncertainty. A test that trusts
+    a fitted `tau` passed falsely up to 15 % of the time in calibration
+    when the window spanned about `tau`.
+  - **Flat or unresolved windows** are bounded by about `tau_max × |slope|`,
+    with no separate mode.
+  - **Calibration:** at the limit, with `tau_max` = 2 tau, the false-pass
+    rate is at most 2.5 % for 40 or more blocks and about 5 % at 20
+    (nominal 2.5 %); `tools/coverage_mc.py --asymptote` reproduces it.
+  - **Cost:** about 1 ms per evaluation (1.5 ms with 300-sample blocks).
+- `CriterionResult.details` (optional numeric diagnostics) and
+  `Criterion.detail_keys`. `batch.run(with_results=True)` adds
+  `detail_<criterion>_<key>` columns, the same for an empty record, and
+  rejects two diagnostics that would share a column name, before reading any
+  input (#7).
+- `Criterion.uses_block_masks`: a criterion that sets it receives
+  `valid`, the (n_blocks, block_samples) validity of the samples behind
+  each block mean (None when all blocks are complete).
+  `AsymptoteCriterion` averages its exponential basis over exactly those
+  samples, which is exact for any pattern of tolerated gaps (#7).
+- `Criterion.bind_timing(timing)`: an optional hook the `Detector` calls once
+  with its `Timing`. `AsymptoteCriterion` uses it to evaluate at the current
+  sample, `(block_samples - 1) * sample_period_s / 2` after the last block
+  centre (#7).
+- `fit.golden_refine`: the golden-section refinement shared by the fit
+  models and `AsymptoteCriterion`; fit results are unchanged (#7).
 - `rs.optimal_segments`: best-fit segments under limits (#45).
   - **Objective:** breakpoints and per-segment states that minimise the total
     squared error of each segment's fit, the model chosen per state, plus a
@@ -25,6 +56,21 @@
   - **Helpers:** `rs.compare_segments` (sample agreement and confusion
     against, e.g., the detector) and `optimal.count_by_period`.
   - `tools/benchmark.py optimal`: a week at 1 Hz.
+
+### Changed
+
+- Criteria receive the times at which the block means were measured. A
+  block with tolerated missing samples is placed at the mean time of its
+  valid samples rather than at its nominal centre; complete blocks are
+  unchanged. This corrects the drift slope's timing on partial blocks, and
+  keeps `AsymptoteCriterion` from extrapolating a partial block's mean
+  (#7).
+
+### Fixed
+
+- `DeviationCriterion(relative=True)` on a window whose mean and
+  `scale_floor` are both zero is undecided; it raised `ZeroDivisionError`
+  (#7).
 
 ### Documentation
 

@@ -30,6 +30,20 @@ def _unique_columns(df) -> list:
     return names
 
 
+def _detail_columns(detector: Detector) -> list:
+    """``detail_<criterion>_<key>`` for every declared diagnostic; distinct pairs must give distinct names."""
+    owner: dict = {}
+    for c in detector.criteria:
+        for key in getattr(c, "detail_keys", ()):
+            col = f"detail_{c.name}_{key}"
+            if col in owner:
+                a, b = owner[col], (c.name, key)
+                raise ValueError(f"diagnostic column {col!r} comes from both criterion {a[0]!r} key {a[1]!r} and "
+                                 f"criterion {b[0]!r} key {b[1]!r}; rename one of them")
+            owner[col] = (c.name, key)
+    return list(owner)
+
+
 def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         with_results: bool = False) -> "pd.DataFrame":
     """
@@ -46,7 +60,9 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         ``df`` has a ``DatetimeIndex``, otherwise the row number times the
         sample period. Times in an ``EventLog`` must use the same origin.
     with_results : bool
-        Also return one column per criterion with its margin ratio.
+        Also return one column per criterion with its margin ratio, and one
+        per declared diagnostic (``Criterion.detail_keys``) named
+        ``detail_<criterion>_<key>``.
 
     Returns
     -------
@@ -69,6 +85,7 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     """
     import pandas as pd
 
+    detail_cols = _detail_columns(detector) if with_results else []  # checked before any input is read
     detector.reset()
     if t is None:
         if isinstance(df.index, pd.DatetimeIndex) and len(df):
@@ -87,10 +104,16 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
         if with_results:
             for name, r in v.results.items():
                 row[f"ratio_{name}"] = r.ratio
+                for key, value in r.details.items():
+                    row[f"detail_{name}_{key}"] = value
         rows.append(row)
-    columns = list(RUN_COLUMNS) + ([f"ratio_{c.name}" for c in detector.criteria] if with_results else [])
+    columns = list(RUN_COLUMNS)
+    if with_results:
+        columns += [f"ratio_{c.name}" for c in detector.criteria]
+        columns += detail_cols
     out = pd.DataFrame(rows, index=df.index, columns=columns)  # explicit schema, also for an empty record
-    floats = ["eta", "since_disturbance_s", "window_start_s"] + [c for c in columns if c.startswith("ratio_")]
+    floats = ["eta", "since_disturbance_s", "window_start_s"] + [c for c in columns
+                                                                 if c.startswith(("ratio_", "detail_"))]
     out[floats] = out[floats].astype(float)
     out["valid"] = out["valid"].astype(bool)
     out["t_s"] = np.asarray(t, dtype=float)

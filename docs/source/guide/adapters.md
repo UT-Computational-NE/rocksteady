@@ -35,6 +35,7 @@ The two examples on this page are complete, runnable files in
    DeviationCriterion
    DriftCriterion
    BoundCriterion
+   AsymptoteCriterion
    StepChange
    EventLog
    FloorLatch
@@ -123,6 +124,10 @@ builder over several columns.
    :no-members:
 
 .. autoclass:: rocksteady.BoundCriterion
+   :no-index:
+   :no-members:
+
+.. autoclass:: rocksteady.AsymptoteCriterion
    :no-index:
    :no-members:
 ```
@@ -222,7 +227,7 @@ Each kind has a small contract:
 
 | Kind | Base or protocol | You implement | Registry |
 |---|---|---|---|
-| criterion | {py:class}`~rocksteady.core.Criterion` | `evaluate(t_blocks, y_blocks) -> CriterionResult`; set `name`, `signal`, optionally `min_blocks` | `registry.criteria` |
+| criterion | {py:class}`~rocksteady.core.Criterion` | `evaluate(t_blocks, y_blocks) -> CriterionResult`; set `name`, `signal`, optionally `min_blocks`, `detail_keys` (diagnostics in `CriterionResult.details`), `bind_timing(timing)` (called once by the detector) and `uses_block_masks` (receive `valid=`, the per-block sample validity) | `registry.criteria` |
 | disturbance | {py:class}`~rocksteady.core.Disturbance` | `update(t, sample, values) -> bool` (True while active), `reset()`; set `name` | `registry.disturbances` |
 | override | {py:class}`~rocksteady.core.Override` | `apply(ctx: Context) -> Label or None`, optionally `reset()`; set `name` | `registry.overrides` |
 | slope method | {py:class}`~rocksteady.registry.SlopeMethod` | `(t, y, **options) -> (b, u_b, k)`; optionally `validate_options(**options)` | `registry.slope_methods` |

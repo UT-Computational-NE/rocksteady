@@ -44,7 +44,7 @@ modules and are registered by name in ``rocksteady.registry``.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, Mapping, Optional, Sequence, Union
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -162,6 +162,11 @@ class CriterionResult:
     The true value of the statistic is taken to lie within
     ``statistic +/- k * uncertainty``. Comparing that interval with the limit
     gives the three-way test.
+
+    ``details`` holds optional numeric diagnostics (for example a fitted
+    time constant). A criterion that fills it declares the keys in
+    ``Criterion.detail_keys``, so ``batch.run(with_results=True)`` can give
+    them columns; they never affect the outcome.
     """
 
     name: str
@@ -169,6 +174,7 @@ class CriterionResult:
     uncertainty: float
     limit: float
     k: float
+    details: Dict[str, float] = field(default_factory=dict)
 
     @property
     def upper(self) -> float:
@@ -229,15 +235,38 @@ class Criterion(ABC):
 
     ``min_blocks`` is the fewest blocks the criterion can decide on; the
     detector refuses a window shorter than the largest ``min_blocks``.
+    ``detail_keys`` names the entries the criterion puts in
+    ``CriterionResult.details`` (none by default).
+
+    ``bind_timing(timing)`` is called once by the ``Detector`` that uses the
+    criterion, before any data, for a criterion that needs more than the
+    block times, such as where the current sample lies relative to the last
+    block centre. The default does nothing.
+
+    A criterion with ``uses_block_masks = True`` is called as
+    ``evaluate(t_blocks, y_blocks, valid=mask)``, where ``mask`` is the
+    (n_blocks, block_samples) validity of the samples behind each block mean,
+    or None when every block is complete. A nonlinear model needs it: a
+    block's time alone does not say which samples its mean averages.
     """
 
     name: str
     signal: str
     min_blocks: int = 3
+    detail_keys: Tuple[str, ...] = ()
+    uses_block_masks: bool = False
 
     @abstractmethod
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
-        """``t_blocks`` are block centre times in seconds; ``y_blocks`` the block means."""
+        """
+        ``y_blocks`` are the block means; ``t_blocks`` the times they were
+        measured at, in seconds from the window's centre: the block centres
+        for complete blocks, the mean time of the valid samples for a block
+        with tolerated missing samples.
+        """
+
+    def bind_timing(self, timing: "Timing") -> None:
+        """Called once by the ``Detector``, with its ``Timing``; override to use it."""
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +568,10 @@ class Detector:
                 if (kind == "criterion" or ref is not None) and ref not in names:
                     raise ValueError(f"{kind} {getattr(item, 'name', type(item).__name__)!r} refers to unknown "
                                      f"signal {ref!r}; signals are {sorted(names)}")
+        for c in self.criteria:
+            bind = getattr(c, "bind_timing", None)
+            if callable(bind):
+                bind(timing)
         need = max([3] + [getattr(c, "min_blocks", 3) for c in self.criteria])
         if timing.n_blocks < need:
             raise ValueError(f"window_s must span at least {need} blocks for these criteria "
@@ -596,18 +629,25 @@ class Detector:
         """Window samples in time order, shape (n, n_signals)."""
         return np.concatenate((self._buf[self._head :], self._buf[: self._head]))
 
-    def _blocks(self) -> Optional[np.ndarray]:
+    def _blocks(self) -> Optional[Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]]:
         """
-        Block means over the window, shape (n_blocks, n_signals), or None if
-        some block has too few valid samples (``Timing.min_block_coverage``).
+        ``(t_blocks, block_means, valid)`` over the window, or None if some
+        block has too few valid samples (``Timing.min_block_coverage``). The
+        means have shape (n_blocks, n_signals). ``t_blocks`` is the mean time
+        of each block's valid samples: the block centre for a complete block,
+        moved towards the valid samples in a partial one, since that is where
+        its mean was measured. ``valid`` is the (n_blocks, block_samples)
+        sample validity, or None when every block is complete.
         """
         w = self._window()[self._n - self._nb * self._b :].reshape(self._nb, self._b, -1)
         valid = np.isfinite(w[:, :, 0])  # missing samples are whole NaN rows
         if valid.all():
-            return w.mean(axis=1)
+            return self._t_blocks, w.mean(axis=1), None
         if (valid.mean(axis=1) < self.timing.min_block_coverage).any():
             return None
-        return np.nanmean(w, axis=1)
+        slot = np.arange(self._b) - (self._b - 1) / 2.0  # sample offsets from the block centre, in samples
+        shift = (valid * slot).sum(axis=1) / valid.sum(axis=1) * self.timing.sample_period_s
+        return self._t_blocks + shift, np.nanmean(w, axis=1), valid
 
     def _record(self, passing: Optional[bool]) -> None:
         if passing is not None:
@@ -695,14 +735,17 @@ class Detector:
             self._record(False)
             return Verdict(t, Label.SETTLING, since_disturbance_s=since_s, reason=Reason.SETTLING_TIME)
 
-        blocks = self._blocks()
+        evaluable = self._blocks()
         w0 = t - (self.timing.evaluated_samples - 1) * dt  # the window's history is on the sample grid
         results = {}
-        if blocks is None:
+        if evaluable is None:
             outcomes = [Outcome.UNDECIDED]
             undecided = Reason.LOW_COVERAGE
         else:
-            evaluated = [c.evaluate(self._t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
+            t_blocks, blocks, valid = evaluable
+            evaluated = [c.evaluate(t_blocks, blocks[:, self._index[c.signal]], valid=valid)
+                         if getattr(c, "uses_block_masks", False) else
+                         c.evaluate(t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
             outcomes = [r.outcome for r in evaluated]  # every criterion counts, whatever its name
             results = {c.name: r for c, r in zip(self.criteria, evaluated)}
             invalid = any(r.invalid_reason is not None for r in evaluated)

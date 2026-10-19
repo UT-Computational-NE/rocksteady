@@ -13,6 +13,9 @@ criterion only has to say what it measures and how well.
   through ``registry.slope_methods``).
 - ``BoundCriterion``: the window mean lies within a band. Uncertainty from
   the block-to-block scatter, corrected for autocorrelation.
+- ``AsymptoteCriterion``: a first-order approach has reached its asymptote:
+  the remaining approach, worst case over every time constant up to
+  ``tau_max`` that the data allow, is within a limit.
 """
 
 from typing import Callable, Mapping, Optional, Union
@@ -22,9 +25,19 @@ import numpy as np
 from . import _validate as _v
 from . import registry
 from .core import Criterion, CriterionResult
-from .stats import DEFAULT_SLOPE_METHOD, linear_fit, tau_int
+from .stats import DEFAULT_SLOPE_METHOD, linear_fit, t_quantile, tau_int
 
 NoiseModel = Union[float, Callable[[float], float]]
+
+
+def _zero_scale(name: str, limit: float, k: float) -> CriterionResult:
+    """
+    Relative mode with a zero scale (a zero level and ``scale_floor`` 0): no
+    relative deviation exists, so the result is undecided (an invalid,
+    infinite statistic). Set ``scale_floor > 0`` to judge near-zero signals
+    on an absolute basis.
+    """
+    return CriterionResult(name, float("inf"), 0.0, limit, k)
 
 
 def _sigma(noise: NoiseModel, level: float) -> float:
@@ -92,7 +105,10 @@ class DeviationCriterion(Criterion):
         dev = float(np.max(np.abs(resid)))
         sigma = _sigma(self.noise, mean)  # relative when ``relative`` is True
         if self.relative:
-            dev = dev / max(abs(mean), self.scale_floor)
+            scale = max(abs(mean), self.scale_floor)
+            if not scale > 0:
+                return _zero_scale(self.name, self.limit, self.k)
+            dev = dev / scale
         return CriterionResult(self.name, dev, sigma, self.limit, self.k)
 
 
@@ -180,3 +196,229 @@ class BoundCriterion(Criterion):
         else:
             se = 0.0
         return CriterionResult(self.name, abs(mean - centre), se, half, self.k)
+
+
+@registry.criteria.register("asymptote")
+class AsymptoteCriterion(Criterion):
+    """
+    A first-order approach has reached its asymptote: the remaining approach
+    at the end of the window is within a limit.
+
+    For a signal approaching a final value as
+    ``y(t) = y_inf + A exp(-(t - t0) / tau)``, the remaining approach at the
+    current sample is
+
+        d(tau) = A exp(-(t_end - t0) / tau) = -tau * y'(t_end).
+
+    In a ``Detector``, ``t_end`` is the current sample, half of
+    ``block_samples - 1`` sample periods after the last block centre (see
+    ``bind_timing``). An instance is bound to one detector's timing.
+
+    ``tau`` is rarely determined well by one window, and a test that trusts a
+    fitted ``tau`` passes too often: noise that makes the curve look sharper
+    makes ``tau`` look shorter and ``d`` look smaller. So the test takes the
+    worst case over every ``tau`` the data allow (a profile-likelihood
+    confidence set):
+
+    1. For each ``tau`` on a log-spaced grid in ``[tau_min, tau_max]``, the
+       model is linear in ``(y_inf, A)``. In a detector, the exponential is
+       averaged over the very samples each block mean averages (the block
+       masks), which is exact for any pattern of tolerated gaps. It is
+       fitted by least squares,
+       giving ``SSE(tau)`` and ``d(tau)``, with ``u(d(tau))`` from the AR(1)
+       residual model, using the lag-1 autocorrelation of the best fit,
+       bias-corrected for three parameters.
+    2. The confidence set is ``SSE(tau) <= SSE_min (1 + t^2 / nu)``, with
+       ``t`` the Student-t quantile at ``confidence`` and ``nu`` the effective
+       degrees of freedom ``n (1 - phi) / (1 + phi) - 3``.
+    3. The window passes when ``max over the set of |d(tau)| + k u(d(tau))``
+       is within ``limit``, and fails when ``min over the set of
+       |d(tau)| - k u(d(tau))`` exceeds it.
+
+    ``tau_max`` is the caller's upper bound on the time constant, a property
+    of the process rather than of the data. It is what makes every window
+    decidable. When the window cannot resolve the approach (a flat window,
+    or one much shorter than ``tau``), the set reaches ``tau_max``, where the
+    model is a line with ``d ~ tau_max * |slope|``. That is the conservative
+    bound for a monotone approach that slows down.
+
+    Parameters
+    ----------
+    signal : str
+    limit : float
+        Largest acceptable remaining approach, in signal units (relative
+        with ``relative=True``).
+    tau_max : float
+        Upper bound on the time constant of the approach, in seconds.
+    tau_min : float, optional
+        Lower end of the search. Default: half a block, or the window span
+        divided by 10,000 if that is larger.
+    k : float, optional
+        Coverage factor. Default: the one-sided Student-t quantile at
+        ``confidence`` on ``nu``.
+    confidence : float
+        For the default ``k`` and the confidence set.
+    relative : bool
+        Divide by ``max(|y_inf|, scale_floor)`` at the best-fitting ``tau``.
+        A zero scale gives an undecided result; set ``scale_floor > 0`` to
+        judge near-zero signals on an absolute basis.
+    scale_floor : float
+    n_grid : int
+        Points on the ``tau`` grid, at least 2 (both bounds are always on it).
+    name : str, optional
+
+    Notes
+    -----
+    ``CriterionResult.details`` holds ``tau_s`` (the best-fitting ``tau``),
+    ``tau_hi`` (the longest ``tau`` in the confidence set), ``y_inf`` (at the
+    best fit) and ``remaining`` (the signed ``d`` at the best fit). The
+    statistic and uncertainty encode the interval
+    ``[min |d| - k u, max |d| + k u]`` over the set. Needs at least 10 blocks.
+    """
+
+    min_blocks = 10
+    detail_keys = ("tau_s", "tau_hi", "y_inf", "remaining")
+    uses_block_masks = True
+
+    def __init__(self, signal: str, limit: float, tau_max: float, *, tau_min: Optional[float] = None,
+                 k: Optional[float] = None, confidence: float = 0.975, relative: bool = False,
+                 scale_floor: float = 0.0, n_grid: int = 120, name: Optional[str] = None):
+        what = f"AsymptoteCriterion {name or signal!r}"
+        self.limit = _v.finite(limit, f"{what}: limit", positive=True)
+        self.tau_max = _v.finite(tau_max, f"{what}: tau_max", positive=True)
+        self.tau_min = _v.optional_finite(tau_min, f"{what}: tau_min", positive=True)
+        _v.ordered(self.tau_min, self.tau_max, f"{what}: tau_min", "tau_max")
+        self.k = _v.optional_finite(k, f"{what}: k", nonnegative=True)
+        if not 0.5 < _v.finite(confidence, f"{what}: confidence") < 1:
+            raise ValueError(f"{what}: confidence must be in (0.5, 1), got {confidence!r}")
+        self.scale_floor = _v.finite(scale_floor, f"{what}: scale_floor", nonnegative=True)
+        self.n_grid = _v.positive_int(n_grid, f"{what}: n_grid")
+        if self.n_grid < 2:
+            raise ValueError(f"{what}: n_grid must be at least 2, so the grid holds both tau_min and tau_max")
+        self.signal, self.confidence, self.relative = signal, confidence, bool(relative)
+        self.name = name or f"{signal}_asymptote"
+        self._t_now = None  # the current sample's time in the detector's block-time frame; set by bind_timing
+        self._starts = None
+        self._bound = None
+
+    def bind_timing(self, timing) -> None:
+        """
+        Where the current sample is, in the detector's block-time frame (block
+        times are measured from the window's centre): half of
+        ``block_samples - 1`` sample periods after the nominal centre of the
+        last block. It is always a valid sample, whatever the coverage of the
+        blocks before it. Without a timing (``evaluate`` called on its own)
+        the remaining approach is taken at the last block time, which is
+        conservative for an approach that slows down.
+        """
+        key = (timing.n_blocks, timing.block_samples, timing.sample_period_s)
+        if self._bound is not None and self._bound != key:
+            raise ValueError(f"AsymptoteCriterion {self.name!r} is already used with another timing; build one "
+                             "instance per detector")
+        self._bound = key
+        self._t_now = (0.5 * (timing.n_blocks - 1) * timing.effective_block_s
+                       + 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
+        # Block starts (first sample of each block) in the same frame, and the sample period.
+        self._starts = ((np.arange(timing.n_blocks) - 0.5 * (timing.n_blocks - 1)) * timing.effective_block_s
+                        - 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
+        self._block_samples, self._dt = timing.block_samples, timing.sample_period_s
+
+    def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray, valid: Optional[np.ndarray] = None
+                 ) -> CriterionResult:
+        from ._ar1 import ar1_apply
+        from .fit import golden_refine  # the same refinement the fit models use
+
+        t = np.asarray(t_blocks, dtype=float)
+        y = np.asarray(y_blocks, dtype=float)
+        n = len(y)
+        bound = self._t_now is not None
+        if bound:
+            # Each block mean averages the curve over that block's valid samples, so the basis is averaged
+            # over the same samples: exact for complete and partial blocks alike. Times from the first
+            # block's start t0; block m's sample j is at starts[m] + j dt, so
+            #   g_m(tau) = exp(-(starts[m] - t0) / tau) * mean over valid j of exp(-j dt / tau),
+            # with every exponent <= 0.
+            if n != len(self._starts):
+                raise ValueError(f"AsymptoteCriterion {self.name!r}: {n} blocks, but its detector has "
+                                 f"{len(self._starts)}")
+            mask = (np.ones((n, self._block_samples), dtype=bool) if valid is None
+                    else np.asarray(valid, dtype=bool))
+            if mask.shape != (n, self._block_samples):
+                raise ValueError(f"AsymptoteCriterion {self.name!r}: valid has shape {mask.shape}, "
+                                 f"expected {(n, self._block_samples)}")
+            weights = mask / mask.sum(axis=1, keepdims=True)
+            lead = self._starts - self._starts[0]
+            slots = np.arange(self._block_samples) * self._dt
+            s_end = self._t_now - self._starts[0]
+            step = float(self._starts[1] - self._starts[0]) if n > 1 else 1.0
+
+            def basis(taus):
+                return np.exp(-lead[:, None] / taus[None, :]) * (weights @ np.exp(-slots[:, None] / taus[None, :]))
+        else:
+            # On its own (no detector timing): block means taken as values at the block times, and the
+            # remaining approach at the last block time (conservative for an approach that slows down).
+            step = float(t[1] - t[0]) if n > 1 else 1.0
+            s = t - t[0]
+            s_end = float(s[-1])
+
+            def basis(taus):
+                return np.exp(-s[:, None] / taus[None, :])
+
+        lo = self.tau_min if self.tau_min is not None else max(0.5 * step, (s_end or 1.0) / 1e4)
+        lo = min(lo, self.tau_max)
+        grid = np.exp(np.linspace(np.log(lo), np.log(self.tau_max), self.n_grid))
+        yc = y - y.mean()
+
+        def fixed(taus):
+            """For each tau: the 2-parameter fit y = y_inf + A g on a centred basis."""
+            g = basis(taus)
+            gc = g - g.mean(axis=0)
+            sgg = np.einsum("ij,ij->j", gc, gc)
+            ok = sgg > 1e-300
+            a = np.where(ok, (gc.T @ yc) / np.where(ok, sgg, 1.0), 0.0)
+            resid = yc[:, None] - gc * a[None, :]
+            return gc, sgg, ok, a, y.mean() - a * g.mean(axis=0), resid, np.einsum("ij,ij->j", resid, resid)
+
+        # The best tau, refined between the neighbours of the best grid point: residuals at a grid point
+        # near a sharp optimum are systematic, and would read as strong autocorrelation.
+        sse_grid = fixed(grid)[6]
+        i = int(np.argmin(sse_grid))
+        t_best = float(np.exp(golden_refine(lambda u: fixed(np.exp([u]))[6][0], np.log(grid[max(i - 1, 0)]),
+                                            np.log(grid[min(i + 1, len(grid) - 1)]), iters=40)))
+        if fixed(np.array([t_best]))[6][0] > sse_grid[i]:
+            t_best = float(grid[i])
+        taus = np.unique(np.append(grid, t_best))
+        gc, sgg, ok, a_, y_inf, resid, sse = fixed(taus)
+        best = int(np.flatnonzero(taus == t_best)[0])
+        e = resid[:, best]
+        ee = float(e @ e)
+        r1 = float(e[1:] @ e[:-1]) / ee if ee > 0 else 0.0
+        phi = min(max(r1 + (3.0 + 5.0 * r1) / n, 0.0), 0.98)  # bias correction for three fitted parameters
+        nu = max(int(n * (1.0 - phi) / (1.0 + phi)) - 3, 1)
+        tq = t_quantile(self.confidence, nu)
+        k = tq if self.k is None else self.k
+        in_set = ok & (sse <= sse[best] * (1.0 + tq * tq / nu) + 1e-300)
+        # One grid point beyond each end: the set's true edges lie between grid points.
+        in_set = ok & (in_set | np.r_[in_set[1:], False] | np.r_[False, in_set[:-1]])
+        idx = np.flatnonzero(in_set)
+        # u(A) at each tau in the set: Var(A) = sigma^2 gc'R gc / sgg^2, sigma^2 = SSE / tr(M R).
+        rg = ar1_apply(gc[:, idx], phi)
+        grg = np.einsum("ij,ij->j", gc[:, idx], rg)
+        one_r_one = float(np.sum(ar1_apply(np.ones(n), phi))) / n
+        tr_mr = n - one_r_one - grg / sgg[idx]
+        sigma2 = sse[idx] / np.maximum(tr_mr, 1e-12)
+        u_a = np.sqrt(np.maximum(sigma2 * grg, 0.0)) / sgg[idx]
+        decay = np.exp(-s_end / taus[idx])
+        d = a_[idx] * decay
+        u_d = u_a * decay
+        level = float(y_inf[best])
+        scale = max(abs(level), self.scale_floor) if self.relative else 1.0
+        if not scale > 0:  # relative to a zero level: no scale to judge by
+            return _zero_scale(self.name, self.limit, k)
+        upper = float(np.max(np.abs(d) + k * u_d)) / scale
+        lower = max(float(np.min(np.abs(d) - k * u_d)), 0.0) / scale
+        k_rep = k if k > 0 else 1.0
+        details = {"tau_s": float(taus[best]), "tau_hi": float(taus[idx].max()), "y_inf": level,
+                   "remaining": float(a_[best] * np.exp(-s_end / taus[best]))}
+        return CriterionResult(self.name, 0.5 * (upper + lower), 0.5 * (upper - lower) / k_rep, self.limit,
+                               float(k_rep), details)

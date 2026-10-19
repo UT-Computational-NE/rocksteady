@@ -440,6 +440,27 @@ def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "a
 _GOLD = (np.sqrt(5.0) - 1.0) / 2.0
 
 
+def golden_refine(f: Callable[[float], float], a: float, b: float, iters: int = 60) -> float:
+    """
+    Golden-section minimisation of ``f`` on the bracket ``[a, b]``: the
+    midpoint of the final bracket after ``iters`` steps. Callers compare it
+    with their best grid point, since a bracket around a grid minimum need
+    not hold a better value.
+    """
+    c, d = b - _GOLD * (b - a), a + _GOLD * (b - a)
+    fc, fd = f(c), f(d)
+    for _ in range(iters):
+        if fc < fd:
+            b, d, fd = d, c, fc
+            c = b - _GOLD * (b - a)
+            fc = f(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + _GOLD * (b - a)
+            fd = f(d)
+    return 0.5 * (a + b)
+
+
 def _varpro_search(sse: Callable[[float], float], lo: float, hi: float,
                    n_grid: int = 80, iters: int = 60) -> Tuple[float, bool]:
     """
@@ -450,19 +471,7 @@ def _varpro_search(sse: Callable[[float], float], lo: float, hi: float,
     grid = np.linspace(lo, hi, n_grid)
     vals = np.array([sse(u) for u in grid])
     i = int(np.nanargmin(vals))
-    a, b = grid[max(i - 1, 0)], grid[min(i + 1, n_grid - 1)]
-    c, d = b - _GOLD * (b - a), a + _GOLD * (b - a)
-    fc, fd = sse(c), sse(d)
-    for _ in range(iters):
-        if fc < fd:
-            b, d, fd = d, c, fc
-            c = b - _GOLD * (b - a)
-            fc = sse(c)
-        else:
-            a, c, fc = c, d, fd
-            d = a + _GOLD * (b - a)
-            fd = sse(d)
-    u = 0.5 * (a + b)
+    u = golden_refine(sse, grid[max(i - 1, 0)], grid[min(i + 1, n_grid - 1)], iters)
     if sse(u) > vals[i]:
         u = grid[i]
     step = grid[1] - grid[0]
