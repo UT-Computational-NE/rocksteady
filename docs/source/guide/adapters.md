@@ -42,6 +42,7 @@ The two examples on this page are complete, runnable files in
    build_detector
    Detector
    Verdict
+   suggest_timing
    batch.run
    batch.accepted_intervals
    batch.signal_values
@@ -302,6 +303,50 @@ Contract rules:
   the history.
 - Names must be unique among a detector's signals and among its criteria.
 
+## Choosing block and window lengths
+
+`Timing` has no default block or window length, because the right values
+depend on two time scales of the application's own data:
+
+| | Should be | Why |
+|---|---|---|
+| block length | several times the **noise correlation time** of the raw samples | so block means are nearly independent; too short, and they stay correlated, uncertainties grow and the drift test certifies little |
+| block length | short compared with the **process time scale** | so blocks still follow a transient instead of averaging it away |
+| window | about **40 blocks** or more | the `ar1` drift test holds its calibration from about 40 blocks; below about 20 no slope method is reliable |
+| window | no longer than the **reaction time** you accept | a steady call lags by about one window, plus `settle_s` |
+
+`rs.suggest_timing` measures both time scales from your data and proposes
+lengths, with its reasoning. You review the proposal and adopt it; it sets
+nothing itself:
+
+```python
+s = rs.suggest_timing(steady_stretch, dt=1.0, transient=typical_step, max_window_s=3600)
+print(s)
+# block_s = 64 s, window_s = 2560 s (40 blocks); noise correlation time 21.3 s, process time constant 601 s
+# - block: 3 x the noise correlation time 21.3 s, rounded to 64 samples, so block means are nearly independent
+# - the block is at most 0.2 x the process time constant 601 s, so blocks follow the transient
+# - window: 40 blocks = 2560 s; a steady call lags by about one window
+# - measured lag-1 autocorrelation of block means on the steady stretch: 0.18
+timing = s.timing(settle_s=300, hold_s=120)
+```
+
+When the noise needs longer blocks than the process allows, the suggestion
+says so (a `CONFLICT` note) and keeps the blocks short enough to follow the
+process. The drift test's coverage factor then grows, which is the honest
+answer for such data. Averaging channels, or a quieter signal, is the
+remedy.
+
+```{eval-rst}
+.. autofunction:: rocksteady.suggest_timing
+   :no-index:
+```
+
+A detector whose window has fewer blocks than a criterion's calibration
+needs (`recommended_blocks`: 20 for the drift and asymptote tests, 10 for
+the band test) issues a `rocksteady.CalibrationWarning`. It still runs. If
+the short window is a deliberate choice, filter the warning:
+`warnings.filterwarnings("ignore", category=rs.CalibrationWarning)`.
+
 ## Checklist for a new adapter
 
 - **Data:** sample times are seconds on a regular grid; resample first if
@@ -309,8 +354,9 @@ Contract rules:
 - **Calibration:** noise models and limits come from data known to be
   steady. The deviation test's limit and noise are calibrated together (see
   {doc}`methods`).
-- **Windows:** about 40 or more blocks for the `ar1` drift test (see
-  {doc}`drift`).
+- **Windows:** block and window lengths from `rs.suggest_timing` on a
+  steady stretch (and a typical transient); about 40 or more blocks for the
+  `ar1` drift test (see {doc}`drift`). Heed any `CalibrationWarning`.
 - **Events:** logged actions are passed as an `EventLog` on the record's
   clock.
 - **Validation:** labels are compared against a trusted reference, if one

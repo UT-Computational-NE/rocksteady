@@ -4,6 +4,24 @@
 
 ### Added
 
+- `rs.suggest_timing(steady, dt, transient=None, ...)` proposes `block_s`
+  and `window_s` from the application's data (#51). It measures:
+  - the noise correlation time of a steady stretch, for a block of a few
+    correlation times;
+  - optionally, a typical transient's time constant, which caps the block
+    length.
+
+  Missing samples keep their place on the time grid: correlations are
+  measured within contiguous runs, never across a gap. The window is 40
+  blocks unless `max_window_s` limits it, and never exceeds that limit. It
+  returns a `TimingSuggestion` with the measurements and the reasoning
+  (including conflicts), and `.timing(...)` builds a `Timing`. It sets
+  nothing itself.
+- `rocksteady.CalibrationWarning` and `Criterion.recommended_blocks`: a
+  detector whose window has fewer blocks than a criterion's calibration needs
+  warns. The thresholds are 20 for `DriftCriterion` and `AsymptoteCriterion`
+  and 10 for `BoundCriterion` (#51).
+
 - `rs.AsymptoteCriterion` (`"asymptote"` in specs): certifies that a
   first-order approach has reached its asymptote, i.e. that the remaining
   approach `d = A exp(-t_end / tau)` at the window end is within a limit
@@ -59,6 +77,13 @@
 
 ### Changed
 
+- **Breaking:** `Timing` requires `block_s` and `window_s`, and `Detector`
+  requires a `timing`. The old placeholders (30 s blocks in a 300 s window,
+  10 blocks) were in the range the docs call unreliable for the drift test.
+  The error message points to `rs.suggest_timing` and the new
+  "Choosing block and window lengths" guide section. `sample_period_s` keeps
+  its default of 1 s, since a wrong one shows up at once as rejected or
+  gapped timestamps (#51).
 - Criteria receive the times at which the block means were measured. A
   block with tolerated missing samples is placed at the mean time of its
   valid samples rather than at its nominal centre; complete blocks are

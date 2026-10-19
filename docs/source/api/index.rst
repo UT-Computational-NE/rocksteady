@@ -34,6 +34,7 @@ Building detectors
 
    factory
    registry
+   timing
 
 Batch evaluation and states
 ---------------------------
