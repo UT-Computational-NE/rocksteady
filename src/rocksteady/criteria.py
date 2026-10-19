@@ -221,7 +221,10 @@ class AsymptoteCriterion(Criterion):
     confidence set):
 
     1. For each ``tau`` on a log-spaced grid in ``[tau_min, tau_max]``, the
-       model is linear in ``(y_inf, A)``. It is fitted by least squares,
+       model is linear in ``(y_inf, A)``. In a detector, the exponential is
+       averaged over the very samples each block mean averages (the block
+       masks), which is exact for any pattern of tolerated gaps. It is
+       fitted by least squares,
        giving ``SSE(tau)`` and ``d(tau)``, with ``u(d(tau))`` from the AR(1)
        residual model, using the lag-1 autocorrelation of the best fit,
        bias-corrected for three parameters.
@@ -275,6 +278,7 @@ class AsymptoteCriterion(Criterion):
 
     min_blocks = 10
     detail_keys = ("tau_s", "tau_hi", "y_inf", "remaining")
+    uses_block_masks = True
 
     def __init__(self, signal: str, limit: float, tau_max: float, *, tau_min: Optional[float] = None,
                  k: Optional[float] = None, confidence: float = 0.975, relative: bool = False,
@@ -294,6 +298,7 @@ class AsymptoteCriterion(Criterion):
         self.signal, self.confidence, self.relative = signal, confidence, bool(relative)
         self.name = name or f"{signal}_asymptote"
         self._t_now = None  # the current sample's time in the detector's block-time frame; set by bind_timing
+        self._starts = None
         self._bound = None
 
     def bind_timing(self, timing) -> None:
@@ -313,28 +318,60 @@ class AsymptoteCriterion(Criterion):
         self._bound = key
         self._t_now = (0.5 * (timing.n_blocks - 1) * timing.effective_block_s
                        + 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
+        # Block starts (first sample of each block) in the same frame, and the sample period.
+        self._starts = ((np.arange(timing.n_blocks) - 0.5 * (timing.n_blocks - 1)) * timing.effective_block_s
+                        - 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
+        self._block_samples, self._dt = timing.block_samples, timing.sample_period_s
 
-    def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
+    def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray, valid: Optional[np.ndarray] = None
+                 ) -> CriterionResult:
         from ._ar1 import ar1_apply
         from .fit import golden_refine  # the same refinement the fit models use
 
         t = np.asarray(t_blocks, dtype=float)
         y = np.asarray(y_blocks, dtype=float)
         n = len(y)
-        step = float(t[1] - t[0]) if n > 1 else 1.0
-        s = t - t[0]
-        # The current sample (see bind_timing). Block times are where each mean was measured, so a partial
-        # block's mean is not extrapolated from its nominal centre.
-        t_now = self._t_now if self._t_now is not None else float(t[-1])
-        s_end = max(t_now, float(t[-1])) - float(t[0])
+        bound = self._t_now is not None
+        if bound:
+            # Each block mean averages the curve over that block's valid samples, so the basis is averaged
+            # over the same samples: exact for complete and partial blocks alike. Times from the first
+            # block's start t0; block m's sample j is at starts[m] + j dt, so
+            #   g_m(tau) = exp(-(starts[m] - t0) / tau) * mean over valid j of exp(-j dt / tau),
+            # with every exponent <= 0.
+            if n != len(self._starts):
+                raise ValueError(f"AsymptoteCriterion {self.name!r}: {n} blocks, but its detector has "
+                                 f"{len(self._starts)}")
+            mask = (np.ones((n, self._block_samples), dtype=bool) if valid is None
+                    else np.asarray(valid, dtype=bool))
+            if mask.shape != (n, self._block_samples):
+                raise ValueError(f"AsymptoteCriterion {self.name!r}: valid has shape {mask.shape}, "
+                                 f"expected {(n, self._block_samples)}")
+            weights = mask / mask.sum(axis=1, keepdims=True)
+            lead = self._starts - self._starts[0]
+            slots = np.arange(self._block_samples) * self._dt
+            s_end = self._t_now - self._starts[0]
+            step = float(self._starts[1] - self._starts[0]) if n > 1 else 1.0
+
+            def basis(taus):
+                return np.exp(-lead[:, None] / taus[None, :]) * (weights @ np.exp(-slots[:, None] / taus[None, :]))
+        else:
+            # On its own (no detector timing): block means taken as values at the block times, and the
+            # remaining approach at the last block time (conservative for an approach that slows down).
+            step = float(t[1] - t[0]) if n > 1 else 1.0
+            s = t - t[0]
+            s_end = float(s[-1])
+
+            def basis(taus):
+                return np.exp(-s[:, None] / taus[None, :])
+
         lo = self.tau_min if self.tau_min is not None else max(0.5 * step, (s_end or 1.0) / 1e4)
         lo = min(lo, self.tau_max)
         grid = np.exp(np.linspace(np.log(lo), np.log(self.tau_max), self.n_grid))
         yc = y - y.mean()
 
         def fixed(taus):
-            """For each tau: the 2-parameter fit y = y_inf + A g, g = exp(-s / tau), on a centred basis."""
-            g = np.exp(-s[:, None] / taus[None, :])
+            """For each tau: the 2-parameter fit y = y_inf + A g on a centred basis."""
+            g = basis(taus)
             gc = g - g.mean(axis=0)
             sgg = np.einsum("ij,ij->j", gc, gc)
             ok = sgg > 1e-300

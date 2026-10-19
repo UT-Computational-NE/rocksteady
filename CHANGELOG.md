@@ -16,14 +16,19 @@
   - **Flat or unresolved windows** are bounded by about `tau_max × |slope|`,
     with no separate mode.
   - **Calibration:** at the limit, with `tau_max` = 2 tau, the false-pass
-    rate is at most 2.5 % for 40 or more blocks and at most 5 % at 20
+    rate is at most 2.5 % for 40 or more blocks and about 5 % at 20
     (nominal 2.5 %); `tools/coverage_mc.py --asymptote` reproduces it.
-  - **Cost:** about 0.8 ms per evaluation.
+  - **Cost:** about 1 ms per evaluation (1.5 ms with 300-sample blocks).
 - `CriterionResult.details` (optional numeric diagnostics) and
   `Criterion.detail_keys`. `batch.run(with_results=True)` adds
   `detail_<criterion>_<key>` columns, the same for an empty record, and
   rejects two diagnostics that would share a column name, before reading any
   input (#7).
+- `Criterion.uses_block_masks`: a criterion that sets it receives
+  `valid`, the (n_blocks, block_samples) validity of the samples behind
+  each block mean (None when all blocks are complete).
+  `AsymptoteCriterion` averages its exponential basis over exactly those
+  samples, which is exact for any pattern of tolerated gaps (#7).
 - `Criterion.bind_timing(timing)`: an optional hook the `Detector` calls once
   with its `Timing`. `AsymptoteCriterion` uses it to evaluate at the current
   sample, `(block_samples - 1) * sample_period_s / 2` after the last block

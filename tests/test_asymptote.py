@@ -121,15 +121,36 @@ def test_certifies_a_slow_correlated_approach_the_drift_test_cannot():
 @pytest.mark.parametrize("ratio", [0.5, 1.0, 2.0])
 def test_false_pass_rate_at_the_limit(phi, ratio):
     """True remaining approach equal to the limit, tau_max = 2 tau, 40 blocks: nominal 2.5 %."""
-    rng = np.random.default_rng(int(10 * phi + ratio * 3))
-    t, s, span = _blocks(40)
-    tau = span / ratio
-    amp = np.exp(span / tau)  # remaining approach 1 at the window end
+    from coverage_mc import asymptote_pass_rate
+
+    rate = asymptote_pass_rate(40, phi, ratio, reps=600, seed=int(10 * phi + 3 * ratio))
+    assert rate <= 0.05  # at most twice nominal (binomial sd about 0.6 % at 2.5 %)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("ratio", [0.5, 1.0, 2.0])
+def test_false_pass_rate_with_partial_blocks(ratio):
+    """Random tolerated gaps (about 30 % of samples, coverage >= 0.5 per block, current sample valid)."""
+    rng = np.random.default_rng(int(7 * ratio))
+    n, b = 40, 30
+    timing = rs.Timing(sample_period_s=1.0, block_s=b, window_s=n * b, max_gap_s=b, min_block_coverage=0.5)
+    t = (np.arange(n) - (n - 1) / 2.0) * b
+    samples = (t - 0.5 * (b - 1))[:, None] + np.arange(b)[None, :]
+    s_end = (t[-1] + 0.5 * (b - 1)) - samples[0, 0]
+    tau = s_end / ratio
+    amp = np.exp(s_end / tau)  # remaining approach 1 (the limit) at the current sample
+    curve = -amp * np.exp(-(samples - samples[0, 0]) / tau)
     crit = rs.AsymptoteCriterion("x", 1.0, tau_max=2 * tau)
-    reps = 600
-    passes = sum(crit.evaluate(t, -amp * np.exp(-s / tau) + 0.1 * np.sqrt(1 - phi * phi) * ar1_noise(rng, 40, phi))
-                 .outcome == Outcome.PASS for _ in range(reps))
-    assert passes / reps <= 0.05  # at most twice nominal (binomial sd about 0.6 % at 2.5 %)
+    crit.bind_timing(timing)
+    reps, passes = 400, 0
+    for _ in range(reps):
+        valid = rng.random((n, b)) > 0.3
+        valid[valid.mean(axis=1) < 0.5] = True  # every block meets coverage 0.5
+        valid[-1, -1] = True                    # the current sample is valid
+        means = np.where(valid, curve, 0.0).sum(axis=1) / valid.sum(axis=1)
+        noisy = means + 0.1 * rng.normal(size=n) / np.sqrt(valid.sum(axis=1) / b)
+        passes += crit.evaluate(t, noisy, valid=valid).outcome == Outcome.PASS
+    assert passes / reps <= 0.05
 
 
 # -- review fixes (PR #52) ------------------------------------------------------------
@@ -156,11 +177,10 @@ def test_offset_to_the_current_sample_follows_the_block_length(block_samples):
     tau = 0.3 * t[-1]
     x = 10 - 4 * np.exp(-t / tau)
     v = [det.update(float(ti), {"x": xi}) for ti, xi in zip(t, x)][-1]
-    # Noiseless data: the remaining approach is the one at the last sample. A block mean of a convex
-    # exponential exceeds its value at the block centre by the same factor in every block, so the fitted
-    # amplitude is slightly large: the estimate errs on the conservative side, by well under 0.1 %.
+    # Noiseless data: the basis is averaged over each block's samples, as the block means are, so the
+    # remaining approach at the last sample is exact.
     got, want = v.results["x_asymptote"].details["remaining"], -4 * np.exp(-t[-1] / tau)
-    assert got == pytest.approx(want, rel=1e-3) and abs(got) >= abs(want) * (1 - 1e-9)
+    assert got == pytest.approx(want, rel=1e-6)
     with pytest.raises(ValueError, match="already used with another timing"):
         other = rs.Timing(sample_period_s=dt, block_s=(block_samples + 1) * dt, window_s=40 * (block_samples + 1) * dt)
         rs.Detector([rs.Signal("x", "x")], [crit], timing=other)
@@ -244,3 +264,32 @@ def test_criteria_receive_the_times_their_block_means_were_measured_at():
     for i in range(12, 24):
         det.update(float(i), {"x": float("nan") if i in (12, 13, 14, 22) else 0.0})
     np.testing.assert_allclose(seen[-1], [-4.0 + 1.5, 0.0, 4.0 - 1.0 / 6.0])
+
+
+
+@pytest.mark.parametrize("noise_sd", [0.0, 1e-7, 1e-6])
+def test_block_masks_that_vary_between_blocks(noise_sd):
+    """A centroid time is exact for a line, not for an exponential: the basis must average the valid samples."""
+    t = np.arange(40, dtype=float)
+    tau = 39 / 8
+    x = 5 - 0.00103 * np.exp((39 - t) / tau) + np.random.default_rng(1).normal(0, noise_sd, 40)
+    masks = ["1001", "1100", "0111", "0110", "1010", "0110", "0111", "1001", "0111", "1111"]
+    x[~np.array([c == "1" for c in "".join(masks)])] = np.nan
+    timing = rs.Timing(sample_period_s=1, block_s=4, window_s=40, max_gap_s=3, min_block_coverage=0.5)
+    det = rs.Detector([rs.Signal("x", "x")], [rs.AsymptoteCriterion("x", 0.001, tau_max=2 * tau)], timing=timing)
+    v = [det.update(float(ti), {"x": float(xi)}) for ti, xi in zip(t, x)][-1]
+    r = v.results["x_asymptote"]
+    assert v.label != rs.Label.STEADY and r.upper > 0.001  # 0.00103 left, above the limit of 0.001
+    if noise_sd == 0:
+        assert r.details["remaining"] == pytest.approx(-0.00103, rel=1e-6)
+
+
+def test_mask_shape_is_checked():
+    timing = rs.Timing(sample_period_s=1, block_s=4, window_s=40)
+    crit = rs.AsymptoteCriterion("x", 0.1, tau_max=100.0)
+    crit.bind_timing(timing)
+    t = (np.arange(10) - 4.5) * 4.0
+    with pytest.raises(ValueError, match="valid has shape"):
+        crit.evaluate(t, np.zeros(10), valid=np.ones((10, 3), dtype=bool))
+    with pytest.raises(ValueError, match="9 blocks, but its detector has 10"):
+        crit.evaluate(t[:9], np.zeros(9))

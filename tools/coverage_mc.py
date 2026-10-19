@@ -57,17 +57,19 @@ def asymptote_pass_rate(n_blocks: int, phi: float, span_over_tau: float, reps: i
     from rocksteady import AsymptoteCriterion, Outcome, Timing
 
     rng = np.random.default_rng(seed)
-    t = (np.arange(n_blocks) - (n_blocks - 1) / 2.0) * block_s
-    s = t - t[0]
     timing = Timing(sample_period_s=1.0, block_s=block_s, window_s=n_blocks * block_s)  # 1 s samples
-    s_end = s[-1] + 0.5 * (timing.block_samples - 1) * timing.sample_period_s  # the current sample (full blocks)
+    b, dt = timing.block_samples, timing.sample_period_s
+    t = (np.arange(n_blocks) - (n_blocks - 1) / 2.0) * timing.effective_block_s  # block centres, as a Detector
+    samples = (t - 0.5 * (b - 1) * dt)[:, None] + np.arange(b)[None, :] * dt   # every sample's time
+    s_end = (t[-1] + 0.5 * (b - 1) * dt) - samples[0, 0]                        # the current sample
     tau = s_end / span_over_tau
     amp = remaining_over_limit * np.exp(s_end / tau)
+    curve = (-amp * np.exp(-(samples - samples[0, 0]) / tau)).mean(axis=1)      # block means of the curve
     crit = AsymptoteCriterion("x", 1.0, tau_max=tau_factor * tau)
     crit.bind_timing(timing)  # as a Detector does
     scale = noise_over_limit * np.sqrt(1 - phi * phi)  # block-mean noise with standard deviation noise_over_limit
-    passes = sum(crit.evaluate(t, -amp * np.exp(-s / tau) + scale * ar1_noise(rng, n_blocks, phi)).outcome
-                 == Outcome.PASS for _ in range(reps))
+    passes = sum(crit.evaluate(t, curve + scale * ar1_noise(rng, n_blocks, phi)).outcome == Outcome.PASS
+                 for _ in range(reps))
     return passes / reps
 
 

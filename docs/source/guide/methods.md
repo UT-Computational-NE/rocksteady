@@ -202,8 +202,18 @@ $$
 d(\tau) = A\,e^{-s_e/\tau} = -\tau\, y'(s_e).
 $$
 
-For a fixed $\tau$ the model is linear in $(y_\infty, A)$. With
-$g = e^{-s/\tau}$ centred, $g_c = g - \bar g$:
+For a fixed $\tau$ the model is linear in $(y_\infty, A)$. Each block mean
+averages the curve over that block's valid samples $V_m$, so the basis is
+averaged over the same samples. This is exact for complete blocks and for
+blocks with tolerated gaps, whatever the pattern of missing samples. (A
+block's centroid time alone is exact only for a line.)
+
+$$
+g_m(\tau) = \frac{1}{|V_m|} \sum_{i \in V_m} e^{-s_i/\tau} ,
+$$
+
+which the detector supplies through the block masks
+(`Criterion.uses_block_masks`). With $g$ centred, $g_c = g - \bar g$:
 
 $$
 \hat A(\tau) = \frac{g_c^\top (y - \bar y)}{g_c^\top g_c}, \qquad
@@ -249,13 +259,13 @@ replications; nominal 2.5 %):
 
 | blocks, $\phi$ | span $0.5\tau$ | $1\tau$ | $2\tau$ | $4\tau$ | $8\tau$ |
 |---|---|---|---|---|---|
-| 20, 0 / 0.5 / 0.8 | 2.0 / 3.1 / 5.0 | 1.4 / 3.0 / 4.8 | 0.7 / 2.1 / 3.9 | 0.0 / 0.4 / 0.6 | 0 |
-| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.2 / 1.0 / 1.5 | 0 | 0 |
-| 90, 0 / 0.5 / 0.8 | 1.6 / 1.9 / 2.0 | 1.1 / 1.5 / 1.5 | 0.4 / 0.4 / 1.0 | 0 | 0 |
+| 20, 0 / 0.5 / 0.8 | 2.0 / 3.2 / 5.1 | 1.4 / 3.0 / 4.7 | 0.8 / 1.9 / 3.9 | 0.0 / 0.1 / 0.1 | 0 |
+| 40, 0 / 0.5 / 0.8 | 1.5 / 2.4 / 2.5 | 1.1 / 2.1 / 2.5 | 0.5 / 1.2 / 1.4 | 0 | 0 |
+| 90, 0 / 0.5 / 0.8 | 1.6 / 1.9 / 2.0 | 1.0 / 1.5 / 1.6 | 0.5 / 0.5 / 1.0 | 0 | 0 |
 
 With $\tau_{\max}$ equal to the true $\tau$, the true value sits at the edge
 of the search, and the rates reach at most 6.0 % at 40 blocks and 5.1 % at
-90. Give $\tau_{\max}$ a margin. One evaluation costs about 0.8 ms.
+90. Give $\tau_{\max}$ a margin. One evaluation costs about 1 ms (1.5 ms with 300-sample blocks).
 
 ## Integrated autocorrelation time and the uncertainty of a mean
 
