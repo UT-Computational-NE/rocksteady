@@ -27,7 +27,7 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest"]
 docs = ["sphinx>=7", "sphinx-rtd-theme>=2", "myst-parser>=2"]
-dev = ["rocksteady[docs]", "build", "pytest"]
+dev = ["rocksteady[docs,test]", "build"]
 
 [project.urls]
 Homepage = "https://github.com/UT-Computational-NE/rocksteady"

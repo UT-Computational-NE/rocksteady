@@ -1,11 +1,10 @@
-"""The docs, docstrings and examples avoid the phrases GLOSSARY.md retires (#56, #73)."""
+"""The docs, docstrings and examples avoid phrases GLOSSARY.md avoids that are always wrong (#56, #73)."""
 
+import glob
+import os
 import re
-from pathlib import Path
 
-import pytest
-
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: Phrases that are always wrong in this repo, with the glossary term to use instead. A phrase that is
 #: right in some contexts (for example "labels only" for an input of labels) belongs to review, not here.
@@ -19,31 +18,47 @@ AVOIDED = {
 }
 
 #: Prose the users read. GLOSSARY.md (which lists the avoided terms) and CHANGELOG.md (history) are not scanned.
-SCANNED = ["README.md", "src/**/*.py", "docs/source/**/*.md", "docs/source/**/*.py", "examples/**/*.py"]
+SCANNED = ["README.md", "src/**/*.py", "docs/source/**/*.md", "docs/source/**/*.rst", "docs/source/**/*.py",
+           "examples/**/*.py"]
 
-_PATTERN = re.compile("|".join(re.escape(p) for p in AVOIDED), re.IGNORECASE)
+
+def _phrase_pattern(phrase):
+    """``phrase`` with any line break between its words (and a comment marker after one), and either apostrophe."""
+    words = (re.escape(w).replace("'", "['’]") for w in phrase.split())
+    return r"\s+(?:#\s*)?".join(words)
 
 
-def avoided_phrases(text):
-    """``(line number, phrase, use instead)`` for each avoided phrase in ``text``."""
-    return [(n, m.group(0), AVOIDED[m.group(0).lower()])
-            for n, line in enumerate(text.splitlines(), 1) for m in _PATTERN.finditer(line)]
+_PATTERN = re.compile("|".join(_phrase_pattern(p) for p in AVOIDED), re.IGNORECASE)
+
+
+def _avoided_phrases(text):
+    """``(line number, phrase as written, use instead)`` for each avoided phrase in ``text``."""
+    hits = []
+    for m in _PATTERN.finditer(text):
+        key = " ".join(re.sub(r"#", " ", m.group(0)).split()).lower().replace("’", "'")
+        hits.append((text.count("\n", 0, m.start()) + 1, m.group(0), AVOIDED[key]))
+    return hits
 
 
 def test_avoided_phrases_are_found_with_their_replacement():
     text = "A step of 1.5 sample periods.\nOverrides are Domain Rules.\nA segment's state."
-    assert avoided_phrases(text) == [(1, "sample period", AVOIDED["sample period"]),
-                                     (2, "Domain Rule", AVOIDED["domain rule"])]
+    assert _avoided_phrases(text) == [(1, "sample period", AVOIDED["sample period"]),
+                                      (2, "Domain Rule", AVOIDED["domain rule"])]
 
 
-def _files():
-    files = sorted({p for pattern in SCANNED for p in ROOT.glob(pattern) if "_build" not in p.parts})
-    if not files:
-        pytest.skip("no source tree next to the tests (installed package)")
-    return files
+def test_avoided_phrases_wrapped_across_lines_or_with_a_curly_apostrophe_are_found():
+    text = 'Steps of one sample\n    period apart.\nThe segment’s label.\n# Best-fit segments under\n# limits.'
+    assert [(n, use) for n, _, use in _avoided_phrases(text)] == [
+        (1, AVOIDED["sample period"]), (3, AVOIDED["segment's label"]), (4, AVOIDED["under limits"])]
 
 
-def test_docs_and_docstrings_avoid_retired_phrases():
-    hits = [f"{p.relative_to(ROOT)}:{n}: {phrase!r} -> {use}"
-            for p in _files() for n, phrase, use in avoided_phrases(p.read_text(encoding="utf-8"))]
+def test_docs_and_docstrings_avoid_always_wrong_phrases():
+    files = sorted({p for pattern in SCANNED for p in glob.glob(os.path.join(ROOT, pattern), recursive=True)
+                    if "_build" not in p.split(os.sep)})
+    hits = []
+    for path in files:
+        with open(path, encoding="utf-8") as f:
+            hits += [f"{os.path.relpath(path, ROOT)}:{n}: {phrase!r} -> {use}"
+                     for n, phrase, use in _avoided_phrases(f.read())]
+    assert files, f"nothing to scan under {ROOT}"
     assert not hits, "phrases GLOSSARY.md avoids:\n" + "\n".join(hits)

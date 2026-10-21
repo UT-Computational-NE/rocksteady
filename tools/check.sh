@@ -4,7 +4,7 @@
 # tests its own src/ even when the environment's editable install points at another checkout. Set PYTHON to pick
 # the interpreter (default: python on PATH).
 set -euo pipefail
-cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 "${PYTHON:-python}" -m pytest -m "not slow" -q
 out="$(mktemp -d)"

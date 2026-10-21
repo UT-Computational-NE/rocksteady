@@ -19,8 +19,8 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 Claim a ticket before writing code, so that no one else builds it at the same time:
 
 1. Read `gh issue view <n> --json assignees`. If it is assigned to someone else, the ticket is taken: ask the user.
-2. Look for work already under way. Another contributor's shows as an open PR, and another session of your own account as a branch or worktree:
-   `gh pr list --state open --search "<n> in:body"`, `git ls-remote --heads origin "feat/<n>-*"`, `git worktree list`. If you find any, ask the user whether to review it, continue it or replace it.
+2. Look for work already under way. Another contributor's shows as a PR that closes the issue, and another session of your own account as a branch or worktree:
+   `gh issue view <n> --json closedByPullRequestsReferences`, `git ls-remote --heads origin "feat/<n>-*"`, `git worktree list`. If you find any, ask the user whether to review it, continue it or replace it.
 3. `gh issue edit <n> --add-assignee @me`, then create the branch and worktree (see `AGENTS.md`).
 
 Done when the issue is assigned to you and no other PR or branch is working on it.
