@@ -774,7 +774,7 @@ class Detector:
             undecided = Reason.LOW_COVERAGE
         else:
             t_blocks, blocks, valid = evaluable
-            # A criterion with uses_block_masks also takes the blocks' valid-sample masks (not in the protocol).
+            # A criterion with uses_block_masks also takes valid= (see Criterion), beyond evaluate's base signature.
             evaluated = [cast(Any, c).evaluate(t_blocks, blocks[:, self._index[c.signal]], valid=valid)
                          if getattr(c, "uses_block_masks", False) else
                          c.evaluate(t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]

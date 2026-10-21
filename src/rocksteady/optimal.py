@@ -114,7 +114,7 @@ a longer segment never costs less, whichever subtype could take it.
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -351,8 +351,7 @@ class _Costs:
         sse = np.maximum(sse, 0.0)
         # Not resolved above the rounding: fit those segments directly.
         bad = np.flatnonzero(~(sse > 16.0 * err) & (n > 0))
-        order = self.fast[st]
-        assert order is not None, "vector() takes fast models only"
+        order = cast(int, self.fast[st])  # vector() takes fast models only
         for i in bad:
             sse[i] = self._direct(order, int(ps[i]), int(q))
         return sse
@@ -925,7 +924,7 @@ class _Problem:
                     for x in range(lo_x, hi_x + 1, stride):
                         if x not in seen:
                             seen[x] = score(x)
-                    best_x = min(seen, key=lambda x_: seen[x_])
+                    best_x = min(seen, key=lambda pos: seen[pos])
                     if stride == 1:
                         break
                     lo_x, hi_x = max(first, best_x - stride), min(last, best_x + stride)

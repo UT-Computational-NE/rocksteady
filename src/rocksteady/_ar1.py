@@ -13,7 +13,7 @@ positions ``s``, the correlation of an AR(1) (Ornstein-Uhlenbeck) process
 observed with some samples missing.
 """
 
-from typing import Optional, Sequence
+from typing import Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -82,10 +82,10 @@ def ar1_apply(x: np.ndarray, phi: float, steps: Optional[ArrayLike] = None) -> n
         def scan(c):
             return _scan(c, phi)
     else:
-        step_arr = np.asarray(steps, dtype=float)
-        if step_arr.shape != (len(x) - 1,):
-            raise ValueError(f"steps must have length {len(x) - 1}, got shape {step_arr.shape}")
-        decay = (phi ** step_arr).tolist()
+        spacings = np.asarray(steps, dtype=float)
+        if spacings.shape != (len(x) - 1,):
+            raise ValueError(f"steps must have length {len(x) - 1}, got shape {spacings.shape}")
+        decay = (phi ** spacings).tolist()
 
         def scan(c):
             return _scan_steps(c, decay)
@@ -95,7 +95,7 @@ def ar1_apply(x: np.ndarray, phi: float, steps: Optional[ArrayLike] = None) -> n
     return np.array([scan(c) for c in cols]).T.reshape(x.shape)
 
 
-def ar1_quad(x: np.ndarray, phi: float, steps: Optional[Sequence[float]] = None) -> np.ndarray:
+def ar1_quad(x: np.ndarray, phi: float, steps: Optional[ArrayLike] = None) -> np.ndarray:
     """``x' R x`` for the columns of ``x`` (an (n, m) matrix): an (m, m) matrix, in O(n m^2)."""
     x = np.asarray(x, dtype=float)
     return x.T @ ar1_apply(x, phi, steps)

@@ -27,8 +27,10 @@ echo "check.sh: $py is Python ${info%% *} at $exe"
 missing="$("$py" -c 'import importlib.util as u, sys
 print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))' "${needs[@]}")"
 if [ -n "$missing" ]; then
-  echo "check.sh: $py ($exe) lacks $missing. Install the $extra extra into it from the repo root" \
-       "($exe -m pip install -e \".[$extra]\"), or set PYTHON to an interpreter that has it." >&2
+  # Name the distributions (module names with - for _), not `pip install -e ".[$extra]"`: run from a worktree, that
+  # would point the environment's editable install at the worktree, for every session using the environment.
+  echo "check.sh: $py ($exe) lacks $missing, from the $extra extra. Install them into it" \
+       "($exe -m pip install ${missing//_/-}), or set PYTHON to an interpreter that has them." >&2
   exit 1
 fi
 "$py" -m pytest -m "not slow" -q "$@"  # with arguments, only that selection; a later -m overrides "not slow"
