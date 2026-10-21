@@ -29,6 +29,9 @@
   and the strict docs build (#73).
 - `tests/test_vocabulary.py` fails on phrases `GLOSSARY.md` avoids that are
   always wrong (#73).
+- Each avoided phrase in `tests/test_vocabulary.py` carries a near-miss,
+  correct text the scan must not flag. `tools/check.sh` prints the Python it
+  runs, and stops early when that Python lacks the dev extra (#84).
 
 ## 0.5.0
 
