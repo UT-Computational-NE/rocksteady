@@ -20,8 +20,9 @@ detector's (``states.segments_from``).
 
 Constraints
 -----------
-- ``per`` and ``max_counts``: at most ``max_counts[state]`` segments of a
-  state per period (a day, a week, ...). A segment counts once against
+- ``per`` and ``max_counts``: at most ``max_counts[name]`` segments of a
+  state or subtype per period (a day, a week, ...). A state's cap counts
+  all of its segments, whatever their subtype. A segment counts once against
   every period it touches, so one segment from 16:00 to 08:00 the next day
   counts against both days. Periods are half-open, and a segment touches a
   period when one of its samples lies in it. For a ``DatetimeIndex``,
@@ -41,6 +42,34 @@ Constraints
   charges ``sigma^2 (p + 1) ln n`` for a model with ``p`` parameters,
   ``sigma`` estimated from the first differences of the data (robustly), so
   "at most" stays "at most".
+
+When no segmentation satisfies the constraints, the ``ValueError`` names the
+earliest candidate time after which none can continue, the period containing
+it (its start, as ``count_by_period`` indexes periods, or the whole record),
+and the caps and transitions in force. It does not search for the constraint
+to blame.
+
+Subtypes
+--------
+``subtypes={name: Subtype}`` refines states into caller-named subtypes, such
+as cold and hot steady segments, each with conditions on the segment alone
+(``Subtype.level``). Once a state has subtypes, every segment of it takes one
+of them (ADR 0001), so no cap can be dodged by leaving a segment untyped; a
+subtype with no conditions is a catch-all. States without subtypes are
+unchanged, and their segments have ``subtype=None``. A subtype is fitted
+with its state's model, and takes its state's penalty, durations and
+transitions.
+
+Subtypes of one state may overlap. The optimiser chooses by cost; since a
+state's subtypes cost the same, a segment two of them accept is an exact
+tie, which goes to the subtype declared first. Precisely, among
+segmentations of equal objective it takes the least sum, over segments, of
+each subtype's position among its state's subtypes, so no segment could
+take an earlier-declared subtype that accepts it without breaking a cap.
+That sum also decides exact ties between different states or boundaries,
+so declaring subtypes can change which of two equally good segmentations
+is returned. ``refine`` keeps every segment's subtype and rejects a move
+after which a segment fails its subtype's conditions.
 
 Methods
 -------
@@ -78,7 +107,9 @@ polynomial is still fitted with a reduced order (``order_reduced``, too few
 samples), and segments too short for a model never stop the search. The
 exponential models' default time-constant bounds scale with the segment's
 span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
-for a strict guarantee, or pass ``prune=False``.
+for a strict guarantee, or pass ``prune=False``. Pruning is decided on the
+model cost before any subtype's condition, so it stays exact with subtypes:
+a longer segment never costs less, whichever subtype could take it.
 """
 
 import math
@@ -87,6 +118,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequ
 
 import numpy as np
 
+from . import _validate as _v
 from . import fit as _fit
 from .states import Segment, State, check_segments
 
@@ -170,15 +202,21 @@ def _count_table(spans: Sequence[Tuple[int, int, Sequence[str]]], columns: Seque
                 row[name] = row.get(name, 0) + 1
     # Periods inside a segment hold no sample of their own only when a gap spans them; they still count.
     out = pd.DataFrame.from_dict(rows, orient="index", columns=list(columns)).fillna(0).astype(int).sort_index()
-    if per is None:
-        out.index = ["all"]
-    elif idx is not None:
-        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
-        out.index = origin + out.index.to_numpy() * pd.Timedelta(per)
-    else:
-        out.index = (0.0 if period_origin is None else float(period_origin)) + out.index.to_numpy() * float(per)
+    out.index = _period_starts(out.index.to_numpy(), idx, per, period_origin)
     out.index.name = "period"
     return out
+
+
+def _period_starts(ids: np.ndarray, idx, per, period_origin):
+    """The start of each period number in ``ids``, as ``count_by_period`` indexes periods (``"all"`` for none)."""
+    import pandas as pd
+
+    if per is None:
+        return pd.Index(["all"] * len(ids))
+    if idx is not None:
+        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
+        return pd.Index(origin + ids * pd.Timedelta(per))
+    return pd.Index((0.0 if period_origin is None else float(period_origin)) + ids * float(per))
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +411,8 @@ class OptimalSegmentation:
     ``segments`` cover the record in order, like ``states.segments``, so
     ``report.fit_report`` and ``metrics.stats_by_state`` take them as they are.
     ``objective = sse + sum of penalties``; ``rms = sqrt(sse / n_valid)``.
+    ``counts`` has a column per state and per declared subtype, and
+    ``subtypes`` (also ``info["subtypes"]``) holds the subtypes used.
     """
 
     segments: List[Segment]
@@ -382,15 +422,23 @@ class OptimalSegmentation:
     rms: float
     n_valid: int
     penalty: Dict[str, float]
-    counts: Any  # DataFrame: segments touching each period, by state
+    counts: Any  # DataFrame: segments touching each period, by state and subtype
     n_candidates: int
     n_fits: int = 0
     info: Dict[str, Any] = field(default_factory=dict)
+    subtypes: Dict[str, "Subtype"] = field(default_factory=dict)
 
     def summary(self) -> str:
-        n = {st: sum(s.state.value == st for s in self.segments) for st in self.penalty}
-        parts = ", ".join(f"{k} {v}" for k, v in n.items())
-        return (f"{self.method}: {len(self.segments)} segments ({parts}); RMS {self.rms:.6g}, "
+        subtypes = self.subtypes
+        parts = []
+        for st in self.penalty:
+            part = f"{st} {sum(s.state.value == st for s in self.segments)}"
+            mine = [name for name, sub in subtypes.items() if sub.state.value == st]
+            if mine:
+                part += ": " + ", ".join(f"{name} {sum(s.subtype == name for s in self.segments)}" for name in mine)
+            parts.append(part)
+        shape = ("; " if subtypes else ", ").join(parts)
+        return (f"{self.method}: {len(self.segments)} segments ({shape}); RMS {self.rms:.6g}, "
                 f"SSE {self.sse:.6g}, objective {self.objective:.6g}; {self.n_candidates} candidate breakpoints")
 
     def __str__(self) -> str:
@@ -420,6 +468,100 @@ def compare_segments(a: Sequence[Segment], b: Sequence[Segment], n: Optional[int
 
 
 # ---------------------------------------------------------------------------
+# Subtypes and their conditions
+# ---------------------------------------------------------------------------
+
+
+_STATE_NAMES = tuple(s.value for s in State)
+
+
+def _range(value, what: str) -> Tuple[Optional[float], Optional[float]]:
+    """A half-open range ``(lo, hi)``, either end None (open); lo < hi when both are given."""
+    if isinstance(value, (str, bytes)) or np.ndim(value) != 1 or len(value) != 2:
+        raise ValueError(f"{what} must be a pair (lo, hi), got {value!r}")
+    lo, hi = (_v.optional_finite(v, f"{what} {end}") for v, end in zip(value, ("lo", "hi")))
+    _v.ordered(lo, hi, f"{what} lo", f"{what} hi", strict=True)
+    return lo, hi
+
+
+@dataclass(frozen=True)
+class Subtype:
+    """
+    A caller-named refinement of one state, for ``optimal_segments``: for
+    example a cold or a hot steady segment.
+
+    ``state`` is the state it refines (``"steady"``, ``"transient"`` or
+    ``"indeterminate"``). Its conditions, all on the segment's finite
+    samples:
+
+    - ``level=(lo, hi)``: the mean lies in ``[lo, hi)``. ``None`` leaves an
+      end open, so ``(None, 40)`` and ``(40, None)`` split every level at 40
+      with no gap and no overlap.
+
+    A segment with no finite sample meets no level condition. A subtype with
+    no conditions is a catch-all. A subtype has no model of its own: its
+    segments are fitted with its state's.
+    """
+
+    state: State
+    level: Optional[Tuple[Optional[float], Optional[float]]] = None
+
+    def __post_init__(self):
+        if self.state not in _STATE_NAMES:
+            raise ValueError(f"Subtype state must be one of {', '.join(_STATE_NAMES)}; got {self.state!r}")
+        object.__setattr__(self, "state", State(self.state))
+        if self.level is not None:
+            object.__setattr__(self, "level", _range(self.level, "Subtype level"))
+
+
+def _above(y: np.ndarray, thr: float) -> bool:
+    """
+    Whether the mean of the finite samples of ``y`` (at least one) is at least ``thr``, exactly: ``fsum``
+    rounds the exact ``sum(y) - n * thr`` correctly, so its sign is exact. ``fsum(y) / n`` rounds twice, and
+    53 samples of 0.7 would fall below 0.7.
+    """
+    v = y[np.isfinite(y)].tolist()
+    return math.fsum(v + [-thr] * len(v)) >= 0.0
+
+
+class _Levels:
+    """
+    The level condition, vectorised over segment starts. Means come from
+    range sums with an error bound; where a mean is too close to an end of
+    the range to decide from them, the segment is compared exactly
+    (``_above``), so ``[lo, hi)`` holds for the exact mean.
+    """
+
+    def __init__(self, y: np.ndarray):
+        ok = np.isfinite(y)
+        self.y = y
+        self.N = np.concatenate(([0.0], np.cumsum(ok.astype(float))))
+        self.S = _RangeSum(np.where(ok, y, 0.0))
+
+    def accepts(self, lo: Optional[float], hi: Optional[float]) -> Callable[[np.ndarray, int], np.ndarray]:
+        def level_ok(ps: np.ndarray, q: int) -> np.ndarray:
+            ps = np.asarray(ps, dtype=np.int64)
+            n = self.N[q] - self.N[ps]
+            s, e = self.S.range(ps, q)
+            nn = np.where(n > 0, n, 1.0)
+            mean = s / nn
+            err = e / nn + 4.0 * _EPS * np.abs(mean)
+            out = n > 0
+            near = np.zeros(len(ps), dtype=bool)
+            for thr, above in ((lo, True), (hi, False)):
+                if thr is None:
+                    continue
+                out &= (mean >= thr) if above else (mean < thr)
+                near |= np.abs(mean - thr) <= err
+            for i in np.flatnonzero(near & (n > 0)):
+                seg = self.y[int(ps[i]):q]
+                out[i] = (lo is None or _above(seg, lo)) and (hi is None or not _above(seg, hi))
+            return out
+
+        return level_ok
+
+
+# ---------------------------------------------------------------------------
 # The dynamic program
 # ---------------------------------------------------------------------------
 
@@ -434,7 +576,9 @@ class _Option:
     One choice the program can give a segment: a state with a model, the
     segment's penalty and duration bounds, and a condition on the segment.
     ``accepts(ps, q)`` says, for each start in ``ps``, whether ``[p, q)``
-    meets the condition.
+    meets the condition. ``subtype`` names the choice's subtype (None for a
+    state without subtypes), and ``rank`` is its position among its state's
+    subtypes, which breaks exact ties in cost.
     """
 
     state: str
@@ -442,6 +586,8 @@ class _Option:
     min_d: float = 0.0
     max_d: float = math.inf
     accepts: Callable[[np.ndarray, int], np.ndarray] = _accept_all
+    subtype: Optional[str] = None
+    rank: int = 0
 
 
 @dataclass(frozen=True)
@@ -452,10 +598,24 @@ class _Counter:
     cap: int
 
 
+def _lexargmin(v: np.ndarray, r: np.ndarray):
+    """
+    Along the first axis: the index of the least ``v``, of those the least ``r``, then the first; and the
+    ``v`` and ``r`` there. With ``r`` all equal it is ``argmin(v)``.
+    """
+    vmin = v.min(axis=0)
+    arg = np.where(v == vmin, r, np.iinfo(np.int64).max).argmin(axis=0)
+    return arg, vmin, np.take_along_axis(r, np.expand_dims(arg, 0), axis=0)[0]
+
+
 class _Problem:
     def __init__(self, ts, y, idx, models, options: Sequence[_Option], counters: Sequence[_Counter],
-                 allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin):
+                 allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin,
+                 max_counts: Optional[Mapping[str, int]] = None,
+                 transitions: Optional[Mapping[str, Sequence[str]]] = None):
         self.ts, self.y, self.idx = ts, y, idx
+        # The caller's caps and transitions, as given: the infeasibility error names them.
+        self.given_caps, self.given_transitions = max_counts, transitions
         self.per, self.period_origin = per, period_origin
         self.n = len(ts)
         self.options = list(options)
@@ -475,6 +635,7 @@ class _Problem:
         self.pid: np.ndarray = pid if pid is not None else np.zeros(self.n, dtype=np.int64)
         self.dt = float(np.median(np.diff(ts))) if self.n > 1 else 1.0
         self.pen = np.array([opt.penalty for opt in self.options], dtype=float)
+        self.rank = np.array([opt.rank for opt in self.options], dtype=np.int64)
         self.min_d = np.array([opt.min_d for opt in self.options], dtype=float)
         self.max_d = np.array([opt.max_d for opt in self.options], dtype=float)
         # Count layers: the value of every counter in the current period. A segment adds one to each counter
@@ -504,6 +665,9 @@ class _Problem:
                 ce = plus(c, o)
                 if all(v <= m for v, m in zip(ce, self.maxc)):
                     self.tgtA[o, l] = index[ce]
+        # The options of each state that can be placed at all. One that alone exceeds a cap (a cap of 0) never
+        # can, so its segments are never costed.
+        self.placeable = {st: [o for o in members if self.tgtB[o] >= 0] for st, members in self.by_state.items()}
 
     def duration(self, p, q):
         return self.ts[q - 1] - self.ts[p] + self.dt
@@ -571,10 +735,37 @@ class _Problem:
                 break
         return C
 
-    def solve(self, B: np.ndarray, *, surrogate: bool = False, ub: float = math.inf, prune: bool = True):
+    def solve(self, B: np.ndarray, *, ub: float = math.inf, prune: bool = True):
         """Optimal segmentation with breakpoints from ``B`` (sorted, with 0 and n). Returns (bounds, options)."""
+        table, k = self._forward(B, surrogate=False, ub=ub, prune=prune)
+        if table is None:
+            raise ValueError(self._infeasible(B, k))
+        return self._backtrack(B, *table)
+
+    def upper_bound(self, B: np.ndarray) -> float:
+        """
+        A bound on the optimal objective for pruning: the true cost of the
+        optimal segmentation under cheap constant-fit costs. Every segment a
+        model can fit has a finite constant fit, so that is a relaxation: when
+        it fails, so does the true problem, which gets stuck no later. The
+        error then needs the true costs only on the candidates up to there.
+        """
+        table, k = self._forward(B, surrogate=True, ub=math.inf, prune=False)
+        if table is None:
+            _, k = self._forward(B[: k + 1], surrogate=False, ub=math.inf, prune=False)
+            raise ValueError(self._infeasible(B, k))
+        bounds, opts = self._backtrack(B, *table)
+        return self.total(bounds, opts)[0] * (1 + 1e-9) + 1e-12
+
+    def _forward(self, B: np.ndarray, *, surrogate: bool, ub: float, prune: bool):
+        """
+        The program's table over breakpoints ``B``, ``(F, R, bp_j, bp_o, bp_l)``
+        (None when no segmentation reaches ``B[-1]``), and the index of the
+        latest candidate a segmentation reaches.
+        """
         m, O, L = len(B), self.O, self.L
         F = np.full((m, O, L), math.inf)
+        R = np.zeros((m, O, L), dtype=np.int64)  # sum of the subtypes' ranks: breaks exact ties in F
         bp_j = np.full((m, O, L), -1, dtype=np.int64)
         bp_o = np.full((m, O, L), -1, dtype=np.int64)
         bp_l = np.full((m, O, L), -1, dtype=np.int64)
@@ -591,7 +782,9 @@ class _Problem:
             dur = self.ts[q - 1] - t_first[:k] + self.dt
             spans = p1 > p0[:k]
             same = same_all[:k]
-            for st, members in self.by_state.items():
+            for st, members in self.placeable.items():
+                if not members:
+                    continue
                 okds = [(dur >= self.min_d[o] - 1e-9) & (dur <= self.max_d[o] + 1e-9) & reachable[:k]
                         for o in members]
                 okd_any = okds[0] if len(okds) == 1 else np.logical_or.reduce(okds)
@@ -608,12 +801,19 @@ class _Problem:
                     C = np.where(okd, C_st, math.inf) + self.pen[o]
                     if not np.isfinite(C).any():
                         continue
-                    F[k, o], bp_j[k, o], bp_o[k, o], bp_l[k, o] = self._best_ending_at(k, o, C, F, same, spans)
+                    F[k, o], R[k, o], bp_j[k, o], bp_o[k, o], bp_l[k, o] = self._best_ending_at(
+                        k, o, C, F, R, same, spans)
             reachable[k] = np.isfinite(F[k]).any()
         if not np.isfinite(F[m - 1]).any():
-            raise ValueError("no segmentation satisfies the constraints (counts, durations, transitions) on these "
-                             "candidate breakpoints")
-        o, l = (int(v) for v in np.unravel_index(int(np.argmin(F[m - 1])), (O, L)))
+            return None, int(np.flatnonzero(reachable).max())
+        return (F, R, bp_j, bp_o, bp_l), m - 1
+
+    def _backtrack(self, B: np.ndarray, F: np.ndarray, R: np.ndarray, bp_j: np.ndarray, bp_o: np.ndarray,
+                   bp_l: np.ndarray):
+        """The optimal (bounds, options) from the table of ``_forward``: of equal values, the lower rank sum."""
+        m = len(B)
+        best = int(_lexargmin(F[m - 1].ravel(), R[m - 1].ravel())[0])
+        o, l = (int(v) for v in np.unravel_index(best, F.shape[1:]))
         k = m - 1
         bounds, opts = [int(B[k])], []
         while k > 0:
@@ -623,16 +823,44 @@ class _Problem:
             k, o, l = j, po, pl
         return bounds[::-1], opts[::-1]
 
-    def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, same: np.ndarray, spans: np.ndarray):
-        """Best value, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per count layer."""
+    def _infeasible(self, B: np.ndarray, k: int) -> str:
+        """
+        The error for a record no segmentation covers. ``B[k]`` is the latest
+        candidate breakpoint any segmentation reaches, the earliest candidate
+        time after which none can continue. No search for the constraint to blame.
+        """
+        stuck = int(B[k])
+        unit = "" if self.idx is not None else " s"
+        at = self.idx[stuck] if self.idx is not None else float(self.ts[stuck])
+        if self.per is None:
+            where = "the whole record"
+        else:
+            start = _period_starts(np.array([self.pid[stuck]]), self.idx, self.per, self.period_origin)[0]
+            where = f"the period starting {start}{unit}"
+        caps = {st: int(v) for st, v in (self.given_caps or {}).items()} or "none"
+        if self.per is not None and self.given_caps:
+            caps = f"{caps} per period ({self.per})"
+        trans = self.given_transitions
+        trans = "any" if trans is None else {a: sorted(set(b)) for a, b in trans.items()}
+        return (f"no segmentation satisfies the constraints (counts, durations, transitions) and the subtypes' "
+                f"conditions on these candidate breakpoints: none can continue from {at}{unit} (sample {stuck}), in {where}. "
+                f"In force: max_counts={caps}, transitions={trans}.")
+
+    def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, R: np.ndarray, same: np.ndarray,
+                        spans: np.ndarray):
+        """
+        Best value, its rank sum, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per
+        count layer. Of equal values, the lower rank sum wins, then the first found.
+        """
         L = self.L
         best_v = np.full(L, math.inf)
+        best_r = np.zeros(L, dtype=np.int64)
         best = np.full((L, 3), -1, dtype=np.int64)
+        r_o = self.rank[o]
         # From the start of the record: no previous segment, a fresh period.
         if np.isfinite(C[0]) and self.tgtB[o] >= 0:
             t_ = self.tgtB[o]
-            if C[0] < best_v[t_]:
-                best_v[t_], best[t_] = C[0], (0, -1, -1)
+            best_v[t_], best_r[t_], best[t_] = C[0], r_o, (0, -1, -1)
         # From a previous segment ending at B[j], j >= 1.
         if k > 1:
             V = F[1:k] + C[1:k, None, None]  # (k - 1, O, L)
@@ -640,9 +868,7 @@ class _Problem:
             for case, mask in (("A", same[1:] & ~spans[1:]), ("B", ~same[1:]), ("C", same[1:] & spans[1:])):
                 if not mask.any():
                     continue
-                sub = V[mask]
-                arg = sub.argmin(axis=0)
-                vmin = np.take_along_axis(sub, arg[None], axis=0)[0]
+                arg, vmin, rmin = _lexargmin(V[mask], R[1:k][mask])  # over j, for each (option, layer)
                 jidx = np.flatnonzero(mask)[arg] + 1
                 for l in range(L):
                     if case == "A":
@@ -653,11 +879,11 @@ class _Problem:
                         t_ = self.tgtB[o] if self.tgtA[o, l] >= 0 else -1
                     if t_ < 0:
                         continue
-                    sp = int(np.argmin(vmin[:, l]))
-                    v = vmin[sp, l]
-                    if v < best_v[t_]:
-                        best_v[t_], best[t_] = v, (jidx[sp, l], sp, l)
-        return best_v, best[:, 0], best[:, 1], best[:, 2]
+                    sp = int(_lexargmin(vmin[:, l], rmin[:, l])[0])
+                    v, r = vmin[sp, l], rmin[sp, l] + r_o
+                    if v < best_v[t_] or (v == best_v[t_] and r < best_r[t_] and math.isfinite(v)):
+                        best_v[t_], best_r[t_], best[t_] = v, r, (jidx[sp, l], sp, l)
+        return best_v, best_r, best[:, 0], best[:, 1], best[:, 2]
 
     def refine(self, bounds: List[int], opts: List[int], window_s: float, max_sweeps: int = 5):
         """
@@ -710,17 +936,31 @@ class _Problem:
 
 
 def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transitions, min_duration_s,
-             max_duration_s):
+             max_duration_s, subtypes: Mapping[str, "Subtype"], levels: "_Levels"):
     """
     The program's options, counters, ``allowed`` transitions between options,
-    and the result's count columns, from the caller's constraints. Each state
-    with a model is one option, and each count cap a counter over that one
-    option.
+    and the result's count columns, from the caller's constraints. A state
+    without subtypes is one option; a state with subtypes is one option per
+    subtype, in declaration order, and no other (ADR 0001). A count cap is a
+    counter over the options of its name: all of a state's, or a subtype's
+    own. Transitions, durations and penalties name states, and apply to every
+    option of the state.
     """
-    options = [_Option(st, pen[st], float((min_duration_s or {}).get(st, 0.0)),
-                       float((max_duration_s or {}).get(st, math.inf))) for st in states]
-    options_of = {st: frozenset([o]) for o, st in enumerate(states)}
-    counters = [_Counter(options_of[st], int(max_counts[st])) for st in states if st in (max_counts or {})]
+    options: List[_Option] = []
+    options_of: Dict[str, FrozenSet[int]] = {}
+    for st in states:
+        durations = (float((min_duration_s or {}).get(st, 0.0)), float((max_duration_s or {}).get(st, math.inf)))
+        mine = [(name, sub) for name, sub in subtypes.items() if sub.state.value == st]
+        first = len(options)
+        if not mine:
+            options.append(_Option(st, pen[st], *durations))
+        for rank, (name, sub) in enumerate(mine):
+            accepts = _accept_all if sub.level is None else levels.accepts(*sub.level)
+            options.append(_Option(st, pen[st], *durations, accepts=accepts, subtype=name, rank=rank))
+            options_of[name] = frozenset([len(options) - 1])
+        options_of[st] = frozenset(range(first, len(options)))
+    names = list(states) + list(subtypes)  # states first, so that without subtypes the counters are as before
+    counters = [_Counter(options_of[name], int(max_counts[name])) for name in names if name in (max_counts or {})]
     if transitions is None:
         allowed = np.ones((len(options), len(options)), dtype=bool)
     else:
@@ -729,7 +969,7 @@ def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transi
             for b in nexts:
                 for i in options_of[a]:
                     allowed[i, list(options_of[b])] = True
-    return options, counters, allowed, [(st, options_of[st]) for st in states]
+    return options, counters, allowed, [(name, options_of[name]) for name in names]
 
 
 def _poly0(costs: _Costs, ps: np.ndarray, q: int) -> np.ndarray:
@@ -765,7 +1005,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                      max_duration_s: Optional[Mapping[str, float]] = None,
                      penalty: Union[str, float, Mapping[str, float]] = "bic", method: str = "refine",
                      candidates=None, grid_s: Optional[float] = None, refine_s: Optional[float] = None,
-                     period_origin=None, prune: bool = True) -> OptimalSegmentation:
+                     period_origin=None, prune: bool = True,
+                     subtypes: Optional[Mapping[str, Subtype]] = None) -> OptimalSegmentation:
     """
     Best-fit segments of ``y`` under constraints (see the module docstring).
 
@@ -784,7 +1025,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     per : str, Timedelta or float (seconds), optional
         The period the counts apply to. None: the whole record.
     max_counts : mapping, optional
-        ``{state: maximum segments per period}``. Unlisted states are not capped.
+        ``{state or subtype: maximum segments per period}``. A state's cap
+        counts all of its segments, whatever their subtype, and both caps
+        bind (``{"steady": 3, "hot": 1}``). Unlisted names are not capped.
     transitions : mapping, optional
         ``{state: [states that may follow it]}``. Default: any state may follow any.
     min_duration_s, max_duration_s : mapping, optional
@@ -808,6 +1051,11 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
+    subtypes : mapping, optional
+        ``{name: Subtype}``: named subtypes of the states in ``models`` (see
+        "Subtypes" in the module docstring). Names must differ from the
+        state names. Once a state has subtypes, every segment of it takes
+        one of them; segments of other states have ``subtype=None``.
 
     Returns
     -------
@@ -828,13 +1076,33 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         raise ValueError("models must be a non-empty mapping {state: model spec}")
     states = list(models)
     for st in states:
-        State(st)  # raises for an unknown state
+        if st not in _STATE_NAMES:
+            raise ValueError(f"models names {st!r}, which is not a state ({', '.join(_STATE_NAMES)})")
     _fit.validate_models({"y": dict(models)}, states=states)
+    subtypes = dict(subtypes or {})
+    for name, sub in subtypes.items():
+        _v.name(name, "a subtype's name")
+        if not isinstance(sub, Subtype):
+            raise ValueError(f"subtypes[{name!r}] must be a Subtype, got {sub!r}")
+        if name in _STATE_NAMES:
+            raise ValueError(f"subtype {name!r} has the name of a state; give it another name")
+        if sub.state.value not in states:
+            raise ValueError(f"subtype {name!r} refines state {sub.state.value!r}, which has no model")
+
+    def unknown(what: str, name: str) -> ValueError:
+        if name in _STATE_NAMES:
+            return ValueError(f"{what} names state {name!r}, which has no model")
+        if what == "max_counts":
+            return ValueError(f"max_counts names {name!r}, which is not a state with a model or a subtype")
+        if name in subtypes:
+            return ValueError(f"{what} names subtype {name!r}; it takes states only")
+        return ValueError(f"{what} names {name!r}, which is not a state with a model")
+
     for name, mapping in (("max_counts", max_counts), ("min_duration_s", min_duration_s),
                           ("max_duration_s", max_duration_s)):
         for st, v in (mapping or {}).items():
-            if st not in states:
-                raise ValueError(f"{name} names state {st!r}, which has no model")
+            if st not in states and not (name == "max_counts" and st in subtypes):
+                raise unknown(name, st)
             if name == "max_counts" and (isinstance(v, bool) or int(v) != v or v < 0):
                 raise ValueError(f"max_counts[{st!r}] must be a non-negative integer, got {v!r}")
             if name != "max_counts" and not (float(v) >= 0):
@@ -843,7 +1111,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         for a, nexts in transitions.items():
             for st in [a, *nexts]:
                 if st not in states:
-                    raise ValueError(f"transitions names state {st!r}, which has no model")
+                    raise unknown("transitions", st)
     # Penalty per state.
     if isinstance(penalty, str):
         if penalty != "bic":
@@ -852,6 +1120,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         n_valid = int(np.isfinite(y).sum())
         pen = {st: var * (_n_params(models, st, ts, y) + 1) * math.log(max(n_valid, 2)) for st in states}
     elif isinstance(penalty, Mapping):
+        for name in penalty:
+            if name in subtypes:
+                raise unknown("penalty", name)
         pen = {st: float(penalty.get(st, 0.0)) for st in states}
     else:
         pen = {st: float(penalty) for st in states}
@@ -859,8 +1130,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         raise ValueError(f"penalties must be finite and >= 0, got {pen}")
 
     options, counters, allowed, columns = _options(states, pen, max_counts, transitions, min_duration_s,
-                                                   max_duration_s)
-    prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin)
+                                                   max_duration_s, subtypes, _Levels(y))
+    prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin, max_counts,
+                    transitions)
     if method in ("subset", "refine"):
         if candidates is None:
             raise ValueError(f"method {method!r} needs candidates (segments or sample indices)")
@@ -875,12 +1147,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             B = np.flatnonzero(np.diff(np.concatenate(([cell[0] - 1], cell))) != 0)
         B = np.unique(np.concatenate((B, _candidates(candidates, n))))
 
-    ub = math.inf
     slow = any(not prob.costs.is_fast(st) for st in states)
-    if prune and slow:
-        # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
-        sb, so = prob.solve(B, surrogate=True, prune=False)
-        ub = prob.total(sb, so)[0] * (1 + 1e-9) + 1e-12
+    # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
+    ub = prob.upper_bound(B) if prune and slow else math.inf
     bounds, opts = prob.solve(B, ub=ub, prune=prune)
     if method == "refine":
         if refine_s is None:
@@ -888,12 +1157,14 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             refine_s = 0.5 * float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 0.0
         bounds = prob.refine(bounds, opts, float(refine_s))
     objective, sse = prob.total(bounds, opts)
-    segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state)) for i, o in enumerate(opts)]
+    segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state), subtype=options[o].subtype)
+            for i, o in enumerate(opts)]
     n_valid = int(np.isfinite(y).sum())
     counts = prob.counts(bounds, opts)
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
-                               int(len(B)), prob.costs.n_fits, {"upper_bound": ub, "refine_s": refine_s})
+                               int(len(B)), prob.costs.n_fits,
+                               {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes}, subtypes)
 
 
-__all__ = ["optimal_segments", "OptimalSegmentation", "compare_segments", "count_by_period", "METHODS"]
+__all__ = ["optimal_segments", "OptimalSegmentation", "Subtype", "compare_segments", "count_by_period", "METHODS"]
