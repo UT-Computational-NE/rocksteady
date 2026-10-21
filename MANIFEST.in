@@ -1,5 +1,7 @@
 include CHANGELOG.md
-recursive-include tests *.py *.csv *.txt *.json
+# Every file under tests/ (CI's build job checks the sdist against `git ls-files tests`), none compiled.
+graft tests
 recursive-include examples *.py
 recursive-include tools *.py
 recursive-include docs *.py *.md *.rst *.txt
+global-exclude *.py[cod]

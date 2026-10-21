@@ -79,6 +79,9 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install build
       - run: python -m build
+      # Every file git tracks under tests/ is in the sdist, and nothing else (MANIFEST.in grafts tests/).
+      - name: The sdist ships the tests and their data
+        run: diff <(git ls-files tests | sort) <(tar -tzf dist/*.tar.gz | sed -n 's|^[^/]*/\(tests/.*[^/]\)$|\1|p' | sort)
       - run: |
           python -m venv /tmp/wheel-env
           /tmp/wheel-env/bin/pip install dist/*.whl pytest

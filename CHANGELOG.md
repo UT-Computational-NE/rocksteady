@@ -95,6 +95,14 @@
   distributions to install (`pip install mypy`) instead of
   `pip install -e ".[dev]"`, which, run from a worktree, would point the
   environment's editable install at the worktree (#93).
+- The sdist ships every file under `tests/` (`MANIFEST.in` grafts the
+  directory and excludes compiled files), so test data of a new file type
+  needs no listing; CI's `build` job checks the sdist's `tests/` against
+  `git ls-files tests` (#75).
+- A `FutureWarning` fails the test that raises it (`filterwarnings` in
+  `pyproject.toml`). `count_by_period` and `OptimalSegmentation.counts`
+  build their table as integers, so pandas 2.2 and 2.3 no longer warn
+  about downcasting on `fillna`; the tables are unchanged (#75).
 
 ## 0.5.0
 

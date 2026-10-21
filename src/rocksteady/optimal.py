@@ -202,8 +202,10 @@ def _count_table(spans: Sequence[Tuple[int, int, Sequence[str]]], columns: Seque
             for name in names:
                 row[name] = row.get(name, 0) + 1
     # Periods inside a segment hold no sample of their own only when a gap spans them; they still count.
-    out = pd.DataFrame.from_dict(rows, orient="index", columns=list(columns)).fillna(0).astype(int).sort_index()
-    out.index = _period_starts(out.index.to_numpy(), idx, per, period_origin)
+    # Built as integers: no missing cells to fill, so no object-dtype downcast (deprecated in pandas 2.2).
+    ids = np.array(sorted(rows), dtype=np.int64)
+    out = pd.DataFrame([[rows[p].get(c, 0) for c in columns] for p in ids], columns=list(columns), dtype=int)
+    out.index = _period_starts(ids, idx, per, period_origin)
     out.index.name = "period"
     return out
 
