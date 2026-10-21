@@ -44,7 +44,7 @@ Constraints
 
 When no segmentation satisfies the constraints, the ``ValueError`` names the
 earliest candidate time after which none can continue, the period containing
-it (its start, as ``count_by_period`` labels periods), and the caps and
+it (its start, as ``count_by_period`` indexes periods), and the caps and
 transitions in force. It does not search for the constraint to blame.
 
 Methods
@@ -181,7 +181,7 @@ def _count_table(spans: Sequence[Tuple[int, int, Sequence[str]]], columns: Seque
 
 
 def _period_starts(ids: np.ndarray, idx, per, period_origin):
-    """The start of each period number in ``ids``: ``count_by_period``'s labels (``"all"`` for no periods)."""
+    """The start of each period number in ``ids``, as ``count_by_period`` indexes periods (``"all"`` for none)."""
     import pandas as pd
 
     if per is None:
@@ -466,7 +466,7 @@ class _Counter:
 class _Problem:
     def __init__(self, ts, y, idx, models, options: Sequence[_Option], counters: Sequence[_Counter],
                  allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin,
-                 in_force: str = ""):
+                 in_force: str):
         self.ts, self.y, self.idx = ts, y, idx
         self.in_force = in_force  # the caller's caps and transitions, as the infeasibility error names them
         self.per, self.period_origin = per, period_origin
@@ -635,20 +635,22 @@ class _Problem:
             k, o, l = j, po, pl
         return bounds[::-1], opts[::-1]
 
-    def _infeasible(self, i: int) -> str:
+    def _infeasible(self, stuck: int) -> str:
         """
-        The error for a record no segmentation covers. Sample ``i`` starts the
-        segment that no segmentation can give: the earliest candidate after
-        which none continues. No search for the constraint to blame.
+        The error for a record no segmentation covers. ``stuck`` is the latest
+        candidate breakpoint any segmentation reaches, the earliest candidate
+        time after which none can continue. No search for the constraint to blame.
         """
-        at = self.idx[i] if self.idx is not None else f"{float(self.ts[i])} s"
+        unit = "" if self.idx is not None else " s"
+        at = self.idx[stuck] if self.idx is not None else float(self.ts[stuck])
         if self.per is None:
             where = "the whole record"
         else:
-            start = _period_starts(np.array([self.pid[i]]), self.idx, self.per, self.period_origin)[0]
-            where = f"the period starting {start}" + ("" if self.idx is not None else " s")
+            start = _period_starts(np.array([self.pid[stuck]]), self.idx, self.per, self.period_origin)[0]
+            where = f"the period starting {start}{unit}"
         return (f"no segmentation satisfies the constraints (counts, durations, transitions) on these candidate "
-                f"breakpoints: none continues past {at} (sample {i}), in {where}. In force: {self.in_force}")
+                f"breakpoints: none can continue from {at}{unit} (sample {stuck}), in {where}. "
+                f"In force: {self.in_force}")
 
     def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, same: np.ndarray, spans: np.ndarray):
         """Best value, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per count layer."""
@@ -847,14 +849,6 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     Returns
     -------
     OptimalSegmentation
-
-    Raises
-    ------
-    ValueError
-        For invalid arguments, and when no segmentation satisfies the
-        constraints: the message then names the earliest candidate time after
-        which none can continue, its period, and the caps and transitions in
-        force.
     """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")

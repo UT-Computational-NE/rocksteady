@@ -430,7 +430,7 @@ def test_an_infeasible_record_without_periods_is_named_whole():
     t = 100.0 + np.arange(10.0)
     msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="exact", max_counts={"steady": 1},
                               max_duration_s={"steady": 4.0}, penalty=0.0)
-    assert "past 104.0 s" in msg
+    assert "continue from 104.0 s" in msg
     assert "in the whole record" in msg and "period starting" not in msg
     assert "max_counts={'steady': 1}" in msg
 
@@ -440,7 +440,7 @@ def test_a_duration_no_candidate_meets_is_named_the_same_way():
     t = 3.0 + np.arange(10.0)
     msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="subset", candidates=[0, 5, 10], per=5.0,
                               min_duration_s={"steady": 6.0}, max_duration_s={"steady": 8.0})
-    assert re.search(r"none continues past 3\.0 s \(sample 0\), in the period starting 0\.0 s\. "
+    assert re.search(r"none can continue from 3\.0 s \(sample 0\), in the period starting 0\.0 s\. "
                      r"In force: max_counts=none in each period \(5\.0\), transitions=any\.$", msg), msg
 
 
@@ -451,4 +451,4 @@ def test_the_time_is_the_models_not_the_pruning_surrogates(prune):
     t = np.arange(20.0)
     msg = _infeasible_message(t, np.zeros(20), {"transient": "exp"}, method="exact", prune=prune,
                               max_counts={"transient": 1}, max_duration_s={"transient": 3.0})
-    assert "past 0.0 s (sample 0)" in msg
+    assert "continue from 0.0 s (sample 0)" in msg
