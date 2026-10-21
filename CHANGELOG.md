@@ -18,6 +18,13 @@
   `OptimalSegmentation.subtypes` holds the subtypes, `counts` has a column
   per subtype, and `summary()` lists counts by subtype. With no subtypes,
   results are unchanged.
+- Peak and rise-time conditions for subtypes (#64, part of #55):
+  `Subtype(..., peak=(lo, hi))` needs the segment's maximum in `[lo, hi)`
+  (either end open), and `max_rise_s` with `rise_fraction` (default 0.95)
+  needs the segment to reach `y0 + rise_fraction * (peak - y0)` within
+  `max_rise_s` of its first sample, `y0` being its first finite sample, so
+  rise time works for a non-zero baseline. A segment with no finite sample
+  meets neither, and a segment must meet all of its subtype's conditions.
 - The error for an infeasible `optimal_segments` also names the subtypes'
   conditions (#61).
 - `optimal_segments` names the argument and the valid states when `models`
