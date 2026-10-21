@@ -15,6 +15,7 @@ AVOIDED = {
     "sample period": "sample spacing (a period is the optimiser's counting span)",
     "last decided state": "last decided label (a sample has a label, a segment a state)",
     "segment's label": "segment's state (a sample has a label, a segment a state)",
+    "passing state": "passing label (a sample has a label, a segment a state)",
 }
 
 #: Prose the users read. GLOSSARY.md (which lists the avoided terms) and CHANGELOG.md (history) are not scanned.

@@ -6,7 +6,7 @@ changes come from an operator log (``EventLog``). Steady state means no
 resolvable drift (``DriftCriterion``, a slope equivalence test with an
 autocorrelation-robust slope uncertainty) on every channel and on derived
 signals (mean, spread). Evaluation waits a settling time after each event,
-and a passing state must hold for a while before it is accepted.
+and a passing label must hold for a while before it is accepted.
 
 Afterwards the approach to the new setpoint is fitted with a first-order
 model, and its time constant is compared with the one simulated (600 s).
