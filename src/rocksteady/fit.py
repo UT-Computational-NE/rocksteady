@@ -635,7 +635,7 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     span, dt, lo, hi = _time_scales(s_ok, T_min, T_max)
     lo = max(lo, span / 300.0) if T_min is None else lo
 
-    s_end = float(s_ok.max())
+    s_end = float(np.max(s_ok))
 
     def ref(T):
         """Reference time for the basis exp((s - ref)/T), chosen so that it never exceeds 1."""

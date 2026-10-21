@@ -115,7 +115,7 @@ a longer segment never costs less, whichever subtype could take it.
 import math
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -291,8 +291,8 @@ class _Costs:
         self.fast: Dict[str, Optional[int]] = {}
         for st in self.states:
             name, opts = _fit.resolve_model(models[st])
-            order = opts.get("order", 0) if name == "poly" else None
-            self.fast[st] = int(order) if name == "poly" and int(order) <= 1 else None
+            order = int(opts.get("order", 0)) if name == "poly" else None
+            self.fast[st] = order if order is not None and order <= 1 else None
         self.cache: Dict[Tuple[str, int, int], float] = {}
         self.reduced: Dict[Tuple[str, int, int], bool] = {}
         self.n_fits = 0
@@ -352,8 +352,9 @@ class _Costs:
         sse = np.maximum(sse, 0.0)
         # Not resolved above the rounding: fit those segments directly.
         bad = np.flatnonzero(~(sse > 16.0 * err) & (n > 0))
+        order = cast(int, self.fast[st])  # vector() takes fast models only
         for i in bad:
-            sse[i] = self._direct(self.fast[st], int(ps[i]), int(q))
+            sse[i] = self._direct(order, int(ps[i]), int(q))
         return sse
 
     def cost(self, st: str, p: int, q: int) -> float:
@@ -962,7 +963,7 @@ class _Problem:
                     continue
                 okds = [(dur >= self.min_d[o] - 1e-9) & (dur <= self.max_d[o] + 1e-9) & reachable[:k]
                         for o in members]
-                okd_any = okds[0] if len(okds) == 1 else np.logical_or.reduce(okds)
+                okd_any = okds[0] if len(okds) == 1 else np.any(okds, axis=0)
                 if not okd_any.any():
                     continue
                 C_st = self._state_costs(st, okd_any, starts, q, dur, surrogate, ub, prune)
@@ -980,7 +981,7 @@ class _Problem:
                         k, o, C, F, R, same, spans)
             reachable[k] = np.isfinite(F[k]).any()
         if not np.isfinite(F[m - 1]).any():
-            return None, int(np.flatnonzero(reachable).max())
+            return None, int(np.max(np.flatnonzero(reachable)))
         return (F, R, bp_j, bp_o, bp_l), m - 1
 
     def _backtrack(self, B: np.ndarray, F: np.ndarray, R: np.ndarray, bp_j: np.ndarray, bp_o: np.ndarray,
@@ -1015,11 +1016,11 @@ class _Problem:
         caps = {st: int(v) for st, v in (self.given_caps or {}).items()} or "none"
         if self.per is not None and self.given_caps:
             caps = f"{caps} per period ({self.per})"
-        trans = self.given_transitions
-        trans = "any" if trans is None else {a: sorted(set(b)) for a, b in trans.items()}
+        given = self.given_transitions
+        trans = "any" if given is None else {a: sorted(set(b)) for a, b in given.items()}
         return (f"no segmentation satisfies the constraints (counts, durations, transitions) and the subtypes' "
-                f"conditions on these candidate breakpoints: none can continue from {at}{unit} (sample {stuck}), in {where}. "
-                f"In force: max_counts={caps}, transitions={trans}.")
+                f"conditions on these candidate breakpoints: none can continue from {at}{unit} (sample {stuck}), "
+                f"in {where}. In force: max_counts={caps}, transitions={trans}.")
 
     def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, R: np.ndarray, same: np.ndarray,
                         spans: np.ndarray):
@@ -1098,7 +1099,7 @@ class _Problem:
                     for x in range(lo_x, hi_x + 1, stride):
                         if x not in seen:
                             seen[x] = score(x)
-                    best_x = min(seen, key=seen.get)
+                    best_x = min(seen, key=seen.__getitem__)
                     if stride == 1:
                         break
                     lo_x, hi_x = max(first, best_x - stride), min(last, best_x + stride)
@@ -1169,8 +1170,7 @@ def _candidates(candidates, n: int) -> np.ndarray:
         pts = [s.start for s in check_segments(items, n)] + [s.stop for s in items]
     else:
         pts = [int(x) for x in items]
-    pts = np.unique(np.clip(np.asarray(pts + [0, n], dtype=np.int64), 0, n))
-    return pts
+    return np.unique(np.clip(np.asarray(pts + [0, n], dtype=np.int64), 0, n))
 
 
 def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: Optional[Mapping[str, int]] = None,

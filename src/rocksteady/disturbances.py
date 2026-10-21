@@ -11,7 +11,7 @@ Disturbance detectors: external action that resets the detector's clocks.
 """
 
 from collections import deque
-from typing import Iterable, Mapping, Sequence, Tuple
+from typing import Deque, Iterable, Mapping, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -35,7 +35,7 @@ class StepChange(Disturbance):
         Averaging length in samples.
     """
 
-    def __init__(self, signal: str, threshold: float, m: int = 10, name: str = None):
+    def __init__(self, signal: str, threshold: float, m: int = 10, name: Optional[str] = None):
         what = f"StepChange {name or signal!r}"
         threshold = _v.finite(threshold, f"{what}: threshold", positive=True)
         m = _v.positive_int(m, f"{what}: m")
@@ -44,7 +44,7 @@ class StepChange(Disturbance):
         self.reset()
 
     def reset(self) -> None:
-        self._hist = deque(maxlen=2 * self.m)
+        self._hist: Deque[float] = deque(maxlen=2 * self.m)
 
     def update(self, t: float, sample: Mapping[str, float], values: Mapping[str, float]) -> bool:
         self._hist.append(values[self.signal])
@@ -86,11 +86,11 @@ class EventLog(Disturbance):
 
     def reset(self) -> None:
         self._i = 0  # first event that may still be active
-        self._last_t = None
+        self._last_t: Optional[float] = None
 
     def update(self, t: float, sample: Mapping[str, float], values: Mapping[str, float]) -> bool:
         first = self._last_t is None
-        lo = t if first else self._last_t  # samples cover [t, t] at first, then (t_prev, t]
+        lo = t if first else cast(float, self._last_t)  # samples cover [t, t] at first, then (t_prev, t]
         self._last_t = t
 
         def ended(end: float) -> bool:

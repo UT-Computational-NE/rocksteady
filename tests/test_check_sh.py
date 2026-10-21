@@ -1,4 +1,5 @@
-"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87)."""
+"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87);
+the full run typechecks (#93)."""
 
 import os
 import subprocess
@@ -28,8 +29,14 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     run = _check(bare)
     assert run.returncode == 1
     assert str(bare) in run.stderr and sys.executable in run.stderr  # as given, and the binary it runs
-    assert "pytest" in run.stderr and "sphinx" in run.stderr
-    assert f'{sys.executable} -m pip install -e ".[dev]"' in run.stderr  # that interpreter's own pip
+    assert "pytest" in run.stderr and "sphinx" in run.stderr and "mypy" in run.stderr  # the full run typechecks
+    # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
+    # the environment's editable install at the worktree.
+    # With the minimum versions the extras in pyproject.toml ask for.
+    want = "'pytest' 'mypy>=1.10' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
+    assert f"{sys.executable} -m pip install {want}" in run.stderr
+    # A fresh environment also needs the package's own dependencies: the editable install, from the main checkout.
+    assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
     assert "passed" not in run.stdout  # stopped before the tests ran
 
 
@@ -39,7 +46,7 @@ def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     assert "check.sh:" in run.stderr and str(tmp_path / "no-such-python") in run.stderr
 
 
-def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
+def test_arguments_select_the_tests_and_skip_mypy_and_the_docs_build(tmp_path):
     # As in CI's test jobs, which install only the test extra: the docs modules cannot be found.
     (tmp_path / "sitecustomize.py").write_text(
         "import sys\nfor m in ('sphinx', 'sphinx_rtd_theme', 'myst_parser'):\n    sys.modules[m] = None\n")
@@ -47,7 +54,7 @@ def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
                  pythonpath=tmp_path)
     assert run.returncode == 0, run.stderr
     assert "1 passed" in run.stdout
-    assert "check.sh: the selected tests passed; no docs build" in run.stdout
+    assert "check.sh: the selected tests passed; no mypy or docs build" in run.stdout
 
 
 def test_a_selection_leaves_out_the_slow_tests_unless_it_asks_for_them():

@@ -27,7 +27,8 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest"]
 docs = ["sphinx>=7", "sphinx-rtd-theme>=2", "myst-parser>=2"]
-dev = ["rocksteady[docs,test]", "build"]
+typecheck = ["mypy>=1.10"]
+dev = ["rocksteady[docs,test,typecheck]", "build"]
 
 [project.urls]
 Homepage = "https://github.com/UT-Computational-NE/rocksteady"
@@ -48,3 +49,27 @@ testpaths = ["tests"]
 markers = ["slow: Monte Carlo calibration checks (deselect with -m 'not slow')"]
 # Unit tests use short windows on purpose; tests of the warning itself use pytest.warns, which still sees it.
 filterwarnings = ["ignore::rocksteady.core.CalibrationWarning"]
+
+# tools/check.sh and CI's typecheck job run `mypy` (no arguments: `files` below).
+[tool.mypy]
+files = ["src/rocksteady"]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = ["pandas", "pandas.*"]
+ignore_missing_imports = true  # no bundled type information; pandas-stubs is not a dependency
+
+# For editors that lint with pylint: the line length the code uses, and no notices for the docstring, size and
+# naming conventions it does not follow.
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring", "missing-class-docstring", "missing-function-docstring",
+    "too-many-arguments", "too-many-positional-arguments", "too-many-locals", "too-many-branches",
+    "too-many-statements", "too-many-instance-attributes", "too-many-return-statements", "too-many-lines",
+    "too-few-public-methods",
+    "invalid-name",  # math names (T, R, F, B, n_eff) follow the papers and the docs
+    "import-outside-toplevel",  # pandas is imported where it is used, so the streaming detector does not need it
+]
