@@ -3,6 +3,7 @@
 import dataclasses
 import itertools
 import math
+import pickle
 import re
 
 import numpy as np
@@ -53,7 +54,7 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
         return sse[(st, p, q)]
 
     def meets(sub, p, q):
-        return sub is None or _meets_conditions(sub, t[p:q], y[p:q], {k: m[p:q] for k, m in (events or {}).items()})
+        return sub is None or _meets_conditions(sub, t[p:q], y[p:q], _within(events, slice(p, q)))
 
     best = [math.inf, None]
 
@@ -785,12 +786,17 @@ def _exact_level_ok(y, level):
     return (level[0] is None or m >= Fraction(level[0])) and (level[1] is None or m < Fraction(level[1]))
 
 
+def _within(events, sl):
+    """Each event mask's part within the samples ``sl``."""
+    return {k: m[sl] for k, m in (events or {}).items()}
+
+
 def _meets_conditions(sub, t, y, events=None):
     """
     A segment's samples ``y`` at times ``t``, and its part of each event mask (``events``), against every
     condition of ``sub``, sample by sample.
     """
-    for name, want in (sub.events or {}).items():
+    for name, want in sub.events or ():
         if any(bool(f) for f in events[name]) != want:
             return False
     finite = [i for i in range(len(y)) if np.isfinite(y[i])]
@@ -978,7 +984,7 @@ def test_refine_keeps_every_segment_within_its_peak_and_rise():
 
 
 @pytest.mark.parametrize("flag, driven", [(4, 1), (7, 1), (3, 0), (8, 2)])
-def test_a_segment_contains_a_flagged_sample_on_its_first_or_last_sample(flag, driven):
+def test_a_segment_contains_a_flagged_sample_from_its_first_to_its_last_sample_only(flag, driven):
     """Segments [0, 4), [4, 8), [8, 12): a flag at 4 or 7 lies in the middle one, at 3 or 8 just outside it."""
     t = np.arange(12.0)
     heater = np.zeros(12, dtype=bool)
@@ -997,9 +1003,10 @@ def test_exact_matches_brute_force_with_events_on_two_masks(seed, periods):
     n = 7
     t = np.arange(n, dtype=float)
     y = np.where(t < rng.integers(2, 5), 0.0, 3.0) + rng.normal(0, 0.3, n)
-    if seed == 5:
-        y[2] = np.nan  # an event condition reads the mask, whatever the signal there
     events = {"heater": rng.random(n) < 0.25, "valve": rng.random(n) < 0.35}
+    if seed == 5:  # a flag on a non-finite sample: an event condition reads the mask, whatever the signal there
+        y[2] = np.nan
+        events["heater"][2] = True
     a = float(rng.uniform(0.5, 2.5))
     subtypes = {"heat_up": rs.Subtype("transient", events={"heater": True}),
                 "quiet": rs.Subtype("transient", events={"heater": False, "valve": False}),
@@ -1013,7 +1020,7 @@ def test_exact_matches_brute_force_with_events_on_two_masks(seed, periods):
                            events=events, **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
     for s in got.segments:
-        assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], {k: m[s.slice] for k, m in events.items()})
+        assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], _within(events, s.slice))
     for name, cap in caps.items():
         assert (got.counts[name] <= cap).all()
 
@@ -1064,20 +1071,18 @@ def test_refine_never_pushes_an_event_across_a_boundary(where):
         assert [s.subtype for s in ref.segments] == [s.subtype for s in sub.segments]
         for s in ref.segments:
             if s.subtype is not None:
-                assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], {"switch": switch[s.slice]})
+                assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], _within(events, s.slice))
         free = optimal_segments(t, y, models, method="refine", refine_s=refine_s, **kw)
         assert not switch[free.segments[driven[0]].slice].any()
 
 
 def test_event_validation():
     heat_up = rs.Subtype("transient", events={"heater": np.True_})
-    assert dict(heat_up.events) == {"heater": True} and rs.Subtype("transient", events={}).events is None
+    assert heat_up.events == (("heater", True),) and rs.Subtype("transient", events={}).events is None
     assert heat_up == rs.Subtype("transient", events={"heater": True})
-    assert hash(heat_up) == hash(rs.Subtype("transient", events={"heater": True}))  # an immutable value
     both = [rs.Subtype("transient", events=dict(e)) for e in ([("a", True), ("b", False)], [("b", False), ("a", True)])]
-    assert both[0] == both[1] and hash(both[0]) == hash(both[1])
-    with pytest.raises(TypeError):
-        heat_up.events["heater"] = False
+    assert both[0] == both[1] and hash(both[0]) == hash(both[1]) and dict(both[0].events) == {"a": True, "b": False}
+    assert pickle.loads(pickle.dumps(heat_up)) == heat_up  # plain data, for batch runs across processes
     with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\}"):
         rs.Subtype("transient", events=["heater"])
     for name in ("", 3):

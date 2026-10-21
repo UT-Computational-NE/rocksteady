@@ -117,7 +117,6 @@ a longer segment never costs less, whichever subtype could take it.
 
 import math
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from numbers import Real
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
@@ -417,8 +416,9 @@ class OptimalSegmentation:
     ``segments`` cover the record in order, like ``states.segments``, so
     ``report.fit_report`` and ``metrics.stats_by_state`` take them as they are.
     ``objective = sse + sum of penalties``; ``rms = sqrt(sse / n_valid)``.
-    ``counts`` has a column per state and per declared subtype, and
-    ``subtypes`` (also ``info["subtypes"]``) holds the subtypes used.
+    ``counts`` has a column per state and per declared subtype,
+    ``subtypes`` (also ``info["subtypes"]``) holds the subtypes used, and
+    ``info["events"]`` the event masks.
     """
 
     segments: List[Segment]
@@ -517,7 +517,9 @@ class Subtype:
       ``optimal_segments``), that is, a flagged sample in ``[start, stop)``.
       There is no tolerance: to accept an event just before a segment's
       start, widen the mask. This condition reads the mask alone, whether
-      or not the signal is finite there.
+      or not the signal is finite there. It is held as ``(mask name, bool)``
+      pairs sorted by name, so that a subtype stays hashable plain data;
+      ``dict(sub.events)`` gives the mapping back.
 
     A segment must meet all of its subtype's conditions. A segment with no
     finite sample meets no level, peak or rise condition. A subtype with no
@@ -530,7 +532,7 @@ class Subtype:
     peak: Optional[Tuple[Optional[float], Optional[float]]] = None
     max_rise_s: Optional[float] = None
     rise_fraction: Optional[float] = None
-    events: Optional[Mapping[str, bool]] = None
+    events: Optional[Any] = None  # given as {mask name: bool}; held as sorted (name, bool) pairs
 
     def __post_init__(self):
         if self.state not in _STATE_NAMES:
@@ -552,13 +554,9 @@ class Subtype:
             raise ValueError(f"Subtype rise_fraction must be in (0, 1], got {self.rise_fraction!r}")
         object.__setattr__(self, "rise_fraction", float(f))
 
-    def __hash__(self):  # ``events`` is a read-only mapping, which does not hash
-        return hash((self.state, self.level, self.peak, self.max_rise_s, self.rise_fraction,
-                     None if self.events is None else frozenset(self.events.items())))
 
-
-def _event_conditions(events) -> Optional[Mapping[str, bool]]:
-    """``Subtype.events`` as a read-only mapping ``{mask name: bool}``, or None when it names no mask."""
+def _event_conditions(events) -> Optional[Tuple[Tuple[str, bool], ...]]:
+    """``Subtype.events`` as ``(mask name, bool)`` pairs sorted by name, or None when it names no mask."""
     if not isinstance(events, Mapping):
         raise ValueError(f"Subtype events must be a mapping {{mask name: True or False}}, got {events!r}")
     out = {}
@@ -567,7 +565,7 @@ def _event_conditions(events) -> Optional[Mapping[str, bool]]:
         if not isinstance(want, (bool, np.bool_)):
             raise ValueError(f"Subtype events[{name!r}] must be True or False, got {want!r}")
         out[name] = bool(want)
-    return MappingProxyType(out) if out else None
+    return tuple(sorted(out.items())) if out else None
 
 
 def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str, np.ndarray]:
@@ -582,7 +580,7 @@ def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str,
     masks = {}
     for name, mask in (events or {}).items():
         _v.name(name, "an event mask's name")
-        m = np.asarray(mask)
+        m = np.array(mask)  # a copy: the result keeps the masks it used
         if m.shape != (n,):
             raise ValueError(f"events[{name!r}] must be a one-dimensional mask with one value per sample of t ({n}), "
                              f"got shape {m.shape}")
@@ -590,7 +588,7 @@ def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str,
             raise ValueError(f"events[{name!r}] must be boolean, got values of type {m.dtype}")
         masks[name] = m
     for name, sub in subtypes.items():
-        for mask in sub.events or {}:
+        for mask, _ in sub.events or ():
             if mask not in masks:
                 raise ValueError(f"subtype {name!r} needs event mask {mask!r}, which events does not include")
     return masks
@@ -787,7 +785,7 @@ class _Conditions:
             tests.append(self.peak(*sub.peak))
         if sub.max_rise_s is not None and sub.rise_fraction is not None:  # a Subtype sets both or neither
             tests.append(self.rise(sub.max_rise_s, sub.rise_fraction))
-        tests += [self.event(name, want) for name, want in (sub.events or {}).items()]
+        tests += [self.event(name, want) for name, want in sub.events or ()]
         if not tests:
             return _accept_all
         if len(tests) == 1:
