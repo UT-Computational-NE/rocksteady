@@ -30,8 +30,9 @@
 - `tests/test_vocabulary.py` fails on phrases `GLOSSARY.md` avoids that are
   always wrong (#73).
 - Each avoided phrase in `tests/test_vocabulary.py` carries a near-miss,
-  correct text the scan must not flag. `tools/check.sh` prints the Python it
-  runs, and stops early when that Python lacks the dev extra (#84).
+  correct text the scan must not flag (#84).
+- `tools/check.sh` prints the Python it runs, and stops early, naming the
+  fix, when that Python is missing or lacks the dev extra (#84).
 
 ## 0.5.0
 
