@@ -40,10 +40,10 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     pid = np.zeros(n, dtype=int) if per is None else np.floor(t / per).astype(int)
     cuts = set(range(1, n + 1)) if positions is None else {p for p in positions if 0 < p <= n} | {n}
     subtypes = subtypes or {}
-    choices = []  # (name, state, level): name is the subtype, or the state when it has none
+    choices = []  # (name, state, subtype): name is the subtype, or the state when it has none
     for st in models:
         mine = [(k, s) for k, s in subtypes.items() if s.state.value == st]
-        choices += [(k, st, s.level) for k, s in mine] or [(st, st, None)]
+        choices += [(k, st, s) for k, s in mine] or [(st, st, None)]
     caps = dict(max_counts or {})
     sse = {}
 
@@ -52,10 +52,8 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
             sse[(st, p, q)] = _sse(models[st], t[p:q], y[p:q], st)
         return sse[(st, p, q)]
 
-    def meets(level, p, q):
-        if level is None:
-            return True
-        return _exact_level_ok(y[p:q], level)
+    def meets(sub, p, q):
+        return sub is None or _meets_conditions(sub, t[p:q], y[p:q])
 
     best = [math.inf, None]
 
@@ -65,12 +63,12 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
                 best[:] = [acc, path]
             return
         for q in sorted(c for c in cuts if c > p):
-            for name, st, level in choices:
+            for name, st, sub in choices:
                 if min_d and t[q - 1] - t[p] + dt < min_d.get(st, 0) - 1e-9:
                     continue
                 if transitions is not None and prev is not None and st not in transitions[prev]:
                     continue
-                if not meets(level, p, q):
+                if not meets(sub, p, q):
                     continue
                 new = dict(counts)
                 for key in {st, name}:
@@ -569,6 +567,19 @@ def _subtype_scheme(scheme, rng):
         return {"hot": rs.Subtype("steady", level=(a - 0.6, None)), "cold": rs.Subtype("steady", level=(None, a))}
     if scheme == "catch-all":
         return {"hot": rs.Subtype("steady", level=(a, None)), "other": rs.Subtype("steady")}
+    if scheme == "peak":
+        return {"high": rs.Subtype("transient", peak=(a + 0.5, None)), "low": rs.Subtype("transient", peak=(None, a)),
+                "other": rs.Subtype("transient"), "hot": rs.Subtype("steady", peak=(a, None)),
+                "cold": rs.Subtype("steady")}
+    if scheme == "rise":
+        return {"fast": rs.Subtype("transient", max_rise_s=float(rng.integers(0, 3)),
+                                   rise_fraction=float(rng.choice([0.5, 0.95, 1.0]))),
+                "other": rs.Subtype("transient"), "hot": rs.Subtype("steady", level=(a, None)),
+                "cold": rs.Subtype("steady")}
+    if scheme == "pulse":  # all three conditions at once
+        return {"pulse": rs.Subtype("transient", level=(None, a + 1.0), peak=(a, None), max_rise_s=1.0),
+                "other": rs.Subtype("transient"), "hot": rs.Subtype("steady", level=(a, None)),
+                "cold": rs.Subtype("steady")}
     if scheme == "gap":
         return {"cold": rs.Subtype("steady", level=(None, a - 0.4)), "hot": rs.Subtype("steady", level=(a + 0.4, None))}
     return {"low": rs.Subtype("transient", level=(None, a)), "any": rs.Subtype("transient"),
@@ -581,9 +592,9 @@ def _independent_objective(t, y, models, result, penalty):
 
 
 @pytest.mark.parametrize("seed", range(3))
-@pytest.mark.parametrize("scheme", ["split", "overlap", "catch-all", "gap", "transient"])
+@pytest.mark.parametrize("scheme", ["split", "overlap", "catch-all", "gap", "transient", "peak", "rise", "pulse"])
 @pytest.mark.parametrize("periods", [False, True])
-def test_exact_matches_brute_force_with_level_subtypes(seed, scheme, periods):
+def test_exact_matches_brute_force_with_subtypes(seed, scheme, periods):
     rng = np.random.default_rng(100 + seed)
     n = 7
     t = np.arange(n, dtype=float)
@@ -593,7 +604,7 @@ def test_exact_matches_brute_force_with_level_subtypes(seed, scheme, periods):
     models = {"steady": 0, "transient": 1}
     subtypes = _subtype_scheme(scheme, rng)
     caps = {"steady": 2, "hot": 1}  # a cap on a state and on one of its subtypes
-    if scheme == "transient":
+    if scheme in ("transient", "peak"):
         caps["low"] = 1
     kw = dict(per=3.0, max_counts=caps) if periods else dict(max_counts=caps)
     want_cost, (_, want_names) = _brute(t, y, models, penalty=0.5, subtypes=subtypes, **kw)
@@ -604,10 +615,7 @@ def test_exact_matches_brute_force_with_level_subtypes(seed, scheme, periods):
     for s in got.segments:
         assert s.subtype in [k for k, v in subtypes.items() if v.state == s.state] or (
             s.subtype is None and not any(v.state == s.state for v in subtypes.values()))
-        level = subtypes[s.subtype].level if s.subtype else None
-        if level is not None:
-            m = np.nanmean(y[s.slice])
-            assert (level[0] is None or m >= level[0]) and (level[1] is None or m < level[1])
+        assert s.subtype is None or _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice])
     for name, cap in caps.items():
         assert (got.counts[name] <= cap).all()
 
@@ -777,6 +785,29 @@ def _exact_level_ok(y, level):
     return (level[0] is None or m >= Fraction(level[0])) and (level[1] is None or m < Fraction(level[1]))
 
 
+def _meets_conditions(sub, t, y):
+    """A segment's samples ``y`` at times ``t`` against every condition of ``sub``, sample by sample."""
+    finite = [i for i in range(len(y)) if np.isfinite(y[i])]
+    if sub.level is not None and not _exact_level_ok(y, sub.level):
+        return False
+    if sub.peak is None and sub.max_rise_s is None:
+        return True
+    if not finite:
+        return False
+    top = max(y[i] for i in finite)
+    if sub.peak is not None:
+        lo, hi = sub.peak
+        if not ((lo is None or top >= lo) and (hi is None or top < hi)):
+            return False
+    if sub.max_rise_s is not None:
+        y0 = y[finite[0]]
+        thr = min(y0 + sub.rise_fraction * (top - y0), top)
+        first = next(i for i in finite if y[i] >= thr)
+        if t[first] - t[0] > sub.max_rise_s:
+            return False
+    return True
+
+
 @pytest.mark.parametrize("seed", range(40))
 def test_every_segment_takes_the_first_declared_subtype_the_caps_allow(seed):
     """
@@ -801,3 +832,137 @@ def test_every_segment_takes_the_first_declared_subtype_the_caps_allow(seed):
                 continue
             swapped = used[:i] + [earlier] + used[i + 1:]
             assert caps is not None and any(swapped.count(k) > c for k, c in caps.items()), (i, s, earlier)
+
+
+# -- peak and rise-time conditions (#64) ------------------------------------------------
+
+
+def _subtype_of(t, y, subtypes, models=None):
+    """The subtype the whole record takes as one segment."""
+    r = optimal_segments(t, np.asarray(y, dtype=float), models or {"transient": 1}, method="subset",
+                         candidates=[0, len(y)], penalty=0, subtypes=subtypes)
+    return r.segments[0].subtype
+
+
+@pytest.mark.parametrize("top, reached", [(5.0, True), (np.nextafter(5.0, 0.0), False), (np.nextafter(9.0, 0), True),
+                                          (9.0, False)])
+def test_a_peak_must_lie_in_its_range(top, reached):
+    """The maximum of the segment's samples in [lo, hi): exactly at lo reaches it, just below does not; hi is open."""
+    t = np.arange(6.0)
+    y = [1.0, 2.0, top, 3.0, np.nan, 2.0]
+    subtypes = {"startup": rs.Subtype("transient", peak=(5.0, 9.0)), "other": rs.Subtype("transient")}
+    assert _subtype_of(t, y, subtypes) == ("startup" if reached else "other")
+
+
+@pytest.mark.parametrize("max_rise_s, fast", [(3.0, True), (np.nextafter(3.0, 0.0), False), (3.5, True), (2.5, False)])
+def test_a_rise_must_take_at_most_max_rise_s(max_rise_s, fast):
+    """0 to a peak of 10: the first sample at or above 9.5 (0.95 of the way) is 3 s after the segment's first."""
+    t = np.arange(6.0)
+    y = [0.0, 2.0, 9.0, 9.5, 10.0, 8.0]
+    subtypes = {"pulse": rs.Subtype("transient", max_rise_s=max_rise_s), "other": rs.Subtype("transient")}
+    assert _subtype_of(t, y, subtypes) == ("pulse" if fast else "other")
+
+
+@pytest.mark.parametrize("max_rise_s, fast", [(6.0, True), (5.5, False)])
+def test_rise_time_is_measured_from_the_segments_start_and_starting_value(max_rise_s, fast):
+    """
+    A rise from 20 to 25 starting at t = 10: 0.95 of the way is 24.75, first reached at t = 16, so 6 s. Measured
+    from zero the threshold would be 23.75 (t = 15, 5 s); measured from the record's start, 16 s.
+    """
+    t = np.arange(18.0)
+    y = np.array([20.0] * 10 + [20.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 25.0])
+    subtypes = {"pulse": rs.Subtype("transient", max_rise_s=max_rise_s), "other": rs.Subtype("transient")}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="subset", candidates=[0, 10, 18], penalty=0,
+                         transitions={"steady": ["transient"], "transient": []}, subtypes=subtypes)
+    want = [(0, ST, None), (10, TR, "pulse" if fast else "other")]
+    assert [(s.start, s.state, s.subtype) for s in r.segments] == want
+
+
+def test_peak_and_rise_validation():
+    assert rs.Subtype("transient", max_rise_s=10).rise_fraction == 0.95
+    assert rs.Subtype("transient", max_rise_s=0.0, rise_fraction=1).rise_fraction == 1.0
+    assert rs.Subtype("transient", peak=np.array([1.0, None])).peak == (1.0, None)
+    for peak in [(5.0, 1.0), (1.0, 1.0)]:
+        with pytest.raises(ValueError, match=r"peak lo \(\S+\) must be < Subtype peak hi"):
+            rs.Subtype("transient", peak=peak)
+    with pytest.raises(ValueError, match="peak must be a pair"):
+        rs.Subtype("transient", peak=40.0)
+    for bad in (-1.0, float("nan"), float("inf"), "10", True):
+        with pytest.raises(ValueError, match="Subtype max_rise_s must be"):
+            rs.Subtype("transient", max_rise_s=bad)
+    for bad in (0.0, -0.5, 1.5, float("nan"), "0.9"):
+        with pytest.raises(ValueError, match=r"Subtype rise_fraction must be in \(0, 1\]"):
+            rs.Subtype("transient", max_rise_s=10.0, rise_fraction=bad)
+    with pytest.raises(ValueError, match="rise_fraction needs max_rise_s"):
+        rs.Subtype("transient", rise_fraction=0.9)
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_on_long_records_every_segment_takes_the_first_subtype_whose_peak_and_rise_it_meets(seed):
+    """Segments of every length, within one block of samples and across many, with gaps in the data."""
+    rng = np.random.default_rng(700 + seed)
+    n = int(rng.integers(300, 1500))
+    t = np.cumsum(rng.uniform(0.5, 1.5, n))
+    y = np.cumsum(rng.normal(0, 1.0, n))
+    y[rng.random(n) < 0.05] = np.nan
+    if seed == 0:
+        y[100:240] = np.nan  # a long gap: segments in it have no finite sample
+    lo = float(np.nanquantile(y, 0.6))
+    subtypes = {"pulse": rs.Subtype("transient", peak=(lo, None), max_rise_s=float(rng.uniform(5, 80)),
+                                    rise_fraction=float(rng.uniform(0.3, 1.0))),
+                "high": rs.Subtype("transient", peak=(lo, None)),
+                "fast": rs.Subtype("transient", max_rise_s=float(rng.uniform(5, 200))),
+                "other": rs.Subtype("transient")}
+    cands = np.unique(np.concatenate(([0, 120, 200, n], rng.integers(1, n, int(rng.integers(5, 40))))))
+    penalty = float(rng.choice([0.0, 300.0, 3000.0, 30000.0]))
+    r = optimal_segments(t, y, {"transient": 0}, method="subset", candidates=cands, penalty=penalty, subtypes=subtypes)
+    for s in r.segments:
+        want = next(k for k, v in subtypes.items() if _meets_conditions(v, t[s.slice], y[s.slice]))
+        assert s.subtype == want, (s, want)
+
+
+@pytest.mark.parametrize("n", [700, 1000])
+def test_a_peak_is_found_wherever_it_lies_in_a_long_segment(n):
+    t = np.arange(float(n))
+    base = 0.5 * np.sin(t / 17.0)
+    subtypes = {"spiked": rs.Subtype("transient", peak=(2.0, None)), "other": rs.Subtype("transient")}
+    for j in range(0, n, 7):
+        y = base.copy()
+        y[j] = 2.0
+        assert _subtype_of(t, y, subtypes) == "spiked", j
+    assert _subtype_of(t, base, subtypes) == "other"
+
+
+def test_a_segment_with_no_finite_sample_meets_no_peak_or_rise_condition():
+    t = np.arange(9.0)
+    y = np.array([0.0, 1.0, 2.0, np.nan, np.inf, np.nan, 2.0, 1.0, 0.0])
+    subtypes = {"below": rs.Subtype("transient", peak=(None, 100.0)), "fast": rs.Subtype("transient", max_rise_s=100.0),
+                "other": rs.Subtype("transient")}
+    r = optimal_segments(t, y, {"transient": 0}, method="subset", candidates=[0, 3, 6, 9], penalty=0,
+                         max_duration_s={"transient": 3.0}, subtypes=subtypes)
+    assert [s.subtype for s in r.segments] == ["below", "other", "below"]
+
+
+def test_refine_keeps_every_segment_within_its_peak_and_rise():
+    """Without the subtypes, refine would move the falling transient's start past the samples above 90."""
+    t, y, (up, down) = _startup_record()
+    models = {"steady": 0, "transient": 1}
+    subtypes = {"zero": rs.Subtype("steady", level=(None, 5.0)), "power": rs.Subtype("steady", level=(5.0, None)),
+                "high": rs.Subtype("transient", peak=(90.0, None), max_rise_s=60.0), "other": rs.Subtype("transient")}
+    cands = [0, up + 37, up + 300, down - 41, down + 150, len(y)]
+    kw = dict(candidates=cands, penalty=10.0)
+    caps = {"steady": 3, "transient": 2}
+    sub = optimal_segments(t, y, models, method="subset", max_counts=caps, subtypes=subtypes, **kw)
+    assert [s.subtype for s in sub.segments] == ["zero", "other", "power", "high", "zero"]
+    moved_out = False
+    for refine_s in (30.0, 120.0, 400.0):
+        ref = optimal_segments(t, y, models, method="refine", refine_s=refine_s, max_counts=caps, subtypes=subtypes,
+                               **kw)
+        assert ref.objective <= sub.objective
+        assert [s.subtype for s in ref.segments] == [s.subtype for s in sub.segments]
+        for s in ref.segments:
+            assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice])
+        free = optimal_segments(t, y, models, method="refine", refine_s=refine_s, max_counts=caps, **kw)
+        moved_out |= not all(_meets_conditions(subtypes[a.subtype], t[b.slice], y[b.slice])
+                             for a, b in zip(sub.segments, free.segments))
+    assert moved_out

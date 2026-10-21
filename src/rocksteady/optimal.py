@@ -52,13 +52,13 @@ to blame.
 Subtypes
 --------
 ``subtypes={name: Subtype}`` refines states into caller-named subtypes, such
-as cold and hot steady segments, each with conditions on the segment alone
-(``Subtype.level``). Once a state has subtypes, every segment of it takes one
-of them (ADR 0001), so no cap can be dodged by leaving a segment untyped; a
-subtype with no conditions is a catch-all. States without subtypes are
-unchanged, and their segments have ``subtype=None``. A subtype is fitted
-with its state's model, and takes its state's penalty, durations and
-transitions.
+as cold and hot steady segments, each with conditions on the segment alone:
+its level, its peak and its rise time (``Subtype``). Once a state has
+subtypes, every segment of it takes one of them (ADR 0001), so no cap can be
+dodged by leaving a segment untyped; a subtype with no conditions is a
+catch-all. States without subtypes are unchanged, and their segments have
+``subtype=None``. A subtype is fitted with its state's model, and takes its
+state's penalty, durations and transitions.
 
 Subtypes of one state may overlap. The optimiser chooses by cost; since a
 state's subtypes cost the same, a segment two of them accept is an exact
@@ -114,6 +114,7 @@ a longer segment never costs less, whichever subtype could take it.
 
 import math
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
@@ -498,14 +499,27 @@ class Subtype:
     - ``level=(lo, hi)``: the mean lies in ``[lo, hi)``. ``None`` leaves an
       end open, so ``(None, 40)`` and ``(40, None)`` split every level at 40
       with no gap and no overlap.
+    - ``peak=(lo, hi)``: the maximum lies in ``[lo, hi)``, either end open,
+      so that, say, a startup must reach operating level.
+    - ``max_rise_s`` with ``rise_fraction`` (default 0.95): with ``y0`` the
+      first finite sample and ``peak`` the maximum, the time from the
+      segment's first sample to its first sample with
+      ``y >= y0 + rise_fraction * (peak - y0)`` is at most ``max_rise_s``
+      seconds. Measured from the segment's own start, it works for a signal
+      whose baseline is not zero, and tells a pulse from an ordinary rise.
+      The peak itself always counts as reached.
 
-    A segment with no finite sample meets no level condition. A subtype with
-    no conditions is a catch-all. A subtype has no model of its own: its
+    A segment must meet all of its subtype's conditions. A segment with no
+    finite sample meets no level, peak or rise condition. A subtype with no
+    conditions is a catch-all. A subtype has no model of its own: its
     segments are fitted with its state's.
     """
 
     state: State
     level: Optional[Tuple[Optional[float], Optional[float]]] = None
+    peak: Optional[Tuple[Optional[float], Optional[float]]] = None
+    max_rise_s: Optional[float] = None
+    rise_fraction: Optional[float] = None
 
     def __post_init__(self):
         if self.state not in _STATE_NAMES:
@@ -513,6 +527,17 @@ class Subtype:
         object.__setattr__(self, "state", State(self.state))
         if self.level is not None:
             object.__setattr__(self, "level", _range(self.level, "Subtype level"))
+        if self.peak is not None:
+            object.__setattr__(self, "peak", _range(self.peak, "Subtype peak"))
+        if self.max_rise_s is None:
+            if self.rise_fraction is not None:
+                raise ValueError("Subtype rise_fraction needs max_rise_s; give both, or neither")
+            return
+        object.__setattr__(self, "max_rise_s", _v.finite(self.max_rise_s, "Subtype max_rise_s", nonnegative=True))
+        f = 0.95 if self.rise_fraction is None else self.rise_fraction
+        if isinstance(f, bool) or not isinstance(f, Real) or not 0 < f <= 1:
+            raise ValueError(f"Subtype rise_fraction must be in (0, 1], got {self.rise_fraction!r}")
+        object.__setattr__(self, "rise_fraction", float(f))
 
 
 def _above(y: np.ndarray, thr: float) -> bool:
@@ -560,6 +585,156 @@ class _Levels:
             return out
 
         return level_ok
+
+
+class _RangeMax:
+    """
+    The maximum of the finite samples of ``y`` over ``[p, q)``, vectorised
+    over ranges (``-inf`` for a range with no finite sample); exact, as a
+    maximum is. Like ``_RangeSum`` it works in blocks of ``B`` samples: the
+    running maxima from each block's start and to its end, and a sparse
+    table over whole blocks, so it takes about three values per sample. A
+    range inside one block is read directly.
+    """
+
+    B = 64
+
+    def __init__(self, y: np.ndarray):
+        n, B = len(y), self.B
+        nb = -(-n // B)
+        v = np.full(nb * B, -math.inf)
+        v[:n] = np.where(np.isfinite(y), y, -math.inf)
+        blocks = v.reshape(nb, B)
+        self.v = v
+        self.pre = np.maximum.accumulate(blocks, axis=1).ravel()  # from the block's start to i
+        self.suf = np.maximum.accumulate(blocks[:, ::-1], axis=1)[:, ::-1].ravel()  # from i to the block's end
+        self.table = [blocks.max(axis=1)]  # table[k][b]: the maximum of blocks [b, b + 2**k)
+        while 2 ** len(self.table) <= nb:
+            prev, h = self.table[-1], 2 ** (len(self.table) - 1)
+            self.table.append(np.maximum(prev[:-h], prev[h:]))
+
+    def _blocks(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """The maximum of whole blocks ``[a, b)``; ``-inf`` where the range is empty."""
+        out = np.full(len(a), -math.inf)
+        size = b - a
+        k = np.frexp(np.maximum(size, 1))[1] - 1  # floor(log2(size))
+        for level in np.unique(k[size > 0]):
+            sel = (size > 0) & (k == level)
+            t = self.table[int(level)]
+            out[sel] = np.maximum(t[a[sel]], t[b[sel] - 2 ** int(level)])
+        return out
+
+    def range(self, ps, qs) -> np.ndarray:
+        ps, qs = np.broadcast_arrays(np.asarray(ps, dtype=np.int64), np.asarray(qs, dtype=np.int64))
+        B = self.B
+        bp, bq = ps // B, (qs - 1) // B
+        out = np.full(len(ps), -math.inf)
+        apart = bp < bq
+        if apart.any():
+            p, q = ps[apart], qs[apart]
+            out[apart] = np.maximum(np.maximum(self.suf[p], self.pre[q - 1]), self._blocks(bp[apart] + 1, bq[apart]))
+        within = ~apart & (qs > ps)
+        if within.any():
+            p, q = ps[within], qs[within]
+            ix = p[:, None] + np.arange(B)
+            out[within] = np.where(ix < q[:, None], self.v[np.minimum(ix, len(self.v) - 1)], -math.inf).max(axis=1)
+        return out
+
+
+class _Conditions:
+    """
+    Every subtype's conditions as one test of candidate segments,
+    ``accepts(ps, q)``. The sums and maxima the conditions need are built on
+    first use.
+    """
+
+    def __init__(self, ts: np.ndarray, y: np.ndarray):
+        self.ts, self.y = ts, y
+        self._levels: Optional[_Levels] = None
+        self._max: Optional[_RangeMax] = None
+        self._next: Optional[np.ndarray] = None
+
+    @property
+    def maxima(self) -> _RangeMax:
+        if self._max is None:
+            self._max = _RangeMax(self.y)
+        return self._max
+
+    @property
+    def next_finite(self) -> np.ndarray:
+        """For each sample, the index of the first finite sample at or after it (``n`` for none)."""
+        if self._next is None:
+            n = len(self.y)
+            ix = np.where(np.isfinite(self.y), np.arange(n), n)
+            self._next = np.minimum.accumulate(ix[::-1])[::-1]
+        return self._next
+
+    def level(self, lo, hi) -> Callable[[np.ndarray, int], np.ndarray]:
+        if self._levels is None:
+            self._levels = _Levels(self.y)
+        return self._levels.accepts(lo, hi)
+
+    def peak(self, lo, hi) -> Callable[[np.ndarray, int], np.ndarray]:
+        def peak_ok(ps: np.ndarray, q: int) -> np.ndarray:
+            top = self.maxima.range(ps, q)
+            return (top > -math.inf) & (lo is None or top >= lo) & (hi is None or top < hi)
+
+        return peak_ok
+
+    def rise(self, max_s: float, fraction: float) -> Callable[[np.ndarray, int], np.ndarray]:
+        ts, y, n = self.ts, self.y, len(self.y)
+
+        def rise_ok(ps: np.ndarray, q: int) -> np.ndarray:
+            ps = np.asarray(ps, dtype=np.int64)
+            first = self.next_finite[ps]
+            found = first < q
+            top = self.maxima.range(ps, q)
+            y0 = y[np.minimum(first, n - 1)]
+            with np.errstate(invalid="ignore", over="ignore"):
+                thr = np.minimum(y0 + fraction * (top - y0), top)  # the peak always counts as reached
+            # The samples within max_s of the segment's first, as the difference of their times says: [p, end).
+            t0 = ts[ps]
+            end = np.searchsorted(ts, t0 + max_s, side="right")
+            while True:
+                back = (end > ps + 1) & (ts[end - 1] - t0 > max_s)
+                if not back.any():
+                    break
+                end -= back
+            while True:
+                fwd = (end < n) & (ts[np.minimum(end, n - 1)] - t0 <= max_s)
+                if not fwd.any():
+                    break
+                end += fwd
+            reached = self.maxima.range(ps, np.minimum(end, q))
+            return found & (reached >= thr)
+
+        return rise_ok
+
+    def of(self, sub: "Subtype") -> Callable[[np.ndarray, int], np.ndarray]:
+        """The test of ``sub``'s conditions: each is checked only on the starts the earlier ones accept."""
+        tests = []
+        if sub.level is not None:
+            tests.append(self.level(*sub.level))
+        if sub.peak is not None:
+            tests.append(self.peak(*sub.peak))
+        if sub.max_rise_s is not None and sub.rise_fraction is not None:  # a Subtype sets both or neither
+            tests.append(self.rise(sub.max_rise_s, sub.rise_fraction))
+        if not tests:
+            return _accept_all
+        if len(tests) == 1:
+            return tests[0]
+
+        def all_ok(ps: np.ndarray, q: int) -> np.ndarray:
+            ps = np.asarray(ps, dtype=np.int64)
+            out = tests[0](ps, q)
+            for test in tests[1:]:
+                keep = np.flatnonzero(out)
+                if not len(keep):
+                    break
+                out[keep] = test(ps[keep], q)
+            return out
+
+        return all_ok
 
 
 # ---------------------------------------------------------------------------
@@ -937,7 +1112,7 @@ class _Problem:
 
 
 def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transitions, min_duration_s,
-             max_duration_s, subtypes: Mapping[str, "Subtype"], levels: "_Levels"):
+             max_duration_s, subtypes: Mapping[str, "Subtype"], conditions: "_Conditions"):
     """
     The program's options, counters, ``allowed`` transitions between options,
     and the result's count columns, from the caller's constraints. A state
@@ -956,8 +1131,7 @@ def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transi
         if not mine:
             options.append(_Option(st, pen[st], *durations))
         for rank, (name, sub) in enumerate(mine):
-            accepts = _accept_all if sub.level is None else levels.accepts(*sub.level)
-            options.append(_Option(st, pen[st], *durations, accepts=accepts, subtype=name, rank=rank))
+            options.append(_Option(st, pen[st], *durations, accepts=conditions.of(sub), subtype=name, rank=rank))
             options_of[name] = frozenset([len(options) - 1])
         options_of[st] = frozenset(range(first, len(options)))
     names = list(states) + list(subtypes)  # states first, so that without subtypes the counters are as before
@@ -1130,7 +1304,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         raise ValueError(f"penalties must be finite and >= 0, got {pen}")
 
     options, counters, allowed, columns = _options(states, pen, max_counts, transitions, min_duration_s,
-                                                   max_duration_s, subtypes, _Levels(y))
+                                                   max_duration_s, subtypes, _Conditions(ts, y))
     prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin, max_counts,
                     transitions)
     if method in ("subset", "refine"):
