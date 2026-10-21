@@ -53,7 +53,10 @@ Subtypes
 --------
 ``subtypes={name: Subtype}`` refines states into caller-named subtypes, such
 as cold and hot steady segments, each with conditions on the segment alone:
-its level, its peak and its rise time (``Subtype``). Once a state has
+its level, its peak, its rise time, and whether it contains an event
+(``Subtype``). An event condition reads one of the boolean masks passed as
+``events={name: mask}``, so that a driven transient (the heater switched)
+is told apart from an undriven one, by actuator. Once a state has
 subtypes, every segment of it takes one of them (ADR 0001), so no cap can be
 dodged by leaving a segment untyped; a subtype with no conditions is a
 catch-all. States without subtypes are unchanged, and their segments have
@@ -114,6 +117,7 @@ a longer segment never costs less, whichever subtype could take it.
 
 import math
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from numbers import Real
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
@@ -508,6 +512,12 @@ class Subtype:
       seconds. Measured from the segment's own start, it works for a signal
       whose baseline is not zero, and tells a pulse from an ordinary rise.
       The peak itself always counts as reached.
+    - ``events={mask name: True or False}``: the segment does, or does not,
+      contain a flagged sample of that mask (one of the ``events`` given to
+      ``optimal_segments``), that is, a flagged sample in ``[start, stop)``.
+      There is no tolerance: to accept an event just before a segment's
+      start, widen the mask. This condition reads the mask alone, whether
+      or not the signal is finite there.
 
     A segment must meet all of its subtype's conditions. A segment with no
     finite sample meets no level, peak or rise condition. A subtype with no
@@ -520,6 +530,7 @@ class Subtype:
     peak: Optional[Tuple[Optional[float], Optional[float]]] = None
     max_rise_s: Optional[float] = None
     rise_fraction: Optional[float] = None
+    events: Optional[Mapping[str, bool]] = None
 
     def __post_init__(self):
         if self.state not in _STATE_NAMES:
@@ -529,6 +540,8 @@ class Subtype:
             object.__setattr__(self, "level", _range(self.level, "Subtype level"))
         if self.peak is not None:
             object.__setattr__(self, "peak", _range(self.peak, "Subtype peak"))
+        if self.events is not None:
+            object.__setattr__(self, "events", _event_conditions(self.events))
         if self.max_rise_s is None:
             if self.rise_fraction is not None:
                 raise ValueError("Subtype rise_fraction needs max_rise_s; give both, or neither")
@@ -538,6 +551,49 @@ class Subtype:
         if isinstance(f, bool) or not isinstance(f, Real) or not 0 < f <= 1:
             raise ValueError(f"Subtype rise_fraction must be in (0, 1], got {self.rise_fraction!r}")
         object.__setattr__(self, "rise_fraction", float(f))
+
+    def __hash__(self):  # ``events`` is a read-only mapping, which does not hash
+        return hash((self.state, self.level, self.peak, self.max_rise_s, self.rise_fraction,
+                     None if self.events is None else frozenset(self.events.items())))
+
+
+def _event_conditions(events) -> Optional[Mapping[str, bool]]:
+    """``Subtype.events`` as a read-only mapping ``{mask name: bool}``, or None when it names no mask."""
+    if not isinstance(events, Mapping):
+        raise ValueError(f"Subtype events must be a mapping {{mask name: True or False}}, got {events!r}")
+    out = {}
+    for name, want in events.items():
+        _v.name(name, "a Subtype events mask name")
+        if not isinstance(want, (bool, np.bool_)):
+            raise ValueError(f"Subtype events[{name!r}] must be True or False, got {want!r}")
+        out[name] = bool(want)
+    return MappingProxyType(out) if out else None
+
+
+def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str, np.ndarray]:
+    """
+    The ``events`` of ``optimal_segments`` as boolean arrays, one value per
+    sample: every mask is checked, and every mask a condition names must be
+    given.
+    """
+    if events is not None and not isinstance(events, Mapping):
+        raise ValueError("events must be a mapping {name: boolean mask}; give a single mask a name, "
+                         "e.g. events={'heater': mask}")
+    masks = {}
+    for name, mask in (events or {}).items():
+        _v.name(name, "an event mask's name")
+        m = np.asarray(mask)
+        if m.shape != (n,):
+            raise ValueError(f"events[{name!r}] must be a one-dimensional mask with one value per sample of t ({n}), "
+                             f"got shape {m.shape}")
+        if m.dtype != bool:
+            raise ValueError(f"events[{name!r}] must be boolean, got values of type {m.dtype}")
+        masks[name] = m
+    for name, sub in subtypes.items():
+        for mask in sub.events or {}:
+            if mask not in masks:
+                raise ValueError(f"subtype {name!r} needs event mask {mask!r}, which events does not include")
+    return masks
 
 
 def _above(y: np.ndarray, thr: float) -> bool:
@@ -644,12 +700,14 @@ class _RangeMax:
 class _Conditions:
     """
     Every subtype's conditions as one test of candidate segments,
-    ``accepts(ps, q)``. The sums and maxima the conditions need are built on
-    first use.
+    ``accepts(ps, q)``. The sums, maxima and counts of flagged samples the
+    conditions need are built on first use.
     """
 
-    def __init__(self, ts: np.ndarray, y: np.ndarray):
+    def __init__(self, ts: np.ndarray, y: np.ndarray, events: Optional[Mapping[str, np.ndarray]] = None):
         self.ts, self.y = ts, y
+        self.events = dict(events or {})
+        self._flags: Dict[str, np.ndarray] = {}  # flagged samples of each mask before each index
         self._levels: Optional[_Levels] = None
         self._max: Optional[_RangeMax] = None
         self._next: Optional[np.ndarray] = None
@@ -710,6 +768,16 @@ class _Conditions:
 
         return rise_ok
 
+    def event(self, name: str, want: bool) -> Callable[[np.ndarray, int], np.ndarray]:
+        if name not in self._flags:
+            self._flags[name] = np.concatenate(([0], np.cumsum(self.events[name], dtype=np.int64)))
+        flags = self._flags[name]
+
+        def event_ok(ps: np.ndarray, q: int) -> np.ndarray:
+            return (flags[q] - flags[np.asarray(ps, dtype=np.int64)] > 0) == want
+
+        return event_ok
+
     def of(self, sub: "Subtype") -> Callable[[np.ndarray, int], np.ndarray]:
         """The test of ``sub``'s conditions: each is checked only on the starts the earlier ones accept."""
         tests = []
@@ -719,6 +787,7 @@ class _Conditions:
             tests.append(self.peak(*sub.peak))
         if sub.max_rise_s is not None and sub.rise_fraction is not None:  # a Subtype sets both or neither
             tests.append(self.rise(sub.max_rise_s, sub.rise_fraction))
+        tests += [self.event(name, want) for name, want in (sub.events or {}).items()]
         if not tests:
             return _accept_all
         if len(tests) == 1:
@@ -1180,7 +1249,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                      penalty: Union[str, float, Mapping[str, float]] = "bic", method: str = "refine",
                      candidates=None, grid_s: Optional[float] = None, refine_s: Optional[float] = None,
                      period_origin=None, prune: bool = True,
-                     subtypes: Optional[Mapping[str, Subtype]] = None) -> OptimalSegmentation:
+                     subtypes: Optional[Mapping[str, Subtype]] = None,
+                     events: Optional[Mapping[str, Any]] = None) -> OptimalSegmentation:
     """
     Best-fit segments of ``y`` under constraints (see the module docstring).
 
@@ -1230,6 +1300,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         "Subtypes" in the module docstring). Names must differ from the
         state names. Once a state has subtypes, every segment of it takes
         one of them; segments of other states have ``subtype=None``.
+    events : mapping, optional
+        ``{name: boolean mask}``, each mask with one value per sample of
+        ``t``, flagging the samples at which an event occurred (the heater
+        switched on, say). A subtype's ``events`` condition names these
+        masks, and every mask it names must be given; there is no unnamed
+        single mask. ``info["events"]`` holds the masks used.
 
     Returns
     -------
@@ -1286,6 +1362,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             for st in [a, *nexts]:
                 if st not in states:
                     raise unknown("transitions", st)
+    masks = _event_masks(events, n, subtypes)
     # Penalty per state.
     if isinstance(penalty, str):
         if penalty != "bic":
@@ -1304,7 +1381,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         raise ValueError(f"penalties must be finite and >= 0, got {pen}")
 
     options, counters, allowed, columns = _options(states, pen, max_counts, transitions, min_duration_s,
-                                                   max_duration_s, subtypes, _Conditions(ts, y))
+                                                   max_duration_s, subtypes, _Conditions(ts, y, masks))
     prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin, max_counts,
                     transitions)
     if method in ("subset", "refine"):
@@ -1338,7 +1415,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
                                int(len(B)), prob.costs.n_fits,
-                               {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes}, subtypes)
+                               {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes, "events": masks},
+                               subtypes)
 
 
 __all__ = ["optimal_segments", "OptimalSegmentation", "Subtype", "compare_segments", "count_by_period", "METHODS"]

@@ -25,6 +25,15 @@
   `max_rise_s` of its first sample, `y0` being its first finite sample, so
   rise time works for a non-zero baseline. A segment with no finite sample
   meets neither, and a segment must meet all of its subtype's conditions.
+- Event conditions for subtypes (#65, part of #55): `optimal_segments(...,
+  events={name: boolean mask})` takes named masks with one value per
+  sample, and `Subtype(..., events={name: True or False})` needs the
+  segment to contain, or not to contain, a flagged sample of that mask in
+  `[start, stop)`, so that a driven transient is told apart from an
+  undriven one, by actuator. There is no tolerance; widen a mask to accept
+  an event just outside a segment. Every mask a condition names must be
+  given, and every mask must be boolean and as long as `t`.
+  `info["events"]` holds the masks.
 - The error for an infeasible `optimal_segments` also names the subtypes'
   conditions (#61).
 - `optimal_segments` names the argument and the valid states when `models`
