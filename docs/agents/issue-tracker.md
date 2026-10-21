@@ -14,6 +14,27 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Issue format
+
+Write a ticket's body under these headings. Only a child ticket has `## Parent`:
+
+```markdown
+## Parent
+
+#<parent>
+
+## What to build
+
+<the behaviour or change, why, and where; name the files when they are known>
+
+## Acceptance criteria
+
+- [ ] <one checkable condition per line>
+- [ ] `tools/check.sh` passes.
+```
+
+A child ticket is also linked to its parent as in **Make an issue a sub-issue of a parent** under **Conventions** (without sub-issues, that is the `Part of #<parent>` line). When it belongs to an epic, an issue whose body has a `## Tickets` table, add its row there (the epic need not be the parent: #62's parent is the spec #55, and its row is in the epic #68), with the same columns as the rows already in it. Add a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
+
 ## Starting a ticket
 
 Claim a ticket before writing code, so that no one else builds it at the same time:

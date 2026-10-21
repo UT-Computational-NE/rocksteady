@@ -1,4 +1,4 @@
-"""tools/check.sh names its interpreter, and stops before the checks when it lacks the dev extra (#84)."""
+"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87)."""
 
 import os
 import subprocess
@@ -13,10 +13,12 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python):
+def _check(python, *args, pythonpath=None):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
-    return subprocess.run(["bash", CHECK], env={**env, "PYTHON": str(python)},
-                          capture_output=True, text=True, timeout=60)
+    env["PYTHON"] = str(python)
+    if pythonpath is not None:
+        env["PYTHONPATH"] = str(pythonpath)
+    return subprocess.run(["bash", CHECK, *args], env=env, capture_output=True, text=True, timeout=60)
 
 
 def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_path):
@@ -35,3 +37,30 @@ def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     run = _check(tmp_path / "no-such-python")
     assert run.returncode == 1
     assert "check.sh:" in run.stderr and str(tmp_path / "no-such-python") in run.stderr
+
+
+def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
+    # As in CI's test jobs, which install only the test extra: the docs modules cannot be found.
+    (tmp_path / "sitecustomize.py").write_text(
+        "import sys\nfor m in ('sphinx', 'sphinx_rtd_theme', 'myst_parser'):\n    sys.modules[m] = None\n")
+    run = _check(sys.executable, "tests/test_check_sh.py::test_a_missing_interpreter_is_named_and_stops_the_checks",
+                 pythonpath=tmp_path)
+    assert run.returncode == 0, run.stderr
+    assert "1 passed" in run.stdout
+    assert "check.sh: the selected tests passed; no docs build" in run.stdout
+
+
+def test_a_selection_leaves_out_the_slow_tests_unless_it_asks_for_them():
+    slow = ("tests/test_asymptote.py", "-k", "test_false_pass_rate_at_the_limit", "--co")  # 9 slow cases
+    default = _check(sys.executable, *slow)
+    assert default.returncode == 5, default.stdout + default.stderr  # pytest: nothing collected
+    assert "test_false_pass_rate_at_the_limit" not in default.stdout
+    asked = _check(sys.executable, *slow, "-m", "slow")  # a later -m wins over "not slow"
+    assert asked.returncode == 0, asked.stdout + asked.stderr
+    assert asked.stdout.count("test_false_pass_rate_at_the_limit") == 9
+
+
+def test_a_selection_asks_only_for_the_test_extra(tmp_path):
+    run = _check(tmp_path / "no-such-python", "tests/test_check_sh.py")
+    assert run.returncode == 1
+    assert "test extra" in run.stderr and "dev extra" not in run.stderr
