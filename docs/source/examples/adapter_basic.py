@@ -111,7 +111,7 @@ if __name__ == "__main__":
     out, segs, accepted, report = qualify(df, events)
     print(out["label"].value_counts().to_string(), "\n")
     t = out["t_s"].to_numpy()  # positions, not the DatetimeIndex
-    print("accepted intervals (s):", [(float(t[a]), float(t[b - 1])) for a, b in accepted])
+    print("accepted runs (s):", [(float(t[a]), float(t[b - 1])) for a, b in accepted])
     print(report.to_string(intervals=False))
     monitor = LiveMonitor(events=events)
     for ti, row in zip(t, df.to_dict("records")):

@@ -18,6 +18,8 @@
 - Error messages say "sample spacing" for `Timing.sample_period_s`, and an
   infeasible `optimal_segments` reports that no segmentation satisfies the
   *constraints* (#56).
+- `Report.provenance["parameter_reference"]` says "segment centre" for
+  `poly` (was "interval centre"), so exported JSON reads differently (#56).
 
 ## 0.5.0
 

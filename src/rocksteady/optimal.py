@@ -30,7 +30,7 @@ Constraints
   already in progress, so a period shorter than an hour is not counted
   twice; days are unaffected.
 - ``transitions``: which state may follow which. Default: any. This
-  constrains the sequence of labels only. Segments are fitted independently,
+  constrains the sequence of states only. Segments are fitted independently,
   so consecutive fits need not meet: a level change can sit at any boundary.
   Alternation forbids steady -> steady, but the optimiser may then place a
   short transient on a plateau next to a step rather than across it.

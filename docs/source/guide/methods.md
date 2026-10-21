@@ -423,9 +423,9 @@ parameters and $\hat\sigma = 1.4826\,\operatorname{MAD}(\Delta y)/\sqrt 2$
 estimated robustly from first differences.
 
 This is optimal partitioning by **dynamic programming** (Bellman 1961;
-Jackson et al. 2005; reviewed by Truong et al. 2020). It is extended with
-a state that tracks the last segment's label and the counts used in the
-current period. With $F(k, s, c)$ the best cost of a segmentation ending at
+Jackson et al. 2005; reviewed by Truong et al. 2020). It is extended to
+track the last segment's state and the counts used in the current
+period. With $F(k, s, c)$ the best cost of a segmentation ending at
 candidate breakpoint $k$ with last state $s$ and counts $c$:
 
 $$

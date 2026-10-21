@@ -14,7 +14,7 @@ its own instances; the state machine that combines them is shared.
    (control or configuration events). A disturbance resets the clocks.
 4. **Timing**: block length, window length, settling time after a
    disturbance, hold time before acceptance, and whether an undecided
-   window keeps the last decided state.
+   window keeps the last decided label.
 5. **Overrides**: domain knowledge that can force a label (for example, a
    system shut down below its operating floor is steady by definition).
 
@@ -376,7 +376,7 @@ class Timing:
         Continuous passing time before HOLDING becomes STEADY.
     hold_when_undecided
         An undecided window (statistical overlap, an invalid criterion
-        result, or low block coverage) keeps the last decided state instead
+        result, or low block coverage) keeps the last decided label instead
         of returning INDETERMINATE.
     undecided_counts_toward_hold
         When an undecided window keeps a passing state, it also advances the
