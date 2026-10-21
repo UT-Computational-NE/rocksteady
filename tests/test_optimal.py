@@ -1070,7 +1070,7 @@ def test_a_transient_at_the_start_takes_no_subtype_initial_excludes(initial, fir
 def test_a_transient_at_the_end_takes_no_subtype_final_excludes(final, last):
     """The day reversed: it ends partway down a fall, whose cold side is missing."""
     t, y = _cut_off_day()
-    t, y = t, y[::-1].copy()
+    y = y[::-1].copy()
     subtypes = {**_LEVELS, "cool-down": rs.Subtype("transient"), "other": rs.Subtype("transient")}
     r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
                          transitions={"steady": ["transient"], "transient": ["steady"]}, subtypes=subtypes,
@@ -1095,7 +1095,10 @@ def test_a_one_segment_record_satisfies_both_initial_and_final(initial, final, w
 def _constraint_scheme(rng):
     """Random constraints naming states and subtypes: transitions, initial and final, durations, penalties."""
     names = ["steady", "transient", "cold", "hot", "up", "down", "other"]
-    pick = lambda k: sorted(set(rng.choice(names, int(k), replace=True).tolist()))
+
+    def pick(k):
+        return sorted(set(rng.choice(names, int(k), replace=True).tolist()))
+
     kw = {}
     if rng.random() < 0.7:
         kw["transitions"] = {a: pick(rng.integers(1, 4)) for a in pick(rng.integers(2, 6))}
@@ -1170,3 +1173,14 @@ def test_constraints_naming_subtypes_validation():
     pen = optimal_segments(t, noisy, {"steady": 0}, method="exact", subtypes={"hot": rs.Subtype("steady")}).penalty
     plain = optimal_segments(t, noisy, {"steady": 0}, method="exact").penalty
     assert pen == {"steady": plain["steady"], "hot": plain["steady"]} and plain["steady"] > 0  # "bic": the state's
+
+
+@pytest.mark.parametrize("subtypes", [None, {**_LEVELS, "other": rs.Subtype("transient")}])
+def test_initial_and_final_naming_every_state_change_nothing(subtypes):
+    t, y = _operating_day()
+    kw = dict(method="exact", grid_s=5, penalty=1.0, max_counts={"steady": 3, "transient": 2}, subtypes=subtypes,
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    every = {"steady", "transient"}
+    a = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
+    b = optimal_segments(t, y, {"steady": 0, "transient": 1}, initial=every, final=every, **kw)
+    assert a.segments == b.segments and a.objective == b.objective and a.counts.equals(b.counts)

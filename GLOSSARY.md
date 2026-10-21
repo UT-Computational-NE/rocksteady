@@ -51,7 +51,7 @@ A segment chosen by the optimiser to describe a finished record as well as possi
 _Avoid_: optimal state, detected segment
 
 **Constraint**:
-A restriction on the optimiser's whole segmentation: counts per period, which state or subtype may follow which, durations, and penalties.
+A restriction on the optimiser's whole segmentation: counts per period, which state or subtype may follow which, which may take the record's first and last segments, durations, and penalties.
 _Avoid_: limit (that is a criterion's threshold), rule
 
 **Period**:
