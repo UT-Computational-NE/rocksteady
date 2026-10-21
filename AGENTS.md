@@ -20,7 +20,7 @@ Use one worktree per ticket: `git worktree add .claude/worktrees/feat-<n> -b fea
 
 ### Checks
 
-`tools/check.sh` runs CI's fast checks: the tests without `slow`, and the strict docs build. `tests/test_vocabulary.py` fails on a fixed list of phrases (`AVOIDED`) that `GLOSSARY.md` avoids and that are always wrong. When you find another such phrase, add it to `AVOIDED` with a near-miss: correct text close to it that the scan must not flag.
+`tools/check.sh` runs CI's fast checks: the tests without `slow`, and the strict docs build. `tools/check.sh <pytest args>` runs only that selection, with the same interpreter. `tests/test_vocabulary.py` fails on a fixed list of phrases (`AVOIDED`) that `GLOSSARY.md` avoids and that are always wrong. When you find another such phrase, add it to `AVOIDED` with a near-miss: correct text close to it that the scan must not flag.
 
 ### Reviews and merging
 

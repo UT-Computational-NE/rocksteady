@@ -2,7 +2,8 @@
 # The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, and the strict
 # docs build. Needs `pip install -e ".[dev]"`. Runs the code of the checkout it is called from, so a worktree
 # tests its own src/ even when the environment's editable install points at another checkout. Set PYTHON to pick
-# the interpreter (default: python on PATH).
+# the interpreter (default: python on PATH). With arguments, it runs only that pytest selection, without the docs
+# build: tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -22,6 +23,11 @@ if [ -n "$missing" ]; then
   echo "check.sh: $py ($exe) lacks $missing. Install the dev extra into it from the repo root" \
        "($exe -m pip install -e \".[dev]\"), or set PYTHON to an interpreter that has it." >&2
   exit 1
+fi
+if [ $# -gt 0 ]; then  # a selection: these pytest arguments only (a later -m overrides "not slow"), no docs build
+  "$py" -m pytest -m "not slow" -q "$@"
+  echo "check.sh: the selected tests passed; no docs build"
+  exit 0
 fi
 "$py" -m pytest -m "not slow" -q
 out="$(mktemp -d)"

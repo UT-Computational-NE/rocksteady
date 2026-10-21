@@ -14,6 +14,27 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Issue format
+
+Write a ticket's body under three headings:
+
+```markdown
+## Parent
+
+#<epic>            (only for a ticket in an epic)
+
+## What to build
+
+<the behaviour or change, why, and where; name the files when they are known>
+
+## Acceptance criteria
+
+- [ ] <one checkable condition per line>
+- [ ] `tools/check.sh` passes (tests and the strict docs build).
+```
+
+For a ticket in an epic, also make it a sub-issue of the epic, add a row to the epic's **Tickets** table (ticket, what it delivers, blocked by, lane), and add a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
+
 ## Starting a ticket
 
 Claim a ticket before writing code, so that no one else builds it at the same time:

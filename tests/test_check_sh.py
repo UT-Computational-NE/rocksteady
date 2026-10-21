@@ -35,3 +35,13 @@ def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     run = _check(tmp_path / "no-such-python")
     assert run.returncode == 1
     assert "check.sh:" in run.stderr and str(tmp_path / "no-such-python") in run.stderr
+
+
+def test_arguments_select_the_tests_and_skip_the_docs_build():
+    one = "tests/test_check_sh.py::test_a_missing_interpreter_is_named_and_stops_the_checks"
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    run = subprocess.run(["bash", CHECK, one], env={**env, "PYTHON": sys.executable},
+                         capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    assert "1 passed" in run.stdout
+    assert "check.sh: the selected tests passed; no docs build" in run.stdout
