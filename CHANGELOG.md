@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- When no segmentation satisfies the constraints, the `ValueError` from
+  `optimal_segments` names the earliest candidate time after which none can
+  continue, the period containing it (its start, as `count_by_period`
+  labels periods, or "the whole record"), and the caps and transitions in
+  force, so the unusual day in a long batch run can be found (#62).
+
 ### Documentation
 
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now

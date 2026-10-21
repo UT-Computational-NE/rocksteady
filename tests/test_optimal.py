@@ -2,6 +2,7 @@
 
 import itertools
 import math
+import re
 
 import numpy as np
 import pandas as pd
@@ -398,3 +399,56 @@ def test_linear_costs_survive_a_large_time_gap():
         e = fit_poly(t[p:q], y[p:q], 1).residuals
         e = e[np.isfinite(e)]
         assert c.cost("transient", p, q) == pytest.approx(float(e @ e), rel=1e-6, abs=1e-9), (p, q)
+
+
+# -- infeasibility (#62) -----------------------------------------------------------------
+
+
+def _infeasible_message(*args, **kwargs) -> str:
+    with pytest.raises(ValueError, match="no segmentation satisfies") as e:
+        optimal_segments(*args, **kwargs)
+    return str(e.value)
+
+
+def test_an_infeasible_day_is_named_with_the_time():
+    # From noon on day 1 to the end of day 2, hourly. A segment lasts at most 20 h, and at most one may touch
+    # each day: day 1 (12 h) can be covered, day 2 (24 h) cannot. Every segmentation gets stuck on day 2, at
+    # 20:00 at the latest (a segment from 00:00 that lasts the full 20 h).
+    t = pd.date_range("2026-01-01 12:00", "2026-01-02 23:00", freq="1h")
+    y = np.zeros(len(t))
+    msg = _infeasible_message(t, y, {"steady": 0}, method="exact", per="1D", max_counts={"steady": 1},
+                              max_duration_s={"steady": 20 * 3600.0}, penalty=0.0)
+    day2 = count_by_period([Segment(0, len(t), ST)], t, "1D").index[1]
+    assert "2026-01-02 20:00:00" in msg
+    assert f"period starting {day2}" in msg
+    assert "2026-01-01" not in msg
+    assert "max_counts={'steady': 1}" in msg and "transitions=any" in msg
+
+
+def test_an_infeasible_record_without_periods_is_named_whole():
+    # One segment of at most 4 s cannot cover 10 s: every segmentation gets stuck at 104 s, the caller's time.
+    t = 100.0 + np.arange(10.0)
+    msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="exact", max_counts={"steady": 1},
+                              max_duration_s={"steady": 4.0}, penalty=0.0)
+    assert "past 104.0 s" in msg
+    assert "in the whole record" in msg and "period starting" not in msg
+    assert "max_counts={'steady': 1}" in msg
+
+
+def test_a_duration_no_candidate_meets_is_named_the_same_way():
+    # The candidate segments last 5 s or 10 s, none between 6 s and 8 s: nothing can start at the first sample.
+    t = 3.0 + np.arange(10.0)
+    msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="subset", candidates=[0, 5, 10], per=5.0,
+                              min_duration_s={"steady": 6.0}, max_duration_s={"steady": 8.0})
+    assert re.search(r"none continues past 3\.0 s \(sample 0\), in the period starting 0\.0 s\. "
+                     r"In force: max_counts=none in each period \(5\.0\), transitions=any\.$", msg), msg
+
+
+@pytest.mark.parametrize("prune", [True, False])
+def test_the_time_is_the_models_not_the_pruning_surrogates(prune):
+    # exp needs 5 samples, and no segment may last more than 3 s: none can start at all. The constant-fit
+    # surrogate that pruning starts from accepts short segments, which must not move the time.
+    t = np.arange(20.0)
+    msg = _infeasible_message(t, np.zeros(20), {"transient": "exp"}, method="exact", prune=prune,
+                              max_counts={"transient": 1}, max_duration_s={"transient": 3.0})
+    assert "past 0.0 s (sample 0)" in msg

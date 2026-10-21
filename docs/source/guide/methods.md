@@ -437,6 +437,14 @@ touches; the transition $s' \to s$ must be allowed and the duration in
 range. For $m$ candidate breakpoints, $S$ states and $L$ count layers, this
 costs $O(m^2 S^2 L)$ segment evaluations.
 
+**Infeasible constraints.** When no segmentation satisfies the constraints,
+the `ValueError` names the latest candidate breakpoint $B_k$ that some
+segmentation reaches: the earliest time after which none can continue. It
+gives that time, the period containing it (labelled by its start, as
+{py:func}`~rocksteady.optimal.count_by_period` labels periods, or "the whole
+record"), and the caps and transitions in force. In a long batch run, that
+points to the unusual day. It does not search for the constraint to blame.
+
 **Segment costs.** Constant and linear costs come from range sums of
 $y$, $y^2$, $x$, $x^2$ and $xy$. These are kept in blocks with compensated
 (Neumaier 1974) block totals, and carry a rounding-error bound; a segment
