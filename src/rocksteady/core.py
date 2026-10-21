@@ -45,7 +45,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -447,13 +447,15 @@ class Timing:
         if self.block_s < self.sample_period_s * (1 - 1e-9):
             raise ValueError(f"block_s ({self.block_s}) must be at least one sample spacing ({self.sample_period_s})")
 
+    # block_s and window_s are None only until __post_init__ rejects them, so they are floats from here on.
+
     @property
     def window_samples(self) -> int:
-        return int(round(self.window_s / self.sample_period_s))
+        return int(round(cast(float, self.window_s) / self.sample_period_s))
 
     @property
     def block_samples(self) -> int:
-        return max(1, int(round(self.block_s / self.sample_period_s)))
+        return max(1, int(round(cast(float, self.block_s) / self.sample_period_s)))
 
     @property
     def n_blocks(self) -> int:
@@ -485,7 +487,7 @@ class Timing:
     @property
     def quiet_samples(self) -> int:
         """Samples since the last disturbance before a window may be evaluated."""
-        return max(self.window_samples, int(round((self.window_s + self.settle_s) / self.sample_period_s)))
+        return max(self.window_samples, int(round((cast(float, self.window_s) + self.settle_s) / self.sample_period_s)))
 
     @property
     def hold_samples(self) -> int:
@@ -528,7 +530,8 @@ class Verdict:
 
 
 def _duplicates(names) -> list:
-    seen, dupes = set(), set()
+    seen: set = set()
+    dupes: set = set()
     for n in names:
         (dupes if n in seen else seen).add(n)
     return sorted(dupes)
@@ -574,6 +577,7 @@ class Detector:
         self.disturbances = list(disturbances)
         self.overrides = list(overrides)
         self.timing = timing
+        items: Sequence[Any]
         for kind, items in (("signal", self.signals), ("criterion", self.criteria)):
             dupes = _duplicates(x.name for x in items)
             if dupes:
@@ -770,7 +774,8 @@ class Detector:
             undecided = Reason.LOW_COVERAGE
         else:
             t_blocks, blocks, valid = evaluable
-            evaluated = [c.evaluate(t_blocks, blocks[:, self._index[c.signal]], valid=valid)
+            # A criterion with uses_block_masks also takes valid= (see Criterion), beyond evaluate's base signature.
+            evaluated = [cast(Any, c).evaluate(t_blocks, blocks[:, self._index[c.signal]], valid=valid)
                          if getattr(c, "uses_block_masks", False) else
                          c.evaluate(t_blocks, blocks[:, self._index[c.signal]]) for c in self.criteria]
             outcomes = [r.outcome for r in evaluated]  # every criterion counts, whatever its name

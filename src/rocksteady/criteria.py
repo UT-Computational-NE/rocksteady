@@ -18,7 +18,7 @@ criterion only has to say what it measures and how well.
   ``tau_max`` that the data allow, is within a limit.
 """
 
-from typing import Callable, Mapping, Optional, Union
+from typing import Callable, Mapping, Optional, Tuple, Union
 
 import numpy as np
 
@@ -83,7 +83,7 @@ class DeviationCriterion(Criterion):
     """
 
     def __init__(self, signal: str, limit: float, noise: NoiseModel, model: str = "constant",
-                 relative: bool = False, scale_floor: float = 0.0, k: float = 3.0, name: str = None):
+                 relative: bool = False, scale_floor: float = 0.0, k: float = 3.0, name: Optional[str] = None):
         what = f"DeviationCriterion {name or signal!r}"
         if model not in ("constant", "linear"):
             raise ValueError(f"{what}: model must be 'constant' or 'linear', got {model!r}")
@@ -181,7 +181,7 @@ class BoundCriterion(Criterion):
 
     recommended_blocks = 10  # tau_int of the block means is unreliable below about 10 blocks
 
-    def __init__(self, signal: str, low: float, high: float, k: float = 2.0, name: str = None):
+    def __init__(self, signal: str, low: float, high: float, k: float = 2.0, name: Optional[str] = None):
         what = f"BoundCriterion {name or signal!r}"
         low, high = _v.finite(low, f"{what}: low"), _v.finite(high, f"{what}: high")
         _v.ordered(low, high, f"{what}: low", "high", strict=True)
@@ -301,9 +301,9 @@ class AsymptoteCriterion(Criterion):
             raise ValueError(f"{what}: n_grid must be at least 2, so the grid holds both tau_min and tau_max")
         self.signal, self.confidence, self.relative = signal, confidence, bool(relative)
         self.name = name or f"{signal}_asymptote"
-        self._t_now = None  # the current sample's time in the detector's block-time frame; set by bind_timing
-        self._starts = None
-        self._bound = None
+        self._t_now: Optional[float] = None  # the current sample's time in the block-time frame; set by bind_timing
+        self._starts: np.ndarray = np.zeros(0)  # block starts in that frame; set by bind_timing
+        self._bound: Optional[Tuple[int, int, float]] = None
 
     def bind_timing(self, timing) -> None:
         """

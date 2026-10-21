@@ -340,7 +340,8 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], left: Sequence[
     widths = [max(len(c) for c in col) for col in cols]
 
     def line(cells):
-        return "  ".join(c.ljust(w) if i in left else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths))).rstrip()
+        padded = (c.ljust(w) if i in left else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths)))
+        return "  ".join(padded).rstrip()
 
     return "\n".join([line(header)] + [line(r) for r in rows])
 
