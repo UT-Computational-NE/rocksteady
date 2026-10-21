@@ -54,11 +54,7 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     def meets(level, p, q):
         if level is None:
             return True
-        v = y[p:q][np.isfinite(y[p:q])]
-        if not len(v):
-            return False
-        m, (lo, hi) = float(np.mean(v)), level
-        return (lo is None or m >= lo) and (hi is None or m < hi)
+        return _exact_level_ok(y[p:q], level)
 
     best = [math.inf, None]
 
@@ -312,7 +308,7 @@ def test_validation():
         optimal_segments(t, y, {"steady": 0}, method="greedy")
     with pytest.raises(ValueError, match="needs candidates"):
         optimal_segments(t, y, {"steady": 0}, method="subset")
-    with pytest.raises(ValueError, match="'warm'"):
+    with pytest.raises(ValueError, match="models names 'warm', which is not a state"):
         optimal_segments(t, y, {"warm": 0}, method="exact")
     with pytest.raises(ValueError, match="max_counts names state 'transient'"):
         optimal_segments(t, y, {"steady": 0}, method="exact", max_counts={"transient": 1})
@@ -456,7 +452,7 @@ def test_counts_and_summary_show_subtypes():
                 "warm": rs.Subtype("steady", level=(10.0, None))}
     r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", subtypes=subtypes, penalty=1.0,
                          transitions={"steady": ["transient"], "transient": ["steady"]})
-    assert list(r.counts.columns) == ["steady", "transient", "cold", "hot", "warm"]
+    assert r.subtypes == subtypes and list(r.counts.columns) == ["steady", "transient", "cold", "hot", "warm"]
     assert r.counts.iloc[0].tolist() == [2, 1, 1, 1, 0]
     assert "3 segments (steady 2: cold 1, hot 1, warm 0; transient 1)" in r.summary()
     plain = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", penalty=1.0,
@@ -561,14 +557,20 @@ def test_no_cap_can_be_dodged():
     assert (r.counts["hot"] <= 1).all() and r.objective > free.objective
 
 
-@pytest.mark.parametrize("y", [[40.0] * 6, [39.5, 40.5] * 3, [1e9, 1e9, 40.0, 40.0, 40.0, 40.0]])
-def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y):
+@pytest.mark.parametrize("y, at", [([40.0] * 6, 40.0), ([39.5, 40.5] * 3, 40.0),
+                                   ([1e9, 1e9, 40.0, 40.0, 40.0, 40.0], 40.0),
+                                   ([0.7] * 53, 0.7), ([97.7379777971513] * 11, 97.7379777971513),
+                                   ([0.1, 0.3, 0.2], 0.2)])
+def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
+    """The exact mean: ``fsum(y) / n`` rounds twice and falls below 0.7 for 53 samples of 0.7."""
     y = np.array(y)
     t = np.arange(float(len(y)))
-    subtypes = {"cold": rs.Subtype("steady", level=(None, 40.0)), "hot": rs.Subtype("steady", level=(40.0, None))}
+    subtypes = {"cold": rs.Subtype("steady", level=(None, at)), "hot": rs.Subtype("steady", level=(at, None))}
     cands = [0, 2, len(y)] if y[0] == 1e9 else [0, len(y)]
     r = optimal_segments(t, y, {"steady": 0}, method="subset", candidates=cands, penalty=0, subtypes=subtypes)
-    assert r.segments[-1].subtype == "hot" and np.mean(y[r.segments[-1].slice]) == 40.0
+    want = "hot" if _exact_level_ok(y[r.segments[-1].slice], (at, None)) else "cold"
+    assert r.segments[-1].subtype == want
+    assert want == ("cold" if at == 0.2 else "hot")  # 0.1 + 0.3 + 0.2 is exactly below 0.6
 
 
 def test_refine_keeps_every_segment_within_its_level():
@@ -616,8 +618,9 @@ def test_no_subtypes_gives_the_same_result():
 def test_subtype_validation():
     t = np.arange(10.0)
     y = np.zeros(10)
-    with pytest.raises(ValueError, match="'warm' is not a valid State"):
+    with pytest.raises(ValueError, match="Subtype state must be one of steady, transient, indeterminate; got 'warm'"):
         rs.Subtype("warm")
+    assert rs.Subtype("steady", level=np.array([1.0, 2.0])).level == (1.0, 2.0)  # a pair as an array
     for level in [(5.0, 1.0), (1.0, 1.0)]:
         with pytest.raises(ValueError, match=r"level lo \(\S+\) must be < Subtype level hi"):
             rs.Subtype("steady", level=level)
@@ -645,17 +648,54 @@ def test_subtype_validation():
         run({"hot": rs.Subtype("steady")}, max_counts={"warm": 1})
     with pytest.raises(ValueError, match=r"max_counts\['hot'\] must be a non-negative integer"):
         run({"hot": rs.Subtype("steady")}, max_counts={"hot": -1})
+    with pytest.raises(ValueError, match="penalty names subtype 'hot'; it takes states only"):
+        run({"hot": rs.Subtype("steady")}, penalty={"hot": 5.0})
     with pytest.raises(ValueError, match="subtypes' conditions"):
         run({"hot": rs.Subtype("steady", level=(100.0, None))})
 
 
-def test_subtypes_never_break_a_tie_between_states():
-    """Steady and transient fit constant data equally well; declaring steady subtypes leaves the state unchanged."""
-    t = np.arange(10.0)
-    y = np.full(10, 5.0)
-    kw = dict(method="exact", penalty=1.0)
-    plain = optimal_segments(t, y, {"steady": 0, "transient": 0}, **kw)
-    subtypes = {"cold": rs.Subtype("steady", level=(None, 2.0)), "hot": rs.Subtype("steady", level=(2.0, None))}
-    typed = optimal_segments(t, y, {"steady": 0, "transient": 0}, subtypes=subtypes, **kw)
-    assert [s.state for s in typed.segments] == [s.state for s in plain.segments] == [ST]
-    assert typed.segments[0].subtype == "hot"
+def test_a_tie_between_predecessors_of_different_states_still_goes_to_the_subtype_declared_first():
+    """Review 1 of PR #83: [3, 5) took 'mid' although 'low', declared first, accepts it at the same objective."""
+    t = np.arange(5.0)
+    y = np.array([2.0, 1.0, 0.0, 2.0, 1.0])
+    subtypes = {"low": rs.Subtype("steady", level=(None, 1.8)), "mid": rs.Subtype("steady", level=(1.4, 1.8)),
+                "any": rs.Subtype("steady")}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, subtypes=subtypes, method="exact", penalty=0.5)
+    assert [(s.start, s.stop, s.subtype) for s in r.segments][-1] == (3, 5, "low")
+
+
+def _exact_level_ok(y, level):
+    """The level condition by exact arithmetic: the mean of the finite samples in [lo, hi)."""
+    from fractions import Fraction
+
+    v = [Fraction(float(x)) for x in y if np.isfinite(x)]
+    if not v or level is None:
+        return bool(v) or level is None
+    m = sum(v) / len(v)
+    return (level[0] is None or m >= Fraction(level[0])) and (level[1] is None or m < Fraction(level[1]))
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_every_segment_takes_the_first_declared_subtype_the_caps_allow(seed):
+    """
+    Ties are broken by the sum of the subtypes' positions, so no segment could take an earlier-declared
+    subtype that accepts it without breaking a cap. Quantised data makes exact ties common.
+    """
+    rng = np.random.default_rng(500 + seed)
+    n = int(rng.integers(4, 9))
+    t = np.arange(float(n))
+    y = rng.integers(0, 3, n).astype(float)
+    subtypes = {"low": rs.Subtype("steady", level=(None, 1.8)), "mid": rs.Subtype("steady", level=(0.5, 1.8)),
+                "any": rs.Subtype("steady"), "up": rs.Subtype("transient", level=(1.0, None)),
+                "other": rs.Subtype("transient")}
+    caps = {"mid": 1, "up": 1} if seed % 2 else None
+    r = optimal_segments(t, y, {"steady": 0, "transient": 0}, subtypes=subtypes, method="exact",
+                         penalty=float(rng.choice([0.0, 0.5])), max_counts=caps)
+    used = [s.subtype for s in r.segments]
+    for i, s in enumerate(r.segments):
+        mine = [k for k, v in subtypes.items() if v.state == s.state]
+        for earlier in mine[:mine.index(s.subtype)]:
+            if not _exact_level_ok(y[s.slice], subtypes[earlier].level):
+                continue
+            swapped = used[:i] + [earlier] + used[i + 1:]
+            assert caps is not None and any(swapped.count(k) > c for k, c in caps.items()), (i, s, earlier)

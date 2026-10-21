@@ -56,13 +56,14 @@ transitions.
 
 Subtypes of one state may overlap. The optimiser chooses by cost; since a
 state's subtypes cost the same, a segment two of them accept is an exact
-tie, which goes to the subtype declared first. Precisely, among segmentations
-of equal objective it prefers the least sum, over segments, of each
-subtype's position among its state's subtypes; that sum never decides
-between two states, so declaring subtypes does not change which state wins
-a tie. ``refine`` keeps every
-segment's subtype and rejects a move after which a segment fails its
-subtype's conditions.
+tie, which goes to the subtype declared first. Precisely, among
+segmentations of equal objective it takes the least sum, over segments, of
+each subtype's position among its state's subtypes, so no segment could
+take an earlier-declared subtype that accepts it without breaking a cap.
+That sum also decides exact ties between different states or boundaries,
+so declaring subtypes can change which of two equally good segmentations
+is returned. ``refine`` keeps every segment's subtype and rejects a move
+after which a segment fails its subtype's conditions.
 
 Methods
 -------
@@ -399,7 +400,7 @@ class OptimalSegmentation:
     ``report.fit_report`` and ``metrics.stats_by_state`` take them as they are.
     ``objective = sse + sum of penalties``; ``rms = sqrt(sse / n_valid)``.
     ``counts`` has a column per state and per declared subtype, and
-    ``info["subtypes"]`` holds the subtypes used.
+    ``subtypes`` (also ``info["subtypes"]``) holds the subtypes used.
     """
 
     segments: List[Segment]
@@ -413,9 +414,10 @@ class OptimalSegmentation:
     n_candidates: int
     n_fits: int = 0
     info: Dict[str, Any] = field(default_factory=dict)
+    subtypes: Dict[str, "Subtype"] = field(default_factory=dict)
 
     def summary(self) -> str:
-        subtypes = self.info.get("subtypes", {})
+        subtypes = self.subtypes
         parts = []
         for st in self.penalty:
             part = f"{st} {sum(s.state.value == st for s in self.segments)}"
@@ -458,9 +460,12 @@ def compare_segments(a: Sequence[Segment], b: Sequence[Segment], n: Optional[int
 # ---------------------------------------------------------------------------
 
 
+_STATE_NAMES = tuple(s.value for s in State)
+
+
 def _range(value, what: str) -> Tuple[Optional[float], Optional[float]]:
     """A half-open range ``(lo, hi)``, either end None (open); lo < hi when both are given."""
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or len(value) != 2:
+    if isinstance(value, (str, bytes)) or np.ndim(value) != 1 or len(value) != 2:
         raise ValueError(f"{what} must be a pair (lo, hi), got {value!r}")
     lo, hi = (_v.optional_finite(v, f"{what} {end}") for v, end in zip(value, ("lo", "hi")))
     _v.ordered(lo, hi, f"{what} lo", f"{what} hi", strict=True)
@@ -490,22 +495,29 @@ class Subtype:
     level: Optional[Tuple[Optional[float], Optional[float]]] = None
 
     def __post_init__(self):
+        if self.state not in _STATE_NAMES:
+            raise ValueError(f"Subtype state must be one of {', '.join(_STATE_NAMES)}; got {self.state!r}")
         object.__setattr__(self, "state", State(self.state))
         if self.level is not None:
             object.__setattr__(self, "level", _range(self.level, "Subtype level"))
 
 
-def _mean(y: np.ndarray) -> float:
-    """The mean of the finite samples of ``y`` (NaN if none), as the level condition defines it."""
-    v = y[np.isfinite(y)]
-    return math.fsum(v.tolist()) / len(v) if len(v) else math.nan
+def _above(y: np.ndarray, thr: float) -> bool:
+    """
+    Whether the mean of the finite samples of ``y`` (at least one) is at least ``thr``, exactly: ``fsum``
+    rounds the exact ``sum(y) - n * thr`` correctly, so its sign is exact. ``fsum(y) / n`` rounds twice, and
+    53 samples of 0.7 would fall below 0.7.
+    """
+    v = y[np.isfinite(y)].tolist()
+    return math.fsum(v + [-thr] * len(v)) >= 0.0
 
 
 class _Levels:
     """
     The level condition, vectorised over segment starts. Means come from
-    range sums with an error bound; a mean too close to a threshold to decide
-    from them is computed directly (``_mean``), so ``[lo, hi)`` holds exactly.
+    range sums with an error bound; where a mean is too close to an end of
+    the range to decide from them, the segment is compared exactly
+    (``_above``), so ``[lo, hi)`` holds for the exact mean.
     """
 
     def __init__(self, y: np.ndarray):
@@ -530,8 +542,8 @@ class _Levels:
                 out &= (mean >= thr) if above else (mean < thr)
                 near |= np.abs(mean - thr) <= err
             for i in np.flatnonzero(near & (n > 0)):
-                m = _mean(self.y[int(ps[i]):q])
-                out[i] = (lo is None or m >= lo) and (hi is None or m < hi)
+                seg = self.y[int(ps[i]):q]
+                out[i] = (lo is None or _above(seg, lo)) and (hi is None or not _above(seg, hi))
             return out
 
         return level_ok
@@ -584,16 +596,6 @@ def _lexargmin(v: np.ndarray, r: np.ndarray):
     return arg, vmin, np.take_along_axis(r, np.expand_dims(arg, 0), axis=0)[0]
 
 
-def _first_best(v: np.ndarray, r: np.ndarray, state: np.ndarray) -> int:
-    """
-    The index of the least ``v``. Of equal values, the first fixes the state, and of those in that state the
-    least ``r`` wins, then the first: a rank never decides between states. With ``r`` all equal it is
-    ``argmin(v)``.
-    """
-    tied = v == v.min()
-    tied &= state == state[int(np.argmax(tied))]
-    return int(np.where(tied, r, np.iinfo(np.int64).max).argmin())
-
 
 class _Problem:
     def __init__(self, ts, y, idx, models, options: Sequence[_Option], counters: Sequence[_Counter],
@@ -619,7 +621,6 @@ class _Problem:
         self.dt = float(np.median(np.diff(ts))) if self.n > 1 else 1.0
         self.pen = np.array([opt.penalty for opt in self.options], dtype=float)
         self.rank = np.array([opt.rank for opt in self.options], dtype=np.int64)
-        self.state_of = np.array([list(self.by_state).index(opt.state) for opt in self.options], dtype=np.int64)
         self.min_d = np.array([opt.min_d for opt in self.options], dtype=float)
         self.max_d = np.array([opt.max_d for opt in self.options], dtype=float)
         # Count layers: the value of every counter in the current period. A segment adds one to each counter
@@ -760,7 +761,7 @@ class _Problem:
         if not np.isfinite(F[m - 1]).any():
             raise ValueError("no segmentation satisfies the constraints (counts, durations, transitions) and the "
                              "subtypes' conditions on these candidate breakpoints")
-        best = _first_best(F[m - 1].ravel(), R[m - 1].ravel(), np.repeat(self.state_of, L))
+        best = int(_lexargmin(F[m - 1].ravel(), R[m - 1].ravel())[0])
         o, l = (int(v) for v in np.unravel_index(int(best), (O, L)))
         k = m - 1
         bounds, opts = [int(B[k])], []
@@ -775,13 +776,11 @@ class _Problem:
                         spans: np.ndarray):
         """
         Best value, its rank sum, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per
-        count layer. Of equal values, the first found fixes the previous segment's state, and of those in that
-        state the lower rank sum wins (``_first_best``).
+        count layer. Of equal values, the lower rank sum wins, then the first found.
         """
         L = self.L
         best_v = np.full(L, math.inf)
         best_r = np.zeros(L, dtype=np.int64)
-        best_state = np.full(L, -1, dtype=np.int64)  # the previous segment's state; -1 for none
         best = np.full((L, 3), -1, dtype=np.int64)
         r_o = self.rank[o]
         # From the start of the record: no previous segment, a fresh period.
@@ -806,11 +805,10 @@ class _Problem:
                         t_ = self.tgtB[o] if self.tgtA[o, l] >= 0 else -1
                     if t_ < 0:
                         continue
-                    sp = _first_best(vmin[:, l], rmin[:, l], self.state_of)
-                    v, r, st = vmin[sp, l], rmin[sp, l] + r_o, self.state_of[sp]
-                    if v < best_v[t_] or (v == best_v[t_] and st == best_state[t_] and r < best_r[t_]
-                                          and math.isfinite(v)):
-                        best_v[t_], best_r[t_], best_state[t_], best[t_] = v, r, st, (jidx[sp, l], sp, l)
+                    sp = int(_lexargmin(vmin[:, l], rmin[:, l])[0])
+                    v, r = vmin[sp, l], rmin[sp, l] + r_o
+                    if v < best_v[t_] or (v == best_v[t_] and r < best_r[t_] and math.isfinite(v)):
+                        best_v[t_], best_r[t_], best[t_] = v, r, (jidx[sp, l], sp, l)
         return best_v, best_r, best[:, 0], best[:, 1], best[:, 2]
 
     def refine(self, bounds: List[int], opts: List[int], window_s: float, max_sweeps: int = 5):
@@ -1004,21 +1002,21 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         raise ValueError("models must be a non-empty mapping {state: model spec}")
     states = list(models)
     for st in states:
-        State(st)  # raises for an unknown state
+        if st not in _STATE_NAMES:
+            raise ValueError(f"models names {st!r}, which is not a state ({', '.join(_STATE_NAMES)})")
     _fit.validate_models({"y": dict(models)}, states=states)
     subtypes = dict(subtypes or {})
-    state_names = {s.value for s in State}
     for name, sub in subtypes.items():
         _v.name(name, "a subtype's name")
         if not isinstance(sub, Subtype):
             raise ValueError(f"subtypes[{name!r}] must be a Subtype, got {sub!r}")
-        if name in state_names:
+        if name in _STATE_NAMES:
             raise ValueError(f"subtype {name!r} has the name of a state; give it another name")
         if sub.state.value not in states:
             raise ValueError(f"subtype {name!r} refines state {sub.state.value!r}, which has no model")
 
     def unknown(what: str, name: str) -> ValueError:
-        if name in state_names:
+        if name in _STATE_NAMES:
             return ValueError(f"{what} names state {name!r}, which has no model")
         if what == "max_counts":
             return ValueError(f"max_counts names {name!r}, which is not a state with a model or a subtype")
@@ -1048,6 +1046,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         n_valid = int(np.isfinite(y).sum())
         pen = {st: var * (_n_params(models, st, ts, y) + 1) * math.log(max(n_valid, 2)) for st in states}
     elif isinstance(penalty, Mapping):
+        for name in penalty:
+            if name in subtypes:
+                raise unknown("penalty", name)
         pen = {st: float(penalty.get(st, 0.0)) for st in states}
     else:
         pen = {st: float(penalty) for st in states}
@@ -1091,7 +1092,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
                                int(len(B)), prob.costs.n_fits,
-                               {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes})
+                               {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes}, subtypes)
 
 
 __all__ = ["optimal_segments", "OptimalSegmentation", "Subtype", "compare_segments", "count_by_period", "METHODS"]
