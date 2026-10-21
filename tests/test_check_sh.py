@@ -51,10 +51,14 @@ def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
     assert "check.sh: the selected tests passed; no mypy or docs build" in run.stdout
 
 
-def test_a_selection_still_leaves_out_the_slow_tests():
-    run = _check(sys.executable, "tests/test_asymptote.py", "-k", "test_false_pass_rate_at_the_limit")
-    assert run.returncode == 5, run.stdout + run.stderr  # pytest: nothing ran
-    assert " deselected" in run.stdout and " passed" not in run.stdout
+def test_a_selection_leaves_out_the_slow_tests_unless_it_asks_for_them():
+    slow = ("tests/test_asymptote.py", "-k", "test_false_pass_rate_at_the_limit", "--co")  # 9 slow cases
+    default = _check(sys.executable, *slow)
+    assert default.returncode == 5, default.stdout + default.stderr  # pytest: nothing collected
+    assert "test_false_pass_rate_at_the_limit" not in default.stdout
+    asked = _check(sys.executable, *slow, "-m", "slow")  # a later -m wins over "not slow"
+    assert asked.returncode == 0, asked.stdout + asked.stderr
+    assert asked.stdout.count("test_false_pass_rate_at_the_limit") == 9
 
 
 def test_a_selection_asks_only_for_the_test_extra(tmp_path):

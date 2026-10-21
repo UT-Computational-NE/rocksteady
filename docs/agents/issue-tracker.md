@@ -16,7 +16,7 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Issue format
 
-Write a ticket's body under these headings. Only a child ticket has `## Parent`, and it replaces the `Part of #<parent>` line:
+Write a ticket's body under these headings. Only a child ticket has `## Parent`:
 
 ```markdown
 ## Parent
@@ -34,7 +34,7 @@ as a property a test can check, e.g. "no segment could take an earlier-declared 
 - [ ] `tools/check.sh` passes.
 ```
 
-A child ticket is also a sub-issue of its parent (see **Conventions**), gets a row in the parent's **Tickets** table when it has one (same columns as the rows already there), and gets a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
+A child ticket is also linked to its parent as in **Make an issue a sub-issue of a parent** under **Conventions** (without sub-issues, that is the `Part of #<parent>` line). When it belongs to an epic, an issue whose body has a `## Tickets` table, add its row there (the epic need not be the parent: #62's parent is the spec #55, and its row is in the epic #68), with the same columns as the rows already in it. Add a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
 
 ## Starting a ticket
 
