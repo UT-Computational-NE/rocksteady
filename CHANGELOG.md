@@ -9,6 +9,10 @@
   continue, the period containing it (its start, as `count_by_period`
   indexes periods, or "the whole record"), and the caps and transitions in
   force, so the unusual day in a long batch run can be found (#62).
+- `optimal_segments` no longer fits the model of a state capped at 0
+  segments per period, which can never be used, so `n_fits` can be lower;
+  the results are unchanged. With pruning, an infeasible call fits models
+  only up to where every segmentation gets stuck (#62).
 
 ### Documentation
 

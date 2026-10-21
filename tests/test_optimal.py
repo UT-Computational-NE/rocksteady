@@ -431,7 +431,7 @@ def test_an_infeasible_record_without_periods_is_named_whole():
     msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="exact", max_counts={"steady": 1},
                               max_duration_s={"steady": 4.0}, penalty=0.0)
     assert "continue from 104.0 s" in msg
-    assert "in the whole record" in msg and "period starting" not in msg
+    assert msg.count("the whole record") == 1 and "period starting" not in msg
     assert "max_counts={'steady': 1}" in msg
 
 
@@ -441,7 +441,7 @@ def test_a_duration_no_candidate_meets_is_named_the_same_way():
     msg = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="subset", candidates=[0, 5, 10], per=5.0,
                               min_duration_s={"steady": 6.0}, max_duration_s={"steady": 8.0})
     assert re.search(r"none can continue from 3\.0 s \(sample 0\), in the period starting 0\.0 s\. "
-                     r"In force: max_counts=none in each period \(5\.0\), transitions=any\.$", msg), msg
+                     r"In force: max_counts=none, transitions=any\.$", msg), msg
 
 
 @pytest.mark.parametrize("prune", [True, False])
@@ -452,3 +452,49 @@ def test_the_time_is_the_models_not_the_pruning_surrogates(prune):
     msg = _infeasible_message(t, np.zeros(20), {"transient": "exp"}, method="exact", prune=prune,
                               max_counts={"transient": 1}, max_duration_s={"transient": 3.0})
     assert "continue from 0.0 s (sample 0)" in msg
+
+
+def _fit_ends(monkeypatch):
+    """The last time of every segment the model fits are asked for."""
+    ends, real = [], rs.fit.fit_model
+
+    def spy(spec, t, y, state):
+        ends.append(float(t[-1]))
+        return real(spec, t, y, state)
+
+    monkeypatch.setattr(rs.fit, "fit_model", spy)
+    return ends
+
+
+def test_an_infeasible_record_is_not_fitted_past_where_it_gets_stuck(monkeypatch):
+    # One transient of at most 10 s and one steady segment of at most 200 s: stuck at 210 s of 1000 s. Pruning
+    # starts from a constant-fit surrogate that fails as well; no segment after that point needs a model fit.
+    t = np.arange(1000.0)
+    ends = _fit_ends(monkeypatch)
+    msg = _infeasible_message(t, np.zeros(1000), {"steady": 0, "transient": "exp"}, method="exact", grid_s=5.0,
+                              max_counts={"steady": 1, "transient": 1},
+                              max_duration_s={"steady": 200.0, "transient": 10.0}, penalty=0.0)
+    assert "continue from 210.0 s" in msg
+    assert ends and max(ends) < 210.0
+
+
+def test_a_state_capped_at_zero_is_never_fitted(monkeypatch):
+    # The probe of review 1 on #82: a transient capped at 0 cannot be placed, so its exp model is never fitted.
+    t = np.arange(300.0)
+    y = np.where(t < 100, 0.0, 5.0 * (1 - np.exp(-(t - 100) / 20))) + np.random.default_rng(0).normal(0, 0.05, 300)
+    ends = _fit_ends(monkeypatch)
+    msg = _infeasible_message(t, y, {"steady": 0, "transient": "exp"}, method="exact", grid_s=2.0, penalty=0.0,
+                              max_counts={"transient": 0, "steady": 1}, max_duration_s={"steady": 200.0})
+    assert "continue from 200.0 s" in msg
+    assert ends == []
+
+
+def test_the_constraints_in_force_read_as_plain_values():
+    # NumPy caps, a Timedelta period and set-valued transitions print as the values they hold.
+    t = pd.date_range("2026-01-01", periods=48, freq="1h")
+    msg = _infeasible_message(t, np.zeros(48), {"steady": 0, "transient": 1}, method="exact",
+                              per=pd.Timedelta("1D"), max_counts={"steady": np.int64(1), "transient": np.int64(0)},
+                              transitions={"steady": {"transient", "steady"}, "transient": ("steady",)},
+                              max_duration_s={"steady": 3600.0 * 20}, penalty=0.0)
+    assert ("In force: max_counts={'steady': 1, 'transient': 0} per period (1 days 00:00:00), "
+            "transitions={'steady': ['steady', 'transient'], 'transient': ['steady']}.") in msg, msg
