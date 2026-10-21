@@ -379,7 +379,7 @@ class Timing:
         result, or low block coverage) keeps the last decided label instead
         of returning INDETERMINATE.
     undecided_counts_toward_hold
-        When an undecided window keeps a passing state, it also advances the
+        When an undecided window keeps a passing label, it also advances the
         hold clock. If False, the hold clock pauses until a window passes
         again.
     max_gap_s
