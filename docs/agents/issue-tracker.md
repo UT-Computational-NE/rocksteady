@@ -14,6 +14,19 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Starting a ticket
+
+Claim a ticket before writing code, so that no one else builds it at the same time:
+
+1. Read `gh issue view <n> --json assignees`. If it is assigned to someone else, the ticket is taken: ask the user.
+2. Look for work already under way. If you find some, ask the user whether to review it, continue it or replace it:
+   - **A PR that closes the issue:** `gh issue view <n> --json closedByPullRequestsReferences`. This misses stacked PRs, which target a parent branch, and PRs that say only "Part of #<n>".
+   - **Any open PR that mentions the issue:** `gh pr list --state open --json number,body --jq '[.[] | select(.body | test("#<n>\\b")) | .number]'`. A mention alone is not a claim, so read each match and ask only if it does the work.
+   - **Another session of your own account:** `git ls-remote --heads origin "feat/<n>-*"` and `git worktree list`.
+3. `gh issue edit <n> --add-assignee @me`, then create the branch and worktree (see `AGENTS.md`).
+
+Done when the issue is assigned to you and no other PR or branch is working on it.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_

@@ -21,6 +21,15 @@
 - `Report.provenance["parameter_reference"]` says "segment centre" for
   `poly` (was "interval centre"), so exported JSON reads differently (#56).
 
+### Tests and CI
+
+- A `docs` extra (`pip install -e ".[docs]"`, included in `dev`) replaces
+  `docs/requirements.txt` for CI and Read the Docs (#73).
+- `tools/check.sh` runs CI's fast checks locally: the tests without `slow`,
+  and the strict docs build (#73).
+- `tests/test_vocabulary.py` fails on phrases `GLOSSARY.md` avoids that are
+  always wrong (#73).
+
 ## 0.5.0
 
 Best-fit segments under limits (#45), the documentation site (#47, #49), the
