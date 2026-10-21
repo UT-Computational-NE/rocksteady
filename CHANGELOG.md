@@ -35,7 +35,8 @@
   first and last segments (default: any; a one-segment record must satisfy
   both), so a transient cut off by the record's edge need not be called a
   startup. `min_duration_s` / `max_duration_s` take subtypes, and a
-  subtype's and its state's bounds both bind. `penalty` takes subtypes: a
+  subtype's and its state's bounds both bind; a subtype whose bounds leave
+  no duration is refused up front. `penalty` takes subtypes: a
   subtype's value replaces its state's, and with `"bic"` (or when the
   mapping does not name it) a subtype takes its state's.
   `OptimalSegmentation.penalty` lists every state's and then every

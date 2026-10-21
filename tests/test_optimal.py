@@ -1184,3 +1184,26 @@ def test_initial_and_final_naming_every_state_change_nothing(subtypes):
     a = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
     b = optimal_segments(t, y, {"steady": 0, "transient": 1}, initial=every, final=every, **kw)
     assert a.segments == b.segments and a.objective == b.objective and a.counts.equals(b.counts)
+
+
+@pytest.mark.parametrize("lo, hi", [("hot", "steady"), ("steady", "hot"), ("hot", "hot")])
+def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
+    """Review 1 of PR #102: such a subtype could never be used, and its segments would silently go elsewhere."""
+    t, y = _operating_day()
+    culprit = f"min_duration_s 50.0 s ({lo}) > max_duration_s 40.0 s ({hi})"
+    with pytest.raises(ValueError, match=re.escape(f"subtype 'hot' can take no segment: {culprit}")):
+        optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, subtypes=dict(_LEVELS),
+                         min_duration_s={lo: 50.0}, max_duration_s={hi: 40.0})
+    # A state's own bounds are as in 0.5.0: never refused, the state is just never used.
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                         min_duration_s={"transient": 50.0}, max_duration_s={"transient": 40.0})
+    assert {s.state for s in r.segments} == {ST}
+
+
+@pytest.mark.parametrize("b, want", [(0.5, "b"), (1.0, "a"), (1.5, "a")])
+def test_a_subtypes_own_penalty_decides_before_declaration_order(b, want):
+    """Review 1 of PR #102: subtypes tie only at the same penalty, and then the one declared first wins."""
+    t, y = _operating_day()
+    r = optimal_segments(t, y, {"steady": 0}, method="exact", grid_s=5, penalty={"steady": 1.0, "b": b},
+                         subtypes={"a": rs.Subtype("steady"), "b": rs.Subtype("steady")})
+    assert len(r.segments) > 1 and {s.subtype for s in r.segments} == {want}
