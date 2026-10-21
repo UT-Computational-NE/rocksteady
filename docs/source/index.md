@@ -30,6 +30,7 @@ guide/methods
 :caption: Reference
 
 api/index
+glossary
 references
 changelog
 development

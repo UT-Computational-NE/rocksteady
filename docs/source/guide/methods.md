@@ -6,10 +6,10 @@ the {doc}`../references`.
 
 ## Notation
 
-Samples arrive at times $t_i = t_0 + i\,\Delta$, where $\Delta$ is
-`Timing.sample_period_s`. A **signal** $s(x_i)$ is a scalar computed from the
-raw sample $x_i$: a column, or a builder such as the mean or spread of
-several columns (`rocksteady.signals`).
+Samples arrive at times $t_i = t_0 + i\,\Delta$, where the sample spacing
+$\Delta$ is `Timing.sample_period_s`. A **signal** $s(x_i)$ is a scalar
+computed from the raw sample $x_i$: a column, or a builder such as the mean
+or spread of several columns (`rocksteady.signals`).
 
 ## Blocks and the window
 
@@ -194,7 +194,7 @@ $\tau_{\text{int}}$, and so $u$, is unreliable.
 approach, $y(s) = y_\infty + A\,e^{-s/\tau}$ with $s = t - t_0$ from the
 first block time, and bounds the **remaining approach** at the current
 sample. That is $(B - 1)\Delta/2$ after the nominal centre of the last block,
-for $B$ samples per block and sample period $\Delta$; the detector supplies
+for $B$ samples per block and sample spacing $\Delta$; the detector supplies
 them through `Criterion.bind_timing`. The current sample is always a valid
 one, so this holds even when tolerated gaps have moved the block times:
 
@@ -338,7 +338,7 @@ Every verdict carries a {py:class}`~rocksteady.core.Reason`. The detector
 is causal, so batch evaluation of a record reproduces the online labels
 exactly.
 
-## Fits by interval
+## Fits by segment
 
 A record is split into **segments by state**
 ({py:func}`~rocksteady.states.segments_from`):
@@ -375,10 +375,10 @@ $(1 + 3 r_1)/n$. The columns of $J$ are scaled to unit norm and factorised by
 SVD, so the result does not depend on units. Parameters along a direction
 the data cannot determine get infinite variance. Derived parameters ($\tau$,
 $\lambda$, $A$ at the start) follow by the delta method. `tau_unidentifiable`
-flags a time constant the interval cannot resolve: span $< \tau/2$,
+flags a time constant the segment cannot resolve: span $< \tau/2$,
 $\tau < 5\Delta$, or $u(\tau) > \tau/2$.
 
-**Per interval** ({py:func}`~rocksteady.metrics.signal_stats`): the mean;
+**Per segment** ({py:func}`~rocksteady.metrics.signal_stats`): the mean;
 the residual standard deviation with the fit's degrees of freedom removed;
 $\tau_{\text{int}}$ and $N_{\text{eff}}$ of the residuals; and
 $u(\text{mean}) = s / \sqrt{N_{\text{eff}}}$.
@@ -400,7 +400,7 @@ deviation of $b$), and $r$ Pearson's correlation. $N_{\text{eff}}$ comes
 from the **de-meaned, not detrended** error, because slow wander in an
 offset is real uncertainty in the bias.
 
-## Best-fit segments under limits
+## Best-fit segments under constraints
 
 {py:func}`~rocksteady.optimal.optimal_segments` chooses breakpoints
 $0 = b_0 < b_1 < \dots < b_K = N$ and a state $s_k$ for each segment, to
@@ -411,7 +411,7 @@ $$
 \qquad C_s(p, q) = \min_\theta \sum_{i=p}^{q-1} \big(y_i - f_s(t_i; \theta)\big)^2 ,
 $$
 
-subject to:
+subject to the constraints:
 - at most $N_s$ segments of each state per period, a segment counting
   against every period it touches;
 - the allowed state transitions;
@@ -423,9 +423,9 @@ parameters and $\hat\sigma = 1.4826\,\operatorname{MAD}(\Delta y)/\sqrt 2$
 estimated robustly from first differences.
 
 This is optimal partitioning by **dynamic programming** (Bellman 1961;
-Jackson et al. 2005; reviewed by Truong et al. 2020). It is extended with
-a state that tracks the last segment's label and the counts used in the
-current period. With $F(k, s, c)$ the best cost of a segmentation ending at
+Jackson et al. 2005; reviewed by Truong et al. 2020). It is extended to
+track the last segment's state and the counts used in the current
+period. With $F(k, s, c)$ the best cost of a segmentation ending at
 candidate breakpoint $k$ with last state $s$ and counts $c$:
 
 $$

@@ -79,7 +79,7 @@ def suggest_timing(steady, dt: float, *, transient=None, transient_t=None, block
         run of 20 valid samples is needed. Longer is better: a few hundred
         noise correlation times.
     dt : float
-        Sample period in seconds.
+        Sample spacing in seconds.
     transient : array, optional
         A typical transient of the same signal (a step response), for its
         time constant; ``transient_t`` gives its times (default: every ``dt``).

@@ -76,7 +76,7 @@ detector = rs.build_detector(spec)
 Runnable examples with synthetic data are in [`examples/`](https://github.com/UT-Computational-NE/rocksteady/tree/main/examples):
 
 - [`thermal_drift.py`](https://github.com/UT-Computational-NE/rocksteady/blob/main/examples/thermal_drift.py): channels relaxing to a setpoint, with an event log, settling time and hold time. It then fits the approach to the new setpoint with a first-order model (τ recovered as 600 ± 1 s) and compares two channels by state.
-- [`actuator_steps.py`](https://github.com/UT-Computational-NE/rocksteady/blob/main/examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown rule. It ends with a fit report by state.
+- [`actuator_steps.py`](https://github.com/UT-Computational-NE/rocksteady/blob/main/examples/actuator_steps.py): a level held by a stepping actuator, with a level-dependent noise model and a shutdown override. It ends with a fit report by state.
 
 ## Concepts
 
@@ -86,10 +86,10 @@ combines them is shared.
 | Part | What it is | Built in |
 |---|---|---|
 | **Signals** | Named scalars computed from each raw sample: a column, or a derived quantity | column, `mean`, `spread`, `difference` |
-| **Criteria** | Tests on one signal over the trailing window of block means. Each returns a statistic, its uncertainty, and a limit | `DriftCriterion` (no resolvable slope), `DeviationCriterion` (stays within a tolerance of a constant or a line), `BoundCriterion` (mean inside a band), `AsymptoteCriterion` (a first-order approach is within a limit of its final value) |
+| **Criteria** | Tests on one signal over the trailing window of block means. Each returns a statistic, its uncertainty, and a limit | `DriftCriterion` (no resolvable slope), `DeviationCriterion` (stays within a limit of a constant or a line), `BoundCriterion` (mean inside a band), `AsymptoteCriterion` (a first-order approach is within a limit of its final value) |
 | **Disturbances** | External action, found in the signals or read from a log; resets the clocks | `StepChange` (a discrete move in a signal), `EventLog` (logged events with durations) |
-| **Timing** | Sample period, block length, window, settling time after a disturbance, hold time, gap tolerance, and what an undecided window means. Block and window lengths are required: `rs.suggest_timing` proposes them from your data | `Timing` |
-| **Overrides** | Domain rules that force a label | `FloorLatch` (below a floor the system is steady by definition, for example when shut down) |
+| **Timing** | Sample spacing, block length, window, settling time after a disturbance, hold time, gap tolerance, and what an undecided window means. Block and window lengths are required: `rs.suggest_timing` proposes them from your data | `Timing` |
+| **Overrides** | Domain knowledge that forces a label | `FloorLatch` (below a floor the system is steady by definition, for example when shut down) |
 
 ### Labels
 
@@ -192,8 +192,8 @@ of the time at 40 blocks spanning one τ (φ = 0), and 58 % at φ = 0.5.
 
 Times passed to `update` must increase and lie on a grid of
 `sample_period_s`. Each step must be within `Timing.grid_tolerance` sample
-periods of a whole number of periods. The default, 0.5, rounds any step of
-at least half a period to the grid; set it lower (for example 0.1) to
+spacings of a whole number of spacings. The default, 0.5, rounds any step of
+at least half a spacing to the grid; set it lower (for example 0.1) to
 reject jittery or drifting clocks. A record sampled faster than
 `sample_period_s` is rejected. Resample it first, for example with
 `df.resample("1s").mean()`, which also leaves NaN rows where samples are
@@ -204,7 +204,7 @@ the detector clears its history on any of these:
 
 - a non-finite sample;
 - an unreadable sample;
-- a step in time of more than 1.5 sample periods.
+- a step in time of more than 1.5 sample spacings.
 
 With `max_gap_s > 0`, shorter gaps are kept as missing data. Block means
 then ignore the missing samples, and a window is evaluated only if every
@@ -233,7 +233,7 @@ undecided policy, because no window is evaluated on it. The hold clock
 **pauses** over it: it neither resets nor advances, for NaN rows and
 omitted timestamps alike. `segments_from` bridges such samples inside a
 steady run, so a gap given as NaN rows and the same gap given as omitted
-timestamps produce the same steady intervals.
+timestamps produce the same steady segments.
 
 ### Why a sample has its label
 
@@ -258,19 +258,19 @@ With `hold_when_undecided`, rows with `undecided`, `invalid_result` or
 `low_coverage` keep the last decided label, and the reason says why that
 window was not decided.
 
-## Intervals, fits and statistics by state
+## Segments, fits and statistics by state
 
-Once a record is labelled, `rocksteady` can split it into intervals, fit
-each interval, and report statistics by state.
+Once a record is labelled, `rocksteady` can split it into segments, fit
+each segment, and report statistics by state.
 
 ```python
 report = rs.batch.fit_report(
     detector, df,
     models={"level": {"steady": 0, "transient": "first_order"}, "actuator": 1},
 )
-print(report)          # tables by state and by interval
+print(report)          # tables by state and by segment
 report.by_state        # DataFrame indexed by (signal, state)
-report.by_interval     # DataFrame, one row per (signal, interval)
+report.by_interval     # DataFrame, one row per (signal, segment)
 ```
 
 ```
@@ -284,23 +284,23 @@ level   fit vs data   (models: steady poly 0, transient first_order, indetermina
 ### States
 
 `rs.segments(labels)` (or `rs.segments_from(detector, batch.run(...))`)
-splits a record into contiguous intervals, each in one state:
+splits a record into segments: contiguous runs, each in one state:
 
 | State | From the labels |
 |---|---|
 | steady | a run that reached `steady`, with any `holding` just before it |
 | transient | `disturbed`, `settling`, and `holding` that never confirmed |
-| indeterminate | `indeterminate` outside steady intervals: start of record, data gaps, windows too noisy to decide |
+| indeterminate | `indeterminate` outside steady segments: start of record, data gaps, windows too noisy to decide |
 
 The "all" rows cover every sample.
 
 Labels are causal: a sample is called steady only once the window *ending*
 at it passes. `segments_from` therefore **backfills** each steady
-interval over the window that certified it: the `W - 1` samples before
+segment over the window that certified it: the `W - 1` samples before
 its first steady sample, for a window of `W` samples. It does not backfill runs that
 an override forced to steady (they were not certified by data), and it
 never backfills across a disturbance. A segment that holds any
-override-forced label has `forced=True`; the interval tables carry a
+override-forced label has `forced=True`; the per-segment tables carry a
 `forced` column and print its state as `steady (forced)`. During slow approaches, labels can
 flicker between `settling` and `indeterminate`. `min_samples=` merges runs
 shorter than that into their neighbours.
@@ -312,7 +312,7 @@ order. Any other model is named, or given as `{"model": ..., **options}`:
 
 | Model | Form | Parameters |
 |---|---|---|
-| `poly` (order *p*) | polynomial on scaled time | `level`, `slope`, `curvature`, … at the interval centre |
+| `poly` (order *p*) | polynomial on scaled time | `level`, `slope`, `curvature`, … at the segment centre |
 | `first_order` | `y∞ + (y0 − y∞)·exp(−(t − t0)/τ)` | `y0`, `y_inf`, `tau`, `lambda`; `y0=0` gives `A(1 − exp(−λt))` |
 | `exp` | `c + A·exp((t − t0)/T)` | `c`, `A`, `T` (growth T > 0, decay T < 0; a reactor period) |
 
@@ -320,16 +320,16 @@ Missing `indeterminate` entries fall back to `transient`. The exponential
 models are fitted by variable projection, with numpy only. Their time
 constants come with uncertainties corrected for autocorrelation.
 
-`tau_unidentifiable` flags a time constant the interval cannot determine:
-- the interval is shorter than τ/2, so the curve looks like a line;
+`tau_unidentifiable` flags a time constant the segment cannot determine:
+- the segment is shorter than τ/2, so the curve looks like a line;
 - τ is under five samples, so it looks like a step;
 - or u(τ) > τ/2.
 
 ### The fit is the detrend
 
 Noise statistics (`std`, `tau_int`, `N_eff`) come from the residuals about
-each interval's own model, so **the model decides what counts as noise**:
-- **Too simple:** a constant fitted to a drifting interval leaves the drift in the "noise". The tell-tale is a `tau_int` much longer than the sensor's time constant.
+each segment's own model, so **the model decides what counts as noise**:
+- **Too simple:** a constant fitted to a drifting segment leaves the drift in the "noise". The tell-tale is a `tau_int` much longer than the sensor's time constant.
 - **Too flexible:** an overly flexible model absorbs slow noise and makes the uncertainty look better than it is.
 
 Choose models from the physics.
@@ -338,7 +338,7 @@ Choose models from the physics.
 
 | What | Error | Columns |
 |---|---|---|
-| One signal, per interval (`metrics.signal_stats`) | residual about the fit | mean, std, `tau_int`, `N_eff`, `u(mean)`, fitted parameters ± u |
+| One signal, per segment (`metrics.signal_stats`) | residual about the fit | mean, std, `tau_int`, `N_eff`, `u(mean)`, fitted parameters ± u |
 | Live vs fit, per state (`report.fit_report`) | `e = fit − data` | n, time, bias, std, MAE, RMSE, max\|e\|, NRMSE, r, `u(bias)`, `tau_int`, `N_eff` |
 | Live vs live, per state (`report.compare_report`) | `e = a − b` | the same |
 
@@ -352,7 +352,7 @@ The column conventions:
 Neighbouring samples are correlated, so `std/√n` understates the uncertainty of a mean.
 
 - **The correction:** `rocksteady` estimates the integrated autocorrelation time `tau_int` and uses the effective sample count `N_eff = duration / tau_int`. It reports `u(mean) = std/√N_eff` and `u(bias) = std_e/√N_eff`. The spread itself is not corrected.
-- **Pooling:** autocorrelation is estimated within contiguous pieces only: never across interval boundaries, non-finite samples or omitted timestamps.
+- **Pooling:** autocorrelation is estimated within contiguous pieces only: never across segment boundaries, non-finite samples or omitted timestamps.
 - **Comparisons:** errors in comparisons are de-meaned but not detrended. A slowly wandering offset is real uncertainty in the bias.
 - **Low N_eff:** `*` marks `N_eff < 10`, where a normal coverage factor is not appropriate.
 
@@ -361,43 +361,43 @@ about 1 % of the true uncertainty for φ up to 0.9. Coverage of `τ ± 2u(τ)`
 was 93–97 % (nominal 95.4 %).
 
 Fit parameter uncertainties (`uncertainty="ar1"`, the default) treat
-consecutive valid samples as one sample apart. A fit whose interval has
+consecutive valid samples as one sample apart. A fit whose segment has
 missing samples carries the flag `time_gaps`. With up to 60 % of samples
 missing, the level uncertainty stayed within about +10 % of the truth in
 Monte Carlo checks. `uncertainty="ar1_time"` models the actual sample
 positions instead; it was no better calibrated, so it is opt-in.
 
 `stats.mean_with_uncertainty(x, dt, u_type_b=None)` remains for a single
-accepted interval. It detrends with a line and combines an optional Type B
+steady segment. It detrends with a line and combines an optional Type B
 uncertainty in quadrature.
 
 ### Provenance, evaluation and export
 
 `report.provenance` records how a report was made:
 - the rocksteady version;
-- the time origin and sample period;
+- the time origin and sample spacing;
 - every signal's model spec per state, with defaults filled in (`fit.normalize_model`), and its parameter order;
 - the uncertainty methods and the NRMSE normalization;
 - from `batch.fit_report`, the detector's effective timing, validity policy and components, and the segmentation settings.
 
 The tables carry it in `.attrs["rocksteady"]`. `report.to_json(path)` writes
-it with both tables and every interval's fit (`FitResult.to_dict()`).
+it with both tables and every segment's fit (`FitResult.to_dict()`).
 
-Fitted parameters are stated at a reference time `t_ref`: the interval
+Fitted parameters are stated at a reference time `t_ref`: the segment
 centre for `poly`, and the first valid sample for the exponential models. The
 `t_ref_s` column gives it. `FitResult.evaluation` is a numerically stable
-form; for `exp` growth it holds the amplitude at the interval end, which
+form; for `exp` growth it holds the amplitude at the segment end, which
 cannot underflow. `FitResult.predict(t)`, or
 `fit.evaluate(model, evaluation, t)` on an exported record, reproduces the
 fitted curve at any time on the same clock.
 
-## Best-fit segments under limits
+## Best-fit segments under constraints
 
 `rs.optimal_segments` answers a different question from the detector: *what
 is the best piecewise description of this record, given a budget of
 segments?* It chooses breakpoints and a state for each segment, fits each
 segment with the model for its state, and minimises the total squared error
-(so the RMS of fit − data), subject to your limits:
+(so the RMS of fit − data), subject to your constraints:
 
 ```python
 res = rs.optimal_segments(
@@ -420,10 +420,10 @@ These are **best-fit segments, not certified steady states**: the optimiser
 uses the segments it is allowed, whether or not the data would pass the
 detector's criteria.
 
-| Limit | Meaning |
+| Constraint | Meaning |
 |---|---|
 | `per`, `max_counts` | at most N segments of a state per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
-| `transitions` | which state may follow which; default any. This constrains labels only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
+| `transitions` | which state may follow which; default any. This constrains the sequence of states only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
 | `min_duration_s`, `max_duration_s` | per state |
 | `penalty` | added per segment. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. |
 

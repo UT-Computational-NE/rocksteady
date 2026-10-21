@@ -5,7 +5,8 @@ application package that connects a facility's data to it:
 - which raw columns become signals;
 - which criteria apply, with their calibrated limits and noise models;
 - which events and actions disturb the system;
-- which domain rules force a label;
+- which overrides force a label (domain knowledge, such as a floor below
+  which the system is steady);
 - how results are reported.
 
 Keep everything facility-specific in the adapter: channel names, limits,
@@ -211,7 +212,7 @@ would have given. Segmentation and reports build on its output:
 
 Pass the `batch.run` output, not just its labels, to `segments_from` and
 `fit_report`. It carries the sample times, the forced labels and the
-reasons that segmentation needs. For best-fit segments under limits, see
+reasons that segmentation needs. For best-fit segments under constraints, see
 {doc}`optimal`.
 
 The whole file:
@@ -287,7 +288,7 @@ All four used by name, in plain data:
    :no-index:
 ```
 
-Contract rules:
+The contract:
 - A criterion's uncertainty must be a standard uncertainty: non-negative and
   finite. An invalid result (`CriterionResult.invalid_reason`) is
   undecided, never a pass.

@@ -2,16 +2,16 @@
 A process level held by a stepping actuator.
 
 Pattern: discrete actuator moves are found in the data (``StepChange``),
-the level must stay within a relative tolerance of its window mean with a
+the level must stay within a relative limit of its window mean with a
 level-dependent measurement-noise model (``DeviationCriterion``), the
 actuator may drift slowly without counting as a move (linear model), and
 a shutdown below a floor is steady by definition (``FloorLatch``).
 
 Afterwards the record is split into steady, transient and indeterminate
-intervals, and each signal is fitted interval by interval: the level with
+segments, and each signal is fitted segment by segment: the level with
 a constant when steady and a first-order approach when transient, the
 actuator with a line. The report gives fit statistics by state and by
-interval, with uncertainties corrected for autocorrelation.
+segment, with uncertainties corrected for autocorrelation.
 
 Run: python examples/actuator_steps.py [--plot]
 """

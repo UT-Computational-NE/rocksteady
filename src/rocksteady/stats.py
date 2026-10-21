@@ -47,7 +47,7 @@ independent samples.
 Uncertainty of a mean
 ---------------------
 ``tau_int`` and ``mean_with_uncertainty`` give the Type A uncertainty of
-the mean over an accepted interval through an effective sample count; see
+the mean over a steady segment through an effective sample count; see
 their docstrings for the estimator choices.
 """
 
@@ -237,7 +237,7 @@ def tau_int(x: np.ndarray, dt: float, max_lag_frac: float = 0.25) -> float:
     ``tau_int = dt * (1 + 2 sum_k rho(k))``, floored at ``dt``, with:
 
     - the series detrended by an OLS line first, so that a residual drift
-      within the accepted interval does not inflate the correlation time;
+      within the steady segment does not inflate the correlation time;
     - ``rho(k)`` the lag-normalised estimate, ``mean(r_i r_{i+k}) / mean(r_i^2)``;
     - the sum unweighted and stopped before the first non-positive
       ``rho(k)``, or at ``max_lag_frac`` of the record.
@@ -275,9 +275,9 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool =
     Integrated autocorrelation time pooled over several pieces of a series.
 
     Each piece is a contiguous run of already-detrended (or de-meaned)
-    values, such as fit residuals in one interval. Lag products are summed
+    values, such as fit residuals in one segment. Lag products are summed
     within pieces only, never across the boundaries between them, so gaps
-    and interval edges add no spurious correlation. The estimator is the
+    and segment edges add no spurious correlation. The estimator is the
     one of ``tau_int``: ``rho(k)`` is the mean lag-``k`` product over the
     mean square, summed up to the first non-positive ``rho`` or
     ``max_lag_frac`` of the longest piece, and ``tau = dt (1 + 2 sum)``,
@@ -325,7 +325,7 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool =
 
 def mean_with_uncertainty(x: np.ndarray, dt: float, u_type_b: Optional[float] = None) -> dict:
     """
-    Reported mean over an accepted interval with its uncertainty.
+    Reported mean over a steady segment with its uncertainty.
 
     The Type A part uses the effective sample count ``N_eff = duration /
     tau_int``, so that autocorrelated noise does not understate it:

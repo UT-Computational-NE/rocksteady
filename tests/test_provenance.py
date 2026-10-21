@@ -42,7 +42,7 @@ def test_predict_reproduces_the_fit_and_survives_json(name):
 
 def test_reference_times_and_stable_growth_amplitude():
     fits = _fits()
-    assert fits["poly"][0].t_ref == T0 + 99.5  # interval centre
+    assert fits["poly"][0].t_ref == T0 + 99.5  # segment centre
     assert fits["first_order"][0].t_ref == T0 and fits["exp_decay"][0].t_ref == T0  # first valid sample
     growth = fits["exp_growth"][0]
     assert growth.params["A"] == 0.0  # exp(-199 / 0.25) underflows: display only
