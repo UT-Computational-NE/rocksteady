@@ -37,10 +37,13 @@ def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     assert "check.sh:" in run.stderr and str(tmp_path / "no-such-python") in run.stderr
 
 
-def test_arguments_select_the_tests_and_skip_the_docs_build():
+def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
+    # As in CI's test jobs, which install only the test extra: the docs modules cannot be found.
+    (tmp_path / "sitecustomize.py").write_text(
+        "import sys\nfor m in ('sphinx', 'sphinx_rtd_theme', 'myst_parser'):\n    sys.modules[m] = None\n")
     one = "tests/test_check_sh.py::test_a_missing_interpreter_is_named_and_stops_the_checks"
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
-    run = subprocess.run(["bash", CHECK, one], env={**env, "PYTHON": sys.executable},
+    run = subprocess.run(["bash", CHECK, one], env={**env, "PYTHON": sys.executable, "PYTHONPATH": str(tmp_path)},
                          capture_output=True, text=True, timeout=60)
     assert run.returncode == 0, run.stderr
     assert "1 passed" in run.stdout

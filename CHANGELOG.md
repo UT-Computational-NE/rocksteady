@@ -34,7 +34,7 @@
 - `tools/check.sh` prints the Python it runs, and stops early, naming the
   fix, when that Python is missing or lacks the dev extra (#84).
 - `tools/check.sh <pytest args>` runs only that test selection, without
-  the docs build (#87).
+  the docs build, and needs only the test extra (#87).
 - `docs/agents/issue-tracker.md` gives the issue format, and what an epic's
   ticket adds: the sub-issue link, a row in the epic's table, `blocked_by`
   links (#87).
