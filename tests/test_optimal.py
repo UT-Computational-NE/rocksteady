@@ -1014,8 +1014,8 @@ def test_exact_matches_brute_force_with_events_on_two_masks(seed, periods):
                 "steady_other": rs.Subtype("steady")}
     caps = {"heat_up": 1, "valved": 1, "steady": 2}
     kw = dict(per=3.0, max_counts=caps) if periods else dict(max_counts=caps)
-    want_cost, (_, want_names) = _brute(t, y, {"steady": 0, "transient": 1}, penalty=0.5, subtypes=subtypes,
-                                        events=events, **kw)
+    want_cost, _ = _brute(t, y, {"steady": 0, "transient": 1}, penalty=0.5, subtypes=subtypes,
+                          events=events, **kw)
     got = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", penalty=0.5, subtypes=subtypes,
                            events=events, **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
@@ -1037,6 +1037,7 @@ def test_an_event_condition_reads_the_mask_whatever_the_signal():
     r = optimal_segments(t, y, {"transient": 1}, method="subset", candidates=[0, 4, 8, 12], penalty=0,
                          max_duration_s={"transient": 4.0}, subtypes=subtypes, events={"heater": heater})
     assert [s.subtype for s in r.segments] == ["undriven", "driven", "undriven"]
+
 
 def test_a_heat_up_cap_of_one_merges_a_days_two_heat_ups():
     """A two-stage heat-up: the heater switches on at 08:00 (20 to 50) and again at 09:00 (50 to 80)."""
@@ -1096,8 +1097,16 @@ def test_event_validation():
     both = [rs.Subtype("transient", events=dict(e)) for e in ([("a", True), ("b", False)], [("b", False), ("a", True)])]
     assert both[0] == both[1] and hash(both[0]) == hash(both[1]) and dict(both[0].events) == {"a": True, "b": False}
     assert pickle.loads(pickle.dumps(heat_up)) == heat_up  # plain data, for batch runs across processes
-    with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\}"):
-        rs.Subtype("transient", events=["heater"])
+    assert type(dict(heat_up.events)["heater"]) is bool  # bool, not np.bool_
+    stricter = dataclasses.replace(heat_up, max_rise_s=5.0)  # a value derived from another, as for level and peak
+    assert stricter.events == heat_up.events and rs.Subtype(**dataclasses.asdict(stricter)) == stricter
+    assert rs.Subtype("transient", events=[("heater", True)]) == heat_up  # the pairs it holds
+    with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\} or "
+                                         r"\(mask name, True or False\) pairs"):
+        rs.Subtype("transient", events=[("heater", True, 1)])
+    for bad in (["heater"], "heater", True):
+        with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\}"):
+            rs.Subtype("transient", events=bad)
     for name in ("", 3):
         with pytest.raises(ValueError, match="a Subtype events mask name must be a non-empty string"):
             rs.Subtype("transient", events={name: True})
@@ -1127,6 +1136,8 @@ def test_event_validation():
     for bad in (mask.astype(int), mask.astype(float), [0] * 10):
         with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean, got values of type"):
             run({"heater": bad})
+    with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean with no missing values, got 1 missing"):
+        run({"heater": pd.array([True] + [None] + [False] * 8, dtype="boolean")})
     with pytest.raises(ValueError, match=r"events\['valve'\] must be boolean"):  # a mask no condition names
         run({"heater": mask, "valve": mask.astype(int)})
     r = run({"heater": list(mask), "valve": pd.Series(mask)}, subtypes={"heat_up": heat_up,

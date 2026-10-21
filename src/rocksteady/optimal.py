@@ -118,7 +118,7 @@ a longer segment never costs less, whichever subtype could take it.
 import math
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -519,7 +519,8 @@ class Subtype:
       start, widen the mask. This condition reads the mask alone, whether
       or not the signal is finite there. It is held as ``(mask name, bool)``
       pairs sorted by name, so that a subtype stays hashable plain data;
-      ``dict(sub.events)`` gives the mapping back.
+      ``dict(sub.events)`` gives the mapping back. Such pairs are accepted
+      too, so ``dataclasses.replace`` rebuilds a subtype.
 
     A segment must meet all of its subtype's conditions. A segment with no
     finite sample meets no level, peak or rise condition. A subtype with no
@@ -532,7 +533,8 @@ class Subtype:
     peak: Optional[Tuple[Optional[float], Optional[float]]] = None
     max_rise_s: Optional[float] = None
     rise_fraction: Optional[float] = None
-    events: Optional[Any] = None  # given as {mask name: bool}; held as sorted (name, bool) pairs
+    # Given as {mask name: bool} (or such pairs); held as sorted (name, bool) pairs.
+    events: Optional[Union[Mapping[str, bool], Tuple[Tuple[str, bool], ...]]] = None
 
     def __post_init__(self):
         if self.state not in _STATE_NAMES:
@@ -556,16 +558,31 @@ class Subtype:
 
 
 def _event_conditions(events) -> Optional[Tuple[Tuple[str, bool], ...]]:
-    """``Subtype.events`` as ``(mask name, bool)`` pairs sorted by name, or None when it names no mask."""
-    if not isinstance(events, Mapping):
-        raise ValueError(f"Subtype events must be a mapping {{mask name: True or False}}, got {events!r}")
+    """
+    ``Subtype.events`` as ``(mask name, bool)`` pairs sorted by name, or None
+    when it names no mask. It takes a mapping or such pairs, its own output
+    included, so that ``dataclasses.replace`` rebuilds a subtype.
+    """
+    if isinstance(events, Mapping):
+        items = list(events.items())
+    else:
+        ok = isinstance(events, Iterable) and not isinstance(events, (str, bytes))
+        items = list(events) if ok else []
+        if not ok or not all(isinstance(v, (tuple, list)) and len(v) == 2 for v in items):
+            raise ValueError(f"Subtype events must be a mapping {{mask name: True or False}} or (mask name, True or "
+                             f"False) pairs, got {events!r}")
     out = {}
-    for name, want in events.items():
+    for name, want in items:
         _v.name(name, "a Subtype events mask name")
         if not isinstance(want, (bool, np.bool_)):
             raise ValueError(f"Subtype events[{name!r}] must be True or False, got {want!r}")
         out[name] = bool(want)
     return tuple(sorted(out.items())) if out else None
+
+
+def _event_pairs(sub: "Subtype") -> Tuple[Tuple[str, bool], ...]:
+    """A subtype's event conditions as ``Subtype`` holds them: ``(mask name, bool)`` pairs."""
+    return cast(Tuple[Tuple[str, bool], ...], sub.events or ())
 
 
 def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str, np.ndarray]:
@@ -585,10 +602,15 @@ def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str,
             raise ValueError(f"events[{name!r}] must be a one-dimensional mask with one value per sample of t ({n}), "
                              f"got shape {m.shape}")
         if m.dtype != bool:
+            import pandas as pd
+
+            missing = int(pd.isna(m).sum())
+            if missing:
+                raise ValueError(f"events[{name!r}] must be boolean with no missing values, got {missing} missing")
             raise ValueError(f"events[{name!r}] must be boolean, got values of type {m.dtype}")
         masks[name] = m
     for name, sub in subtypes.items():
-        for mask, _ in sub.events or ():
+        for mask, _ in _event_pairs(sub):
             if mask not in masks:
                 raise ValueError(f"subtype {name!r} needs event mask {mask!r}, which events does not include")
     return masks
@@ -785,7 +807,7 @@ class _Conditions:
             tests.append(self.peak(*sub.peak))
         if sub.max_rise_s is not None and sub.rise_fraction is not None:  # a Subtype sets both or neither
             tests.append(self.rise(sub.max_rise_s, sub.rise_fraction))
-        tests += [self.event(name, want) for name, want in sub.events or ()]
+        tests += [self.event(name, want) for name, want in _event_pairs(sub)]
         if not tests:
             return _accept_all
         if len(tests) == 1:
