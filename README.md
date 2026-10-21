@@ -532,6 +532,7 @@ The mathematics of each method, as implemented, is on the documentation's
 
 ```
 pip install -e ".[dev]"
+tools/check.sh                      # what CI runs, fast: tests without the slow ones, strict docs build
 python -m pytest                    # everything
 python -m pytest -m "not slow"      # skip the Monte Carlo calibration
 python tests/test_regression.py     # regenerate golden snapshots after an intended label change
