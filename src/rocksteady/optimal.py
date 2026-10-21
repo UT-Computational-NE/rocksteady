@@ -924,7 +924,7 @@ class _Problem:
                     for x in range(lo_x, hi_x + 1, stride):
                         if x not in seen:
                             seen[x] = score(x)
-                    best_x = min(seen, key=lambda pos: seen[pos])
+                    best_x = min(seen, key=seen.__getitem__)
                     if stride == 1:
                         break
                     lo_x, hi_x = max(first, best_x - stride), min(last, best_x + stride)

@@ -6,7 +6,7 @@ The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.
 """
 
-from typing import TYPE_CHECKING, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -254,7 +254,7 @@ def label_array(labels: Iterable) -> np.ndarray:
     return np.array([str(v) for v in values], dtype=object)
 
 
-def intervals(labels: Sequence, label: Label) -> List[Tuple[int, int]]:
+def intervals(labels: Iterable, label: Label) -> List[Tuple[int, int]]:
     """Index runs carrying one label."""
     return runs(label_array(labels) == label.value)
 

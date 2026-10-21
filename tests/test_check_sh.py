@@ -32,8 +32,11 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     assert "pytest" in run.stderr and "sphinx" in run.stderr and "mypy" in run.stderr  # the full run typechecks
     # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
     # the environment's editable install at the worktree.
-    assert f"{sys.executable} -m pip install pytest mypy sphinx sphinx-rtd-theme myst-parser" in run.stderr
-    assert "pip install -e" not in run.stderr
+    # With the minimum versions the extras in pyproject.toml ask for.
+    want = "'pytest' 'mypy>=1.10' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
+    assert f"{sys.executable} -m pip install {want}" in run.stderr
+    # A fresh environment also needs the package's own dependencies: the editable install, from the main checkout.
+    assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
     assert "passed" not in run.stdout  # stopped before the tests ran
 
 

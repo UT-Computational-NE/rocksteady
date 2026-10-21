@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, mypy (configured
-# in pyproject.toml), and the strict docs build. Needs `pip install -e ".[dev]"` (a selection: `.[test]`). Runs the
-# code of the checkout it is called from, so a worktree tests its own src/ even when the environment's editable
-# install points at another checkout. Set PYTHON to pick the interpreter (default: python on PATH). With arguments,
+# in pyproject.toml), and the strict docs build. Needs the modules of the dev extra (a selection: the test extra);
+# when they are missing it says how to install them. Runs the code of the checkout it is called from, so a worktree
+# tests its own src/ even when the environment's editable install points at another checkout. Set PYTHON to pick the interpreter (default: python on PATH). With arguments,
 # it runs only that pytest selection, without mypy or the docs build: tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,10 +27,18 @@ echo "check.sh: $py is Python ${info%% *} at $exe"
 missing="$("$py" -c 'import importlib.util as u, sys
 print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))' "${needs[@]}")"
 if [ -n "$missing" ]; then
-  # Name the distributions (module names with - for _), not `pip install -e ".[$extra]"`: run from a worktree, that
-  # would point the environment's editable install at the worktree, for every session using the environment.
+  # Name the distributions (module names with - for _), with the extras' minimum versions from pyproject.toml, not
+  # `pip install -e ".[$extra]"`: run from a worktree, that would point the environment's editable install at the
+  # worktree, for every session using the environment. A fresh environment needs that install once, from the main
+  # checkout, for the package's own dependencies.
+  reqs="$("$py" -c 'import re, sys
+text = open("pyproject.toml").read()
+for dist in sys.argv[1:]:
+    m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
+    print(repr(m.group(1) if m else dist), end=" ")' ${missing//_/-})"
   echo "check.sh: $py ($exe) lacks $missing, from the $extra extra. Install them into it" \
-       "($exe -m pip install ${missing//_/-}), or set PYTHON to an interpreter that has them." >&2
+       "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment needs" \
+       "the package's dependencies too: pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
   exit 1
 fi
 "$py" -m pytest -m "not slow" -q "$@"  # with arguments, only that selection; a later -m overrides "not slow"

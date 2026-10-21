@@ -56,6 +56,11 @@
 - `docs/agents/issue-tracker.md` gives the issue format, and what a child
   ticket adds: the sub-issue link, a row in its parent's table, `blocked_by`
   links (#87).
+- `docs/agents/review.md`: probe boundaries and tie-breaks with exact
+  arithmetic on quantised data; check that a PR is mergeable before
+  waiting for CI, and test-merge it with the current base before merging.
+  The issue format asks for boundaries and tie-breaks as checkable
+  properties (#93).
 
 ### Tests and CI
 
@@ -79,11 +84,6 @@
 - `pyproject.toml` configures pylint for editors that lint with it:
   120-character lines, and no notices for the docstring, size and naming
   conventions the code does not follow (#93).
-- `docs/agents/review.md`: probe boundaries and tie-breaks with exact
-  arithmetic on quantised data; check that a PR is mergeable before
-  waiting for CI, and test-merge it with the current base before merging.
-  The issue format asks for boundaries and tie-breaks as checkable
-  properties (#93).
 - When its interpreter lacks a module, `tools/check.sh` names the
   distributions to install (`pip install mypy`) instead of
   `pip install -e ".[dev]"`, which, run from a worktree, would point the

@@ -56,7 +56,7 @@ files = ["src/rocksteady"]
 python_version = "3.10"
 
 [[tool.mypy.overrides]]
-module = ["pandas", "pandas.*", "scipy", "scipy.*"]
+module = ["pandas", "pandas.*"]
 ignore_missing_imports = true  # no bundled type information; pandas-stubs is not a dependency
 
 # For editors that lint with pylint: the line length the code uses, and no notices for the docstring, size and

@@ -11,7 +11,7 @@ Disturbance detectors: external action that resets the detector's clocks.
 """
 
 from collections import deque
-from typing import Deque, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Deque, Iterable, Mapping, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -90,7 +90,7 @@ class EventLog(Disturbance):
 
     def update(self, t: float, sample: Mapping[str, float], values: Mapping[str, float]) -> bool:
         first = self._last_t is None
-        lo = t if self._last_t is None else self._last_t  # samples cover [t, t] at first, then (t_prev, t]
+        lo = t if first else cast(float, self._last_t)  # samples cover [t, t] at first, then (t_prev, t]
         self._last_t = t
 
         def ended(end: float) -> bool:
