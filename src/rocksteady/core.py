@@ -15,7 +15,7 @@ its own instances; the state machine that combines them is shared.
 4. **Timing**: block length, window length, settling time after a
    disturbance, hold time before acceptance, and whether an undecided
    window keeps the last decided state.
-5. **Overrides**: domain rules that can force a label (for example, a
+5. **Overrides**: domain knowledge that can force a label (for example, a
    system shut down below its operating floor is steady by definition).
 
 Labels
@@ -324,7 +324,7 @@ class Context:
 
 class Override(ABC):
     """
-    A domain rule that may force a label. Return None to defer to the detector.
+    Domain knowledge that may force a label. Return None to defer to the detector.
 
     Like a ``Disturbance``, an instance may keep state and belongs to one
     detector.
@@ -385,7 +385,7 @@ class Timing:
     max_gap_s
         Longest run of missing data that is tolerated without clearing the
         history. Missing data are non-finite or unreadable samples, and the
-        samples implied by a jump in ``t`` of more than 1.5 sample periods.
+        samples implied by a jump in ``t`` of more than 1.5 sample spacings.
         With 0 (the default) any missing data resets the detector.
     min_block_coverage
         When gaps are tolerated, the smallest fraction of valid samples
@@ -394,11 +394,11 @@ class Timing:
     grid_tolerance
         Sampling contract. Times passed to ``update`` must lie on a grid of
         ``sample_period_s``: each step must be within ``grid_tolerance``
-        sample periods of a whole number (at least one) of periods. A step
-        of k periods (k >= 2) is a gap of k - 1 missing samples. The default,
-        0.5, accepts any step of at least half a period and rounds it to the
+        sample spacings of a whole number (at least one) of spacings. A step
+        of k spacings (k >= 2) is a gap of k - 1 missing samples. The default,
+        0.5, accepts any step of at least half a spacing and rounds it to the
         grid; a smaller value rejects jittery or drifting clocks. Steps
-        shorter than ``1 - grid_tolerance`` periods (sampling faster than
+        shorter than ``1 - grid_tolerance`` spacings (sampling faster than
         ``sample_period_s``) are always rejected: resample the record first.
 
     Notes
@@ -411,7 +411,7 @@ class Timing:
     it stopped and STEADY comes ``hold_s`` of passing windows after the
     first, plus the gap. ``states.segments`` bridges such samples inside a
     steady run, so a gap given as NaN rows and the same gap given as
-    omitted timestamps yield the same steady intervals. The quiet time
+    omitted timestamps yield the same steady segments. The quiet time
     after a disturbance does advance over a tolerated gap.
     """
 
@@ -443,9 +443,9 @@ class Timing:
             raise ValueError("min_block_coverage must be in (0, 1]")
         _v.finite(self.grid_tolerance, "Timing.grid_tolerance")
         if not 0 < self.grid_tolerance <= 0.5:
-            raise ValueError(f"grid_tolerance must be in (0, 0.5] sample periods, got {self.grid_tolerance!r}")
+            raise ValueError(f"grid_tolerance must be in (0, 0.5] sample spacings, got {self.grid_tolerance!r}")
         if self.block_s < self.sample_period_s * (1 - 1e-9):
-            raise ValueError(f"block_s ({self.block_s}) must be at least one sample period ({self.sample_period_s})")
+            raise ValueError(f"block_s ({self.block_s}) must be at least one sample spacing ({self.sample_period_s})")
 
     @property
     def window_samples(self) -> int:
@@ -555,7 +555,7 @@ class Detector:
     in use at the same time (see ``Disturbance``).
 
     Times passed to ``update`` must increase and lie on the sampling grid
-    (``Timing.grid_tolerance``). A step of more than 1.5 sample periods is
+    (``Timing.grid_tolerance``). A step of more than 1.5 sample spacings is
     a gap; see ``Timing.max_gap_s``.
     """
 
@@ -698,10 +698,10 @@ class Detector:
             k = step / dt
             tol = self.timing.grid_tolerance
             if k < 1 - tol:
-                raise ValueError(f"t={t} follows t={self._last_t} by {step:g} s, less than the sample period "
+                raise ValueError(f"t={t} follows t={self._last_t} by {step:g} s, less than the sample spacing "
                                  f"({dt:g} s): the record is sampled faster than sample_period_s; resample it")
             if abs(k - round(k)) > tol:
-                raise ValueError(f"t={t} follows t={self._last_t} by {k:.3g} sample periods, off the sampling "
+                raise ValueError(f"t={t} follows t={self._last_t} by {k:.3g} sample spacings, off the sampling "
                                  f"grid by more than grid_tolerance={tol:g}")
             if step > 1.5 * dt:
                 gap_reset = not self._tolerate_gap(int(round(step / dt)) - 1)

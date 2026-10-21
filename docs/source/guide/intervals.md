@@ -1,6 +1,6 @@
-# Intervals, fits and statistics by state
+# Segments, fits and statistics by state
 
 ```{include} ../../../README.md
-:start-after: "## Intervals, fits and statistics by state"
-:end-before: "## Best-fit segments under limits"
+:start-after: "## Segments, fits and statistics by state"
+:end-before: "## Best-fit segments under constraints"
 ```

@@ -7,7 +7,7 @@ any module can use them.
 consecutive samples. It is never formed: ``R @ x`` costs O(n) time and
 memory instead of O(n^2).
 
-With ``steps`` (the spacing of consecutive samples, in sample periods), the
+With ``steps`` (the spacing of consecutive samples, in sample spacings), the
 samples need not be consecutive: ``R_ij = phi^|s_i - s_j|`` for sample
 positions ``s``, the correlation of an AR(1) (Ornstein-Uhlenbeck) process
 observed with some samples missing.
@@ -50,7 +50,7 @@ def _scan_steps(col: list, decay: list) -> list:
 
 def gap_steps(t: np.ndarray, dt: float) -> Optional[np.ndarray]:
     """
-    Spacing of consecutive times ``t`` in whole sample periods ``dt`` (at
+    Spacing of consecutive times ``t`` in whole sample spacings ``dt`` (at
     least 1), or None when every step is one period (consecutive samples).
     """
     if len(t) < 2 or not dt > 0:

@@ -1,7 +1,7 @@
 """
-Fitting a model to an interval.
+Fitting a model to a segment.
 
-A fit model describes the deterministic part of a signal over one interval
+A fit model describes the deterministic part of a signal over one segment
 (a level, a ramp, an approach to a new value). Its residuals are the noise:
 the fit *is* the detrend, so the choice of model decides what counts as
 noise. Models are registered in ``registry.fit_models`` and called as
@@ -10,7 +10,7 @@ noise. Models are registered in ``registry.fit_models`` and called as
 Built in:
 
 - ``"poly"``: polynomial of order ``order`` (0 = constant, 1 = line, ...).
-  Parameters are the derivatives at the interval centre in physical units:
+  Parameters are the derivatives at the segment centre in physical units:
   ``level``, ``slope`` (per second), ``curvature`` (second derivative, per
   second squared), then ``d3``, ``d4``, ...
 - ``"first_order"``: ``y_inf + (y0 - y_inf) exp(-(t - t0) / tau)``, an
@@ -23,7 +23,7 @@ The exponential models are fitted by variable projection: for a fixed time
 constant the model is linear in the other parameters, so a one-dimensional
 search over the log time constant with a linear least-squares solve inside
 finds the optimum (numpy only). A time constant is only determined when
-the interval resolves the curve; ``tau_unidentifiable`` flags when it does
+the segment resolves the curve; ``tau_unidentifiable`` flags when it does
 not, and the fit is still returned.
 
 Model specs
@@ -46,7 +46,7 @@ autocorrelation, and M the residual-maker matrix. This generalizes
 result). The covariance is invariant to parameter units, and parameters
 the data cannot determine get infinite variance (flag ``rank_deficient``).
 
-Missing samples: the valid samples of an interval need not be
+Missing samples: the valid samples of a segment need not be
 consecutive (NaN samples, omitted timestamps). ``"ar1"`` treats
 consecutive valid samples as one sample apart, and such fits carry the
 flag ``time_gaps``. In Monte Carlo checks (AR(1) noise with phi up to
@@ -60,10 +60,10 @@ calibrated in those checks, so it is opt-in. Without gaps the two agree.
 Evaluation and serialization
 ----------------------------
 ``FitResult.params`` are for display, at the reference time ``t_ref``
-(the interval centre for ``poly``, the first valid sample for the
+(the segment centre for ``poly``, the first valid sample for the
 exponential models). ``FitResult.evaluation`` is a numerically stable,
 JSON-ready representation (for ``exp`` growth, the amplitude at the
-interval end, which cannot underflow), with its own ``t_ref``.
+segment end, which cannot underflow), with its own ``t_ref``.
 ``FitResult.predict(t)`` and ``evaluate(model, evaluation, t)`` evaluate
 the curve at any times on the same clock; ``FitResult.to_dict()`` holds
 everything needed to do so later.
@@ -94,7 +94,7 @@ _STATE_KEYS = {s.value for s in State}
 @dataclass
 class FitResult:
     """
-    A model fitted over one interval.
+    A model fitted over one segment.
 
     ``fitted`` and ``residuals`` (``y - fitted``) have the length of the
     input; ``residuals`` is NaN where ``y`` was not finite. ``params`` are
@@ -309,7 +309,7 @@ def evaluate(model: str, evaluation: Mapping[str, Any], t) -> np.ndarray:
 
     - ``poly``: ``sum_k coef_k ((t - t_ref) / t_scale)^k``;
     - ``first_order``: ``y_inf + (y0 - y_inf) exp(-(t - t_ref) / tau)``;
-    - ``exp``: ``c + B exp((t - t_ref) / T)``, with ``t_ref`` the interval
+    - ``exp``: ``c + B exp((t - t_ref) / T)``, with ``t_ref`` the segment
       end for growth, so ``B`` does not underflow.
 
     A registered model provides its own as an ``evaluate(evaluation, t)``
@@ -383,10 +383,10 @@ def _check_exp_options(T_min=None, T_max=None, uncertainty: str = "ar1") -> None
 @registry.fit_models.register("poly")
 def fit_poly(t: np.ndarray, y: np.ndarray, order: int = 0, uncertainty: str = "ar1") -> FitResult:
     """
-    Least-squares polynomial of ``order`` over the interval.
+    Least-squares polynomial of ``order`` over the segment.
 
     Time is scaled to [-1, 1] over the valid samples, so high orders stay
-    well conditioned over long intervals. Non-finite samples are ignored.
+    well conditioned over long segments. Non-finite samples are ignored.
     The order is reduced (flag ``order_reduced``) when there are fewer than
     ``order + 2`` valid samples.
     """
@@ -523,7 +523,7 @@ def _negligible_amplitude(amplitude: float, y: np.ndarray) -> bool:
 
 
 def _identifiability(flags: Set[str], tau: float, u_tau: float, span: float, dt: float) -> None:
-    """Flag a time constant that the interval cannot determine."""
+    """Flag a time constant that the segment cannot determine."""
     if not np.isfinite(u_tau) or u_tau > 0.5 * abs(tau) or span < 0.5 * abs(tau) or abs(tau) < 5.0 * dt:
         flags.add("tau_unidentifiable")
 
@@ -613,7 +613,7 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     exponential part at the start. ``|T|`` is searched between ``T_min``
     (default: the larger of half a sample spacing and span / 300) and
     ``T_max`` (default 100 x span), for both signs. The basis is evaluated
-    relative to the end of the interval for growth, so it never overflows,
+    relative to the end of the segment for growth, so it never overflows,
     and a candidate that still gives non-finite values is skipped.
 
     Parameters reported: ``c``, ``A``, ``T`` (s). Flags as for
@@ -657,8 +657,8 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
     h = np.exp((s_ok - r0) / T)
     coef, _ = _linear_ls(np.column_stack((np.ones_like(h), h)), y_ok)
     c, B = float(coef[0]), float(coef[1])  # B: the exponential part at the reference time
-    A = B * float(np.exp(-r0 / T))  # ... and at the interval start (may underflow for steep growth)
-    t_b = t0 + r0  # the stable reference: the interval end for growth, the start for decay
+    A = B * float(np.exp(-r0 / T))  # ... and at the segment start (may underflow for steep growth)
+    t_b = t0 + r0  # the stable reference: the segment end for growth, the start for decay
     fitted = c + B * np.exp((t - t_b) / T)
     resid = np.where(ok, y - fitted, np.nan)
     # Jacobian in theta = (c, B, log|T|); d/dlog|T| of B exp((s - r0)/T) is -B h (s - r0) / T.
@@ -747,7 +747,7 @@ def validate_models(models: Mapping[str, ModelSpec],
 
 
 def fit_model(spec: ModelSpec, t: np.ndarray, y: np.ndarray, state: Union[State, str, None] = None) -> FitResult:
-    """Fit one interval with the model named by ``spec`` (see ``resolve_model``)."""
+    """Fit one segment with the model named by ``spec`` (see ``resolve_model``)."""
     name, opts = resolve_model(spec, state)
     return registry.fit_models.get(name)(np.asarray(t, dtype=float), np.asarray(y, dtype=float), **opts)
 

@@ -45,7 +45,7 @@ class SlopeMethod(Protocol):
 
 class FitModel(Protocol):
     """
-    ``(t, y, **options) -> fit.FitResult`` over one interval (NaN samples
+    ``(t, y, **options) -> fit.FitResult`` over one segment (NaN samples
     ignored). Optional attributes: ``validate_options(**options)``, and
     ``evaluate(evaluation, t)`` to evaluate ``FitResult.evaluation``.
     """
@@ -161,7 +161,7 @@ overrides = Registry("override", Override)
 signal_builders = Registry("signal builder")
 #: Slope-uncertainty methods (``SlopeMethod``): ``(t, y, **options) -> (b, u_b, k)`` (see ``stats``).
 slope_methods = Registry("slope method", positional=2)
-#: Interval fit models (``FitModel``): ``(t, y, **options) -> FitResult`` (see ``fit``).
+#: Segment fit models (``FitModel``): ``(t, y, **options) -> FitResult`` (see ``fit``).
 fit_models = Registry("fit model", positional=2)
 
 __all__ = ["Registry", "criteria", "disturbances", "overrides", "signal_builders", "slope_methods", "fit_models",
