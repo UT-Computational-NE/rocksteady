@@ -16,6 +16,7 @@ observed with some samples missing.
 from typing import Optional, Sequence
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 
 def _scan(col: list, phi: float) -> list:
@@ -59,7 +60,7 @@ def gap_steps(t: np.ndarray, dt: float) -> Optional[np.ndarray]:
     return None if np.all(steps == 1.0) else steps
 
 
-def ar1_apply(x: np.ndarray, phi: float, steps: Optional[Sequence[float]] = None) -> np.ndarray:
+def ar1_apply(x: np.ndarray, phi: float, steps: Optional[ArrayLike] = None) -> np.ndarray:
     """
     ``R @ x`` for the AR(1) correlation matrix ``R_ij = phi^|i-j|``, in O(n).
 
@@ -81,10 +82,10 @@ def ar1_apply(x: np.ndarray, phi: float, steps: Optional[Sequence[float]] = None
         def scan(c):
             return _scan(c, phi)
     else:
-        steps = np.asarray(steps, dtype=float)
-        if steps.shape != (len(x) - 1,):
-            raise ValueError(f"steps must have length {len(x) - 1}, got shape {steps.shape}")
-        decay = (phi ** steps).tolist()
+        step_arr = np.asarray(steps, dtype=float)
+        if step_arr.shape != (len(x) - 1,):
+            raise ValueError(f"steps must have length {len(x) - 1}, got shape {step_arr.shape}")
+        decay = (phi ** step_arr).tolist()
 
         def scan(c):
             return _scan_steps(c, decay)

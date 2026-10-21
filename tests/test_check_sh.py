@@ -1,4 +1,5 @@
-"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87)."""
+"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87);
+the full run typechecks (#93)."""
 
 import os
 import subprocess
@@ -28,7 +29,7 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     run = _check(bare)
     assert run.returncode == 1
     assert str(bare) in run.stderr and sys.executable in run.stderr  # as given, and the binary it runs
-    assert "pytest" in run.stderr and "sphinx" in run.stderr
+    assert "pytest" in run.stderr and "sphinx" in run.stderr and "mypy" in run.stderr  # the full run typechecks
     assert f'{sys.executable} -m pip install -e ".[dev]"' in run.stderr  # that interpreter's own pip
     assert "passed" not in run.stdout  # stopped before the tests ran
 
@@ -47,7 +48,7 @@ def test_arguments_select_the_tests_and_skip_the_docs_build(tmp_path):
                  pythonpath=tmp_path)
     assert run.returncode == 0, run.stderr
     assert "1 passed" in run.stdout
-    assert "check.sh: the selected tests passed; no docs build" in run.stdout
+    assert "check.sh: the selected tests passed; no mypy or docs build" in run.stdout
 
 
 def test_a_selection_still_leaves_out_the_slow_tests():

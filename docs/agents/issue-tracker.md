@@ -25,7 +25,8 @@ Write a ticket's body under these headings. Only a child ticket has `## Parent`,
 
 ## What to build
 
-<the behaviour or change, why, and where; name the files when they are known>
+<the behaviour or change, why, and where; name the files when they are known; state each boundary or tie rule
+as a property a test can check, e.g. "no segment could take an earlier-declared subtype the caps allow">
 
 ## Acceptance criteria
 

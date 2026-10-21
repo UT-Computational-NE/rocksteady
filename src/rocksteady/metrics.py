@@ -29,7 +29,7 @@ than 1.5 sample spacings apart.
 """
 
 from dataclasses import asdict, dataclass, field, fields
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -128,7 +128,7 @@ def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: floa
     e = np.asarray(fit.residuals, dtype=float)
     ok = np.isfinite(e) & np.isfinite(y)
     n = int(ok.sum())
-    extra = dict(model=fit.label, params=dict(fit.params), u_params=fit.u, flags=set(fit.flags))
+    extra: Dict[str, Any] = dict(model=fit.label, params=dict(fit.params), u_params=fit.u, flags=set(fit.flags))
     if n == 0:
         nan = float("nan")
         return SignalStats(0, 0.0, nan, nan, nan, nan, nan, True, **extra)

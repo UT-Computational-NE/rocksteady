@@ -71,6 +71,18 @@
   fix, when that Python is missing or lacks the dev extra (#84).
 - `tools/check.sh <pytest args>` runs only that test selection, without
   the docs build, and needs only the test extra (#87).
+- mypy checks `src/rocksteady` (configured in `pyproject.toml`; in the
+  `dev` extra) in a new CI job and in the full `tools/check.sh` run. The
+  62 errors it found are fixed with annotations and narrowing only, so no
+  behaviour changes (#93).
+- `pyproject.toml` configures pylint for editors that lint with it:
+  120-character lines, and no notices for the docstring and size
+  conventions the code does not follow (#93).
+- `docs/agents/review.md`: probe boundary and tie rules with exact
+  arithmetic on quantised data; check that a PR is mergeable before
+  waiting for CI, and test-merge it with the current base before merging.
+  The issue format asks for boundary and tie rules as checkable properties
+  (#93).
 
 ## 0.5.0
 

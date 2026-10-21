@@ -6,9 +6,10 @@ The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.
 """
 
-from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from .core import Detector, Label
 
@@ -22,7 +23,8 @@ RUN_COLUMNS = ("label", "eta", "limiting", "since_disturbance_s", "forced_by", "
 def _unique_columns(df) -> list:
     """Column names of ``df``, which must be unique: each sample is a name -> value mapping."""
     names = list(df.columns)
-    seen, dupes = set(), set()
+    seen: set = set()
+    dupes: set = set()
     for c in names:
         (dupes if c in seen else seen).add(c)
     if dupes:
@@ -231,7 +233,7 @@ def _report_times(detector: Detector, df, labels, t):
     return np.arange(n) * detector.timing.sample_period_s
 
 
-def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
+def runs(mask: ArrayLike) -> List[Tuple[int, int]]:
     """Half-open index runs ``[start, stop)`` where ``mask`` is True."""
     m = np.asarray(mask, dtype=bool)
     if len(m) == 0:
@@ -246,7 +248,7 @@ def runs(mask: Sequence[bool]) -> List[Tuple[int, int]]:
     return [(int(a), int(b)) for a, b in zip(starts, stops)]
 
 
-def label_array(labels: Sequence) -> np.ndarray:
+def label_array(labels: Iterable) -> np.ndarray:
     """Labels (a Series, a list of ``Label`` or of strings) as an array of label strings."""
     values = labels.to_numpy() if hasattr(labels, "to_numpy") else labels
     return np.array([str(v) for v in values], dtype=object)
@@ -257,7 +259,7 @@ def intervals(labels: Sequence, label: Label) -> List[Tuple[int, int]]:
     return runs(label_array(labels) == label.value)
 
 
-def accepted_intervals(labels: Sequence) -> List[Tuple[int, int]]:
+def accepted_intervals(labels: Iterable) -> List[Tuple[int, int]]:
     """
     Runs that reached STEADY, including the HOLDING span that preceded them.
 

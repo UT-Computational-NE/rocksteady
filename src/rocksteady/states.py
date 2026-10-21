@@ -186,12 +186,16 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
     times = None if t is None else np.asarray(t, dtype=float)
     if times is not None and len(times) != len(lab):
         raise ValueError("t must have one entry per label")
-    by_time = times is not None and backfill_s > 0
+    by_time = times is not None and backfill_s is not None and backfill_s > 0  # t and backfill_s come together
+    times_arr = times if times is not None else np.zeros(0)  # used only when by_time
+    reach_s = 0.0  # how old a sample may be and still be backfilled: backfill_s + backfill_tol_s
     if by_time:
+        assert backfill_s is not None  # by_time needs it
         if backfill_tol_s is None:
-            backfill_tol_s = 0.5 * float(np.median(np.diff(times))) if len(times) > 1 else 0.0
+            backfill_tol_s = 0.5 * float(np.median(np.diff(times_arr))) if len(times_arr) > 1 else 0.0
         if not np.isfinite(backfill_tol_s) or backfill_tol_s < 0:
             raise ValueError(f"backfill_tol_s must be finite and >= 0, got {backfill_tol_s!r}")
+        reach_s = backfill_s + backfill_tol_s
     steady: List[Segment] = []
     prev_stop = 0
     for a, b in accepted_intervals(lab):
@@ -200,8 +204,8 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
             # Inside the window: age t[a] - t[i] <= backfill_s + tol, boundary included. A few ulps of
             # t[a] absorb the rounding of the subtraction (2e-7 s at epoch times), so that tol = 0 keeps
             # a sample exactly backfill_s old; they are far below any sample spacing.
-            edge = times[a] - (backfill_s + backfill_tol_s) - 4.0 * np.spacing(abs(times[a]))
-            start = max(int(np.searchsorted(times[: a + 1], edge, side="left")), prev_stop)
+            edge = times_arr[a] - reach_s - 4.0 * np.spacing(abs(times_arr[a]))
+            start = max(int(np.searchsorted(times_arr[: a + 1], edge, side="left")), prev_stop)
         elif backfill_samples and not forced_at[a]:
             start = max(a - int(backfill_samples), prev_stop)
         if start < a:

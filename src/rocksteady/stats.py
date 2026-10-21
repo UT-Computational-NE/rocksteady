@@ -312,15 +312,15 @@ def acf_tau(pieces, dt: float, max_lag_frac: float = 0.25, pair_weighted: bool =
     var = sums[0] / counts[0]
     if not var > 0:
         return dt
-    s = 0.0
+    rho_sum = 0.0
     for k in range(1, max_lag + 1):
         if counts[k] == 0:
             break
         rho = sums[k] / counts[k] / var
         if rho <= 0:
             break
-        s += rho * (counts[k] / counts[0] if pair_weighted else 1.0)
-    return dt * max(1.0, 1.0 + 2.0 * s)
+        rho_sum += rho * (counts[k] / counts[0] if pair_weighted else 1.0)
+    return dt * max(1.0, 1.0 + 2.0 * rho_sum)
 
 
 def mean_with_uncertainty(x: np.ndarray, dt: float, u_type_b: Optional[float] = None) -> dict:

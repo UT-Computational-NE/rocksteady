@@ -19,7 +19,7 @@ reviews and adopts; nothing is set automatically.
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -51,7 +51,8 @@ class TimingSuggestion:
 
     def timing(self, **overrides) -> Timing:
         """A ``Timing`` with the suggested lengths; other options (``settle_s``, ``hold_s``, ...) as keywords."""
-        kw = {"sample_period_s": self.sample_period_s, "block_s": self.block_s, "window_s": self.window_s}
+        kw: Dict[str, Any] = {"sample_period_s": self.sample_period_s, "block_s": self.block_s,
+                              "window_s": self.window_s}
         kw.update(overrides)
         return Timing(**kw)
 
