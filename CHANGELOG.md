@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- Subtypes for best-fit segments (#61, part of #55): `rs.Subtype(state,
+  level=(lo, hi))` names a refinement of a state whose segments' mean lies
+  in `[lo, hi)` (`None` for an open end), and `optimal_segments(...,
+  subtypes={name: Subtype})` gives every segment of that state one of its
+  subtypes (ADR 0001; a subtype with no conditions is a catch-all).
+  `max_counts` caps subtypes per period as well as states, and both caps
+  bind. Subtypes of one state may overlap; an exact tie goes to the one
+  declared first. `refine` keeps each segment's subtype, and pruning stays
+  exact. Segments carry `Segment.subtype` (None for a state without
+  subtypes), `OptimalSegmentation.counts` has a column per subtype, and
+  `summary()` lists counts by subtype. With no subtypes, results are
+  unchanged.
+
 ### Documentation
 
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
