@@ -20,6 +20,9 @@
   *constraints* (#56).
 - `Report.provenance["parameter_reference"]` says "segment centre" for
   `poly` (was "interval centre"), so exported JSON reads differently (#56).
+- `docs/agents/issue-tracker.md` gives the issue format, and what a child
+  ticket adds: the sub-issue link, a row in its parent's table, `blocked_by`
+  links (#87).
 
 ### Tests and CI
 
@@ -35,9 +38,6 @@
   fix, when that Python is missing or lacks the dev extra (#84).
 - `tools/check.sh <pytest args>` runs only that test selection, without
   the docs build, and needs only the test extra (#87).
-- `docs/agents/issue-tracker.md` gives the issue format, and what an epic's
-  ticket adds: the sub-issue link, a row in the epic's table, `blocked_by`
-  links (#87).
 
 ## 0.5.0
 

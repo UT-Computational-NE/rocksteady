@@ -16,12 +16,12 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Issue format
 
-Write a ticket's body under three headings:
+Write a ticket's body under these headings. Only a child ticket has `## Parent`, and it replaces the `Part of #<parent>` line:
 
 ```markdown
 ## Parent
 
-#<epic>            (only for a ticket in an epic)
+#<parent>
 
 ## What to build
 
@@ -30,10 +30,10 @@ Write a ticket's body under three headings:
 ## Acceptance criteria
 
 - [ ] <one checkable condition per line>
-- [ ] `tools/check.sh` passes (tests and the strict docs build).
+- [ ] `tools/check.sh` passes.
 ```
 
-For a ticket in an epic, also make it a sub-issue of the epic, add a row to the epic's **Tickets** table (ticket, what it delivers, blocked by, lane), and add a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
+A child ticket is also a sub-issue of its parent (see **Conventions**), gets a row in the parent's **Tickets** table when it has one (same columns as the rows already there), and gets a `blocked_by` link to each blocker (see **Blocking** under **Wayfinding operations**).
 
 ## Starting a ticket
 
