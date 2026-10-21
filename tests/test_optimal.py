@@ -1025,6 +1025,19 @@ def test_exact_matches_brute_force_with_events_on_two_masks(seed, periods):
         assert (got.counts[name] <= cap).all()
 
 
+def test_an_event_condition_reads_the_mask_whatever_the_signal():
+    """Decided on #65: a flag on a non-finite sample counts, even in a segment with no finite sample."""
+    t = np.arange(12.0)
+    y = np.sin(t)
+    y[4:8] = [np.nan, np.inf, np.nan, -np.inf]
+    heater = np.zeros(12, dtype=bool)
+    heater[5] = True
+    subtypes = {"driven": rs.Subtype("transient", events={"heater": True}),
+                "undriven": rs.Subtype("transient", events={"heater": False})}
+    r = optimal_segments(t, y, {"transient": 1}, method="subset", candidates=[0, 4, 8, 12], penalty=0,
+                         max_duration_s={"transient": 4.0}, subtypes=subtypes, events={"heater": heater})
+    assert [s.subtype for s in r.segments] == ["undriven", "driven", "undriven"]
+
 def test_a_heat_up_cap_of_one_merges_a_days_two_heat_ups():
     """A two-stage heat-up: the heater switches on at 08:00 (20 to 50) and again at 09:00 (50 to 80)."""
     idx = pd.date_range("2026-03-02", periods=24 * 60, freq="1min")
@@ -1119,3 +1132,7 @@ def test_event_validation():
     r = run({"heater": list(mask), "valve": pd.Series(mask)}, subtypes={"heat_up": heat_up,
                                                                        "other": rs.Subtype("transient")})
     assert [s.subtype for s in r.segments] == ["other"] and list(r.info["events"]) == ["heater", "valve"]
+    given = np.zeros(10, dtype=bool)
+    r = run({"heater": given}, subtypes={"heat_up": heat_up, "other": rs.Subtype("transient")})
+    given[3] = True  # the caller reuses its mask: the result keeps the mask it used
+    assert not r.info["events"]["heater"].any()
