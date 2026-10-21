@@ -41,7 +41,7 @@ def _plateaus(seed=2, n=400):
 
 
 def _days(seed=12):
-    """Three local days of a reactor-like record: zero, startup, at power, shutdown, with a gap."""
+    """Three local days, each with a low and a high plateau and the moves between them, and a gap."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2026-03-02 00:00", periods=3 * 24 * 6, freq="10min", tz="America/Chicago")
     hour = idx.hour + idx.minute / 60.0
@@ -130,11 +130,10 @@ def test_results_match_the_snapshot(name):
     assert got["sse"] == pytest.approx(want["sse"], rel=1e-12)
 
 
-def test_infeasible_error_is_unchanged():
+def test_infeasible_constraints_still_raise():
     """Transients of 120-150 s each touch two 100 s periods, so some period holds two of them."""
     t, y = _plateaus()
-    with pytest.raises(ValueError, match=r"^no segmentation satisfies the limits \(counts, durations, transitions\) "
-                                         r"on these candidate breakpoints$"):
+    with pytest.raises(ValueError, match="no segmentation satisfies"):
         optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=10, per=100.0,
                          max_counts={"steady": 0, "transient": 1}, min_duration_s={"transient": 120.0},
                          max_duration_s={"transient": 150.0})

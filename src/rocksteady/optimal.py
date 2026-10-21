@@ -437,7 +437,6 @@ class _Option:
     meets the condition.
     """
 
-    name: str
     state: str
     penalty: float
     min_d: float = 0.0
@@ -449,7 +448,6 @@ class _Option:
 class _Counter:
     """A count cap: at most ``cap`` segments per period whose option is in ``options``."""
 
-    name: str
     options: FrozenSet[int]
     cap: int
 
@@ -458,6 +456,7 @@ class _Problem:
     def __init__(self, ts, y, idx, models, options: Sequence[_Option], counters: Sequence[_Counter],
                  allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin):
         self.ts, self.y, self.idx = ts, y, idx
+        self.per, self.period_origin = per, period_origin
         self.n = len(ts)
         self.options = list(options)
         self.O = len(self.options)
@@ -470,8 +469,8 @@ class _Problem:
         self.costs = _Costs(ts, y, models, list(self.by_state))
         # Over a state's options: the longest duration allowed (where the cost scan stops), and the smallest
         # penalty (so the pruning bound holds for every option).
-        self.state_max_d = {st: max(options[o].max_d for o in os_) for st, os_ in self.by_state.items()}
-        self.state_min_pen = {st: min(options[o].penalty for o in os_) for st, os_ in self.by_state.items()}
+        self.state_max_d = {st: max(options[o].max_d for o in members) for st, members in self.by_state.items()}
+        self.state_min_pen = {st: min(options[o].penalty for o in members) for st, members in self.by_state.items()}
         pid = _period_ids(ts, idx, per, period_origin)
         self.pid: np.ndarray = pid if pid is not None else np.zeros(self.n, dtype=np.int64)
         self.dt = float(np.median(np.diff(ts))) if self.n > 1 else 1.0
@@ -482,7 +481,7 @@ class _Problem:
         # whose set holds its option.
         self.counters = list(counters)
         self.maxc = [c.cap for c in self.counters]
-        self.hits = [[k for k, c in enumerate(self.counters) if o in c.options] for o in range(self.O)]
+        self.counted_by = [[k for k, c in enumerate(self.counters) if o in c.options] for o in range(self.O)]
         radix = [m + 1 for m in self.maxc]
         self.L = int(np.prod(radix)) if radix else 1
         self.layers = list(np.ndindex(*radix)) if radix else [()]
@@ -490,7 +489,7 @@ class _Problem:
 
         def plus(c, o):
             v = list(c)
-            for k in self.hits[o]:
+            for k in self.counted_by[o]:
                 v[k] += 1
             return tuple(v)
 
@@ -519,7 +518,7 @@ class _Problem:
         return self.costs.cost(self.options[o].state, p, q)
 
     def feasible(self, bounds: Sequence[int], opts: Sequence[int]) -> bool:
-        """Check a full segmentation (boundaries incl. 0 and n; one option per segment) against the limits."""
+        """Check a full segmentation (boundaries incl. 0 and n; one option per segment) against the constraints."""
         counts: Dict[int, List[int]] = {}
         for i, o in enumerate(opts):
             p, q = bounds[i], bounds[i + 1]
@@ -529,7 +528,7 @@ class _Problem:
                 return False
             for per_ in range(int(self.pid[p]), int(self.pid[q - 1]) + 1):
                 c = counts.setdefault(per_, [0] * len(self.counters))
-                for k in self.hits[o]:
+                for k in self.counted_by[o]:
                     c[k] += 1
                     if c[k] > self.maxc[k]:
                         return False
@@ -539,11 +538,12 @@ class _Problem:
         sse = sum(self.cost(o, bounds[i], bounds[i + 1]) for i, o in enumerate(opts))
         return sse + float(sum(self.pen[o] for o in opts)), sse
 
-    def counts(self, bounds, opts, per, period_origin):
+    def counts(self, bounds, opts):
         """Segments touching each period, by count column."""
         names = [tuple(name for name, members in self.columns if o in members) for o in opts]
         spans = [(bounds[i], bounds[i + 1], names[i]) for i in range(len(opts))]
-        return _count_table(spans, [name for name, _ in self.columns], self.pid, self.idx, per, period_origin)
+        return _count_table(spans, [name for name, _ in self.columns], self.pid, self.idx, self.per,
+                            self.period_origin)
 
     def _state_costs(self, st: str, okd: np.ndarray, max_d: float, min_pen: float, starts: np.ndarray, q: int,
                      dur: np.ndarray, surrogate: bool, ub: float, prune: bool) -> np.ndarray:
@@ -608,7 +608,7 @@ class _Problem:
                     C = np.where(okd, C_st, math.inf) + self.pen[o]
                     if not np.isfinite(C).any():
                         continue
-                    F[k, o], bp_j[k, o], bp_o[k, o], bp_l[k, o] = self._best_into(o, k, C, F, same, spans)
+                    F[k, o], bp_j[k, o], bp_o[k, o], bp_l[k, o] = self._best_ending_at(k, o, C, F, same, spans)
             reachable[k] = np.isfinite(F[k]).any()
         if not np.isfinite(F[m - 1]).any():
             raise ValueError("no segmentation satisfies the limits (counts, durations, transitions) on these "
@@ -623,7 +623,7 @@ class _Problem:
             k, o, l = j, po, pl
         return bounds[::-1], opts[::-1]
 
-    def _best_into(self, o: int, k: int, C: np.ndarray, F: np.ndarray, same: np.ndarray, spans: np.ndarray):
+    def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, same: np.ndarray, spans: np.ndarray):
         """Best value, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per count layer."""
         L = self.L
         best_v = np.full(L, math.inf)
@@ -712,23 +712,24 @@ class _Problem:
 def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transitions, min_duration_s,
              max_duration_s):
     """
-    The program's options, counters, transitions and count columns from the
-    caller's limits. Each state with a model is one option, and each count
-    cap a counter over that one option.
+    The program's options, counters, ``allowed`` transitions between options,
+    and the result's count columns, from the caller's constraints. Each state
+    with a model is one option, and each count cap a counter over that one
+    option.
     """
-    options = [_Option(st, st, pen[st], float((min_duration_s or {}).get(st, 0.0)),
+    options = [_Option(st, pen[st], float((min_duration_s or {}).get(st, 0.0)),
                        float((max_duration_s or {}).get(st, math.inf))) for st in states]
-    of = {st: frozenset([o]) for o, st in enumerate(states)}
-    counters = [_Counter(st, of[st], int(max_counts[st])) for st in states if st in (max_counts or {})]
+    options_of = {st: frozenset([o]) for o, st in enumerate(states)}
+    counters = [_Counter(options_of[st], int(max_counts[st])) for st in states if st in (max_counts or {})]
     if transitions is None:
         allowed = np.ones((len(options), len(options)), dtype=bool)
     else:
         allowed = np.zeros((len(options), len(options)), dtype=bool)
         for a, nexts in transitions.items():
             for b in nexts:
-                for i in of[a]:
-                    allowed[i, list(of[b])] = True
-    return options, counters, allowed, [(st, of[st]) for st in states]
+                for i in options_of[a]:
+                    allowed[i, list(options_of[b])] = True
+    return options, counters, allowed, [(st, options_of[st]) for st in states]
 
 
 def _poly0(costs: _Costs, ps: np.ndarray, q: int) -> np.ndarray:
@@ -889,7 +890,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     objective, sse = prob.total(bounds, opts)
     segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state)) for i, o in enumerate(opts)]
     n_valid = int(np.isfinite(y).sum())
-    counts = prob.counts(bounds, opts, per, period_origin)
+    counts = prob.counts(bounds, opts)
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
                                int(len(B)), prob.costs.n_fits, {"upper_bound": ub, "refine_s": refine_s})
