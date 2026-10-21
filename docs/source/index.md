@@ -29,6 +29,7 @@ guide/methods
 :maxdepth: 2
 :caption: Reference
 
+glossary
 api/index
 references
 changelog

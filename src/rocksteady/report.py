@@ -1,10 +1,10 @@
 """
-Reports: fits and comparisons over a record, by state and by interval.
+Reports: fits and comparisons over a record, by state and by segment.
 
 - ``fit_report``: each signal against its piecewise fit (``e = fit - data``),
-  per state, plus per-interval statistics and fitted parameters.
+  per state, plus per-segment statistics and fitted parameters.
 - ``compare_report``: one series against another (``e = a - b``), per state
-  and per interval.
+  and per segment.
 - ``batch.fit_report``: run a detector (or take its labels), split the
   record into states, and build a ``fit_report`` from its signal values.
 
@@ -16,7 +16,7 @@ plain-text tables::
       all           8,640  24.00 h   ...
 
 ``Report.provenance`` records how the tables were made (software version,
-time origin and sample period, the normalized model spec and parameter
+time origin and sample spacing, the normalized model spec and parameter
 order per signal and state, the uncertainty methods, NRMSE normalization,
 and, from ``batch.fit_report``, the detector's effective timing and
 validity policy). The DataFrames carry it in ``.attrs["rocksteady"]``, and
@@ -64,7 +64,7 @@ class SignalReport:
         if any(self.by_state["low_effective_sample"] & (self.by_state["n"] > 0)):
             lines.append("  * N_eff < 10: too few effective samples for a normal coverage factor")
         if intervals and len(self.by_interval):
-            lines += ["", f"{self.name}{f' [{self.units}]' if self.units else ''}   intervals",
+            lines += ["", f"{self.name}{f' [{self.units}]' if self.units else ''}   segments",
                       _indent(_interval_table(self.by_interval, self.fit_results, time_origin))]
         return "\n".join(lines)
 
@@ -120,7 +120,7 @@ class Report:
 
     @property
     def by_interval(self):
-        """All blocks' interval tables, with a ``signal`` column."""
+        """All blocks' segment tables, with a ``signal`` column."""
         import pandas as pd
 
         out = pd.concat([b.by_interval.assign(signal=b.name) for b in self.blocks], ignore_index=True)
@@ -135,7 +135,7 @@ class Report:
         return "\n\n".join(b.to_string(intervals, self.time_origin) for b in self.blocks)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Provenance, both tables (as records) and every interval's fit (``FitResult.to_dict``)."""
+        """Provenance, both tables (as records) and every segment's fit (``FitResult.to_dict``)."""
         by_state = self.by_state.reset_index()
         return {
             "provenance": self.provenance,
@@ -165,7 +165,7 @@ class Report:
 
 
 def _times(values, t, dt):
-    """Sample times in seconds, the sample period, and the time origin (a Timestamp or None)."""
+    """Sample times in seconds, the sample spacing, and the time origin (a Timestamp or None)."""
     origin = None
     if t is None:
         index = getattr(values, "index", None)
@@ -201,7 +201,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
                units: Optional[Mapping[str, str]] = None, states: Sequence[str] = STATES,
                nrmse: str = "mean") -> Report:
     """
-    Each signal against its piecewise fit, by state and by interval.
+    Each signal against its piecewise fit, by state and by segment.
 
     Parameters
     ----------
@@ -216,7 +216,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         Sample times in seconds. Default: from a ``DatetimeIndex``, else
         the row number times ``dt``.
     dt : float, optional
-        Sample period in seconds. Default: the median spacing of ``t``.
+        Sample spacing in seconds. Default: the median spacing of ``t``.
     units : mapping, optional
         ``{signal: units}`` for the headers.
     states : sequence
@@ -259,7 +259,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         "error": "e = fit - data",
         "models": {name: {st: normalize_model(spec, st) for st in fit_states} for name, spec in models.items()},
         "parameter_order": order,
-        "parameter_reference": "params are stated at t_ref (poly: interval centre; first_order, exp: first valid "
+        "parameter_reference": "params are stated at t_ref (poly: segment centre; first_order, exp: first valid "
                                "sample); FitResult.evaluation is the stable form for fit.evaluate",
     })
     return Report(blocks, origin, prov)
@@ -270,7 +270,7 @@ def compare_report(a, b, segs: Sequence[Segment], *, names: Sequence[str] = ("a"
                    nrmse: str = "mean") -> Report:
     """
     Series ``a`` against reference ``b`` (``e = a - b``), by state and by
-    interval. ``names`` labels them in the header (``"a vs b"``).
+    segment. ``names`` labels them in the header (``"a vs b"``).
     """
     index_src = a if hasattr(a, "index") else None
     av, bv = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
@@ -403,7 +403,7 @@ def _sig(x, digits: int = 3) -> str:
 
 def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
     """
-    One row per interval. Intervals can differ by orders of magnitude (a
+    One row per segment. Segment lengths can differ by orders of magnitude (a
     shutdown at exactly zero next to full power), so each row is formatted
     on its own: spreads to three significant figures, levels to the
     decimals that resolve that row's spread.

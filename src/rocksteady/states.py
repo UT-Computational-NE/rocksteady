@@ -1,13 +1,13 @@
 """
-Intervals by state.
+Segments by state.
 
-A labelled record is split into contiguous intervals (``Segment``), each
+A labelled record is split into contiguous segments (``Segment``), each
 in one of three states:
 
 - ``steady``: a run that reached STEADY, together with any HOLDING span
   immediately before it (``batch.accepted_intervals``).
 - ``transient``: DISTURBED, SETTLING, and HOLDING that never confirmed.
-- ``indeterminate``: INDETERMINATE outside steady intervals (the start of
+- ``indeterminate``: INDETERMINATE outside steady segments (the start of
   a record, after a data gap, or a window too noisy to decide).
 
 The segments cover every sample, without overlap.
@@ -16,8 +16,8 @@ Labels are causal: a sample is labelled steady only once the window
 *ending* at it passes, so the data in that certifying window were already
 steady. ``backfill_samples`` (``segments_from`` sets it to the detector's
 window) extends each steady segment back over that window. Runs that an
-override forced to steady (for example a zero-power rule after a
-shutdown) were not certified by data and are not backfilled, and backfill
+override forces to steady (for example, an override that treats zero power
+as steady) were not certified by data and are not backfilled, and backfill
 never crosses a disturbance.
 
 A sample the detector skipped as missing (reason ``missing`` or
@@ -135,8 +135,8 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         never into an earlier steady segment and never across a DISTURBED
         sample. For a window of W samples the certifying window of the
         first steady sample holds W - 1 earlier samples, which is what
-        ``segments_from`` uses. Each accepted interval stays its
-        own segment, even when backfill closes the gap to the previous one.
+        ``segments_from`` uses. Each accepted steady segment stays separate,
+        even when backfill closes the gap to the previous one.
     min_samples : int
         Transient and indeterminate runs shorter than this take the state
         of their longer neighbour between the same two steady segments.
@@ -157,10 +157,10 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         and still count as inside the window: a sample is inside when its
         age is at most ``backfill_s + backfill_tol_s``, boundary included
         (with 0, exactly the samples at most ``backfill_s`` old). Ages are
-        compared with the detector's rounding to whole sample periods, so
-        the natural value is half a sample period (what ``segments_from``
-        passes): a sample less than half a period beyond the window rounds
-        into it, one more than half a period beyond does not. Default:
+        compared with the detector's rounding to whole sample spacings, so
+        the natural value is half a sample spacing (what ``segments_from``
+        passes): a sample less than half a sample spacing beyond the window
+        rounds into it, one more than half a spacing beyond does not. Default:
         half the median spacing of ``t``. The tolerance is in seconds and
         does not depend on the clock origin, so epoch timestamps behave
         like times from zero.
@@ -196,7 +196,7 @@ def segments(labels: Sequence, *, backfill_samples: int = 0, min_samples: int = 
         if by_time and not forced_at[a]:
             # Inside the window: age t[a] - t[i] <= backfill_s + tol, boundary included. A few ulps of
             # t[a] absorb the rounding of the subtraction (2e-7 s at epoch times), so that tol = 0 keeps
-            # a sample exactly backfill_s old; they are far below any sample period.
+            # a sample exactly backfill_s old; they are far below any sample spacing.
             edge = times[a] - (backfill_s + backfill_tol_s) - 4.0 * np.spacing(abs(times[a]))
             start = max(int(np.searchsorted(times[: a + 1], edge, side="left")), prev_stop)
         elif backfill_samples and not forced_at[a]:

@@ -78,7 +78,7 @@ class LiveMonitor:
 
 # [batch]
 def qualify(df: pd.DataFrame, events=(), c: LoopCriteria = LoopCriteria()):
-    """Labels, accepted intervals and a fit report for a stored record."""
+    """Labels, accepted segments and a fit report for a stored record."""
     det = build_detector(c, events)
     out = rs.batch.run(det, df)               # one row per sample: label, reason, eta, ...
     segs = rs.segments_from(det, out)         # steady / transient / indeterminate, backfilled
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     out, segs, accepted, report = qualify(df, events)
     print(out["label"].value_counts().to_string(), "\n")
     t = out["t_s"].to_numpy()  # positions, not the DatetimeIndex
-    print("accepted intervals (s):", [(float(t[a]), float(t[b - 1])) for a, b in accepted])
+    print("accepted segments (s):", [(float(t[a]), float(t[b - 1])) for a, b in accepted])
     print(report.to_string(intervals=False))
     monitor = LiveMonitor(events=events)
     for ti, row in zip(t, df.to_dict("records")):

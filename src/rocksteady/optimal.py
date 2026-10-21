@@ -1,5 +1,5 @@
 """
-Best-fit segments under limits: constrained optimal segmentation.
+Best-fit segments under constraints: constrained optimal segmentation.
 
 ``optimal_segments`` splits a record into segments, gives each a state
 (``steady``, ``transient`` or ``indeterminate``), and fits each with the model
@@ -7,8 +7,8 @@ for its state. It chooses the breakpoints and states that minimise
 
     sum over segments of (SSE of the segment's fit + penalty of its state)
 
-subject to the caller's limits. That is the best piecewise approximation of
-the record, in the RMS sense, that the limits allow.
+subject to the caller's constraints. That is the best piecewise approximation of
+the record, in the RMS sense, that the constraints allow.
 
 This answers a different question from the detector. The detector certifies,
 causally, that a signal *is* steady within a limit. This optimiser describes
@@ -18,8 +18,8 @@ detector's criteria. Its segments are "best-fit segments", not certified
 steady states; ``compare_segments`` measures how far they agree with the
 detector's (``states.segments_from``).
 
-Limits
-------
+Constraints
+-----------
 - ``per`` and ``max_counts``: at most ``max_counts[state]`` segments of a
   state per period (a day, a week, ...). A segment counts once against
   every period it touches, so one segment from 16:00 to 08:00 the next day
@@ -50,7 +50,7 @@ the last segment's state and the counts used in the current period.
 - ``"subset"``: candidates are the boundaries given in ``candidates`` (for
   example the detector's segments). Optimal among those.
 - ``"refine"``: ``subset``, then each kept boundary is moved within
-  ``refine_s`` to lower the total cost, keeping states and limits. A local
+  ``refine_s`` to lower the total cost, keeping states and constraints. A local
   optimum near the candidates; never worse than ``subset``.
 - ``"exact"``: candidates are every sample, or the first sample of every
   ``grid_s`` interval, plus ``candidates``. The global optimum on that grid.
@@ -474,7 +474,7 @@ class _Problem:
         return self.min_d[s] - 1e-9 <= d <= self.max_d[s] + 1e-9
 
     def feasible(self, bounds: Sequence[int], sts: Sequence[int]) -> bool:
-        """Check a full segmentation (boundaries incl. 0 and n; one state per segment) against the limits."""
+        """Check a full segmentation against the count, duration and transition constraints."""
         counts: Dict[int, List[int]] = {}
         for i, s in enumerate(sts):
             p, q = bounds[i], bounds[i + 1]
@@ -579,7 +579,7 @@ class _Problem:
                 bp_j[k, s], bp_s[k, s], bp_l[k, s] = best[:, 0], best[:, 1], best[:, 2]
             reachable[k] = np.isfinite(F[k]).any()
         if not np.isfinite(F[m - 1]).any():
-            raise ValueError("no segmentation satisfies the limits (counts, durations, transitions) on these "
+            raise ValueError("no segmentation satisfies the constraints (counts, durations, transitions) on these "
                              "candidate breakpoints")
         s, l = np.unravel_index(int(np.argmin(F[m - 1])), (S, L))
         k = m - 1
@@ -676,7 +676,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                      candidates=None, grid_s: Optional[float] = None, refine_s: Optional[float] = None,
                      period_origin=None, prune: bool = True) -> OptimalSegmentation:
     """
-    Best-fit segments of ``y`` under per-period limits (see the module docstring).
+    Best-fit segments of ``y`` subject to per-period constraints (see the module docstring).
 
     Parameters
     ----------
@@ -693,7 +693,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     per : str, Timedelta or float (seconds), optional
         The period the counts apply to. None: the whole record.
     max_counts : mapping, optional
-        ``{state: maximum segments per period}``. Unlisted states are not limited.
+        ``{state: maximum segments per period}``. Unlisted states have no count cap.
     transitions : mapping, optional
         ``{state: [states that may follow it]}``. Default: any state may follow any.
     min_duration_s, max_duration_s : mapping, optional

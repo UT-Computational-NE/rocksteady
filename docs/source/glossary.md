@@ -1,0 +1,4 @@
+# Glossary
+
+```{include} ../../GLOSSARY.md
+```

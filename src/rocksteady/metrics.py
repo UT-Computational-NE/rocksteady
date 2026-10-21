@@ -1,5 +1,5 @@
 """
-Statistics over intervals and states, with uncertainties corrected for
+Statistics over segments and states, with uncertainties corrected for
 autocorrelation.
 
 Neighbouring samples are correlated, so ``std / sqrt(n)`` understates the
@@ -12,8 +12,8 @@ uncertainty of a mean is.
 
 Three kinds of statistics:
 
-- ``signal_stats``: one live signal over one interval, about the
-  interval's fit. The fit is the detrend: ``std``, ``tau_int`` and
+- ``signal_stats``: one live signal over one segment, about the
+  segment's fit. The fit is the detrend: ``std``, ``tau_int`` and
   ``N_eff`` describe the residuals, and ``u_mean = std / sqrt(N_eff)``.
 - ``error_stats``: one series compared with another, ``e = a - b`` (a fit
   vs the data, or a model vs a measurement). The error is de-meaned but
@@ -25,7 +25,7 @@ Three kinds of statistics:
 Autocorrelation is estimated within contiguous pieces only: never across
 segment boundaries, across non-finite samples, or (given sample times
 ``t``) across omitted timestamps, where consecutive stored rows are more
-than 1.5 sample periods apart.
+than 1.5 sample spacings apart.
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -62,7 +62,7 @@ def split_at_time_gaps(pieces: Sequence[Tuple[int, int]], t: Optional[np.ndarray
                        ) -> List[Tuple[int, int]]:
     """
     ``pieces`` split wherever consecutive times ``t`` step by more than 1.5
-    sample periods ``dt`` (omitted samples), so that stored rows next to
+    sample spacings ``dt`` (omitted samples), so that stored rows next to
     each other are adjacent observations. Unchanged when ``t`` is None.
     """
     if t is None:
@@ -87,13 +87,13 @@ def _check_times(t, n: int):
 
 
 # ---------------------------------------------------------------------------
-# One live signal over an interval
+# One live signal over a segment
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SignalStats:
-    """Statistics of one signal over one interval, about the interval's fit."""
+    """Statistics of one signal over one segment, about the segment's fit."""
 
     n: int
     duration_s: float
@@ -115,11 +115,11 @@ class SignalStats:
 def signal_stats(y: np.ndarray, fit: FitResult, *, dt: float, max_lag_frac: float = 0.25,
                  t: Optional[np.ndarray] = None) -> SignalStats:
     """
-    Statistics of ``y`` over one interval, given the interval's ``fit``.
+    Statistics of ``y`` over one segment, given the segment's ``fit``.
 
     ``std`` is the residual standard deviation with the fit's degrees of
     freedom removed; ``tau_int`` and ``N_eff`` come from the residuals; and
-    ``u_mean = std / sqrt(N_eff)`` is the uncertainty of the interval mean.
+    ``u_mean = std / sqrt(N_eff)`` is the uncertainty of the segment mean.
     With sample times ``t``, autocorrelation is not estimated across
     omitted timestamps.
     """
@@ -183,7 +183,7 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     a, b : arrays of the same length
         Samples where either is not finite are ignored.
     dt : float
-        Sample period in seconds.
+        Sample spacing in seconds.
     pieces : sequence of (start, stop), optional
         Index ranges that are each contiguous in time (for example the
         segments of one state). Only samples inside them are used, and

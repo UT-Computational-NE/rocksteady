@@ -1,5 +1,5 @@
 """
-Overrides: domain rules that may force a label.
+Overrides: domain knowledge that may force a label.
 
 - ``FloorLatch``: once a signal falls below a floor, the system is in a
   known state (for example, shut down) and the label is forced, until the
