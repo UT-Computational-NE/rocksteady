@@ -16,6 +16,8 @@
   subtypes), `OptimalSegmentation.counts` has a column per subtype, and
   `summary()` lists counts by subtype. With no subtypes, results are
   unchanged.
+- The error for an infeasible `optimal_segments` also names the subtypes'
+  conditions (#61).
 
 ### Documentation
 

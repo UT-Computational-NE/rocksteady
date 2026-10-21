@@ -619,7 +619,7 @@ def test_subtype_validation():
     with pytest.raises(ValueError, match="'warm' is not a valid State"):
         rs.Subtype("warm")
     for level in [(5.0, 1.0), (1.0, 1.0)]:
-        with pytest.raises(ValueError, match="level must have lo < hi"):
+        with pytest.raises(ValueError, match=r"level lo \(\S+\) must be < Subtype level hi"):
             rs.Subtype("steady", level=level)
     with pytest.raises(ValueError, match="level must be a pair"):
         rs.Subtype("steady", level=40.0)
@@ -633,6 +633,9 @@ def test_subtype_validation():
 
     with pytest.raises(ValueError, match="must be a Subtype"):
         run({"hot": ("steady", (40, None))})
+    for name in ("", 3):
+        with pytest.raises(ValueError, match="a subtype's name must be a non-empty string"):
+            run({name: rs.Subtype("steady")})
     for name in ("steady", "transient"):
         with pytest.raises(ValueError, match=f"subtype '{name}' has the name of a state"):
             run({name: rs.Subtype("steady")})
@@ -642,3 +645,17 @@ def test_subtype_validation():
         run({"hot": rs.Subtype("steady")}, max_counts={"warm": 1})
     with pytest.raises(ValueError, match=r"max_counts\['hot'\] must be a non-negative integer"):
         run({"hot": rs.Subtype("steady")}, max_counts={"hot": -1})
+    with pytest.raises(ValueError, match="subtypes' conditions"):
+        run({"hot": rs.Subtype("steady", level=(100.0, None))})
+
+
+def test_subtypes_never_break_a_tie_between_states():
+    """Steady and transient fit constant data equally well; declaring steady subtypes leaves the state unchanged."""
+    t = np.arange(10.0)
+    y = np.full(10, 5.0)
+    kw = dict(method="exact", penalty=1.0)
+    plain = optimal_segments(t, y, {"steady": 0, "transient": 0}, **kw)
+    subtypes = {"cold": rs.Subtype("steady", level=(None, 2.0)), "hot": rs.Subtype("steady", level=(2.0, None))}
+    typed = optimal_segments(t, y, {"steady": 0, "transient": 0}, subtypes=subtypes, **kw)
+    assert [s.state for s in typed.segments] == [s.state for s in plain.segments] == [ST]
+    assert typed.segments[0].subtype == "hot"
