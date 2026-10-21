@@ -42,6 +42,12 @@ Constraints
   ``sigma`` estimated from the first differences of the data (robustly), so
   "at most" stays "at most".
 
+When no segmentation satisfies the constraints, the ``ValueError`` names the
+earliest candidate time after which none can continue, the period containing
+it (its start, as ``count_by_period`` indexes periods, or the whole record),
+and the caps and transitions in force. It does not search for the constraint
+to blame.
+
 Methods
 -------
 All three run one dynamic program over candidate breakpoints, which tracks
@@ -170,15 +176,21 @@ def _count_table(spans: Sequence[Tuple[int, int, Sequence[str]]], columns: Seque
                 row[name] = row.get(name, 0) + 1
     # Periods inside a segment hold no sample of their own only when a gap spans them; they still count.
     out = pd.DataFrame.from_dict(rows, orient="index", columns=list(columns)).fillna(0).astype(int).sort_index()
-    if per is None:
-        out.index = ["all"]
-    elif idx is not None:
-        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
-        out.index = origin + out.index.to_numpy() * pd.Timedelta(per)
-    else:
-        out.index = (0.0 if period_origin is None else float(period_origin)) + out.index.to_numpy() * float(per)
+    out.index = _period_starts(out.index.to_numpy(), idx, per, period_origin)
     out.index.name = "period"
     return out
+
+
+def _period_starts(ids: np.ndarray, idx, per, period_origin):
+    """The start of each period number in ``ids``, as ``count_by_period`` indexes periods (``"all"`` for none)."""
+    import pandas as pd
+
+    if per is None:
+        return pd.Index(["all"] * len(ids))
+    if idx is not None:
+        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
+        return pd.Index(origin + ids * pd.Timedelta(per))
+    return pd.Index((0.0 if period_origin is None else float(period_origin)) + ids * float(per))
 
 
 # ---------------------------------------------------------------------------
@@ -454,8 +466,12 @@ class _Counter:
 
 class _Problem:
     def __init__(self, ts, y, idx, models, options: Sequence[_Option], counters: Sequence[_Counter],
-                 allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin):
+                 allowed: np.ndarray, columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin,
+                 max_counts: Optional[Mapping[str, int]] = None,
+                 transitions: Optional[Mapping[str, Sequence[str]]] = None):
         self.ts, self.y, self.idx = ts, y, idx
+        # The caller's caps and transitions, as given: the infeasibility error names them.
+        self.given_caps, self.given_transitions = max_counts, transitions
         self.per, self.period_origin = per, period_origin
         self.n = len(ts)
         self.options = list(options)
@@ -504,6 +520,9 @@ class _Problem:
                 ce = plus(c, o)
                 if all(v <= m for v, m in zip(ce, self.maxc)):
                     self.tgtA[o, l] = index[ce]
+        # The options of each state that can be placed at all. One that alone exceeds a cap (a cap of 0) never
+        # can, so its segments are never costed.
+        self.placeable = {st: [o for o in members if self.tgtB[o] >= 0] for st, members in self.by_state.items()}
 
     def duration(self, p, q):
         return self.ts[q - 1] - self.ts[p] + self.dt
@@ -571,8 +590,34 @@ class _Problem:
                 break
         return C
 
-    def solve(self, B: np.ndarray, *, surrogate: bool = False, ub: float = math.inf, prune: bool = True):
+    def solve(self, B: np.ndarray, *, ub: float = math.inf, prune: bool = True):
         """Optimal segmentation with breakpoints from ``B`` (sorted, with 0 and n). Returns (bounds, options)."""
+        table, k = self._forward(B, surrogate=False, ub=ub, prune=prune)
+        if table is None:
+            raise ValueError(self._infeasible(B, k))
+        return self._backtrack(B, *table)
+
+    def upper_bound(self, B: np.ndarray) -> float:
+        """
+        A bound on the optimal objective for pruning: the true cost of the
+        optimal segmentation under cheap constant-fit costs. Every segment a
+        model can fit has a finite constant fit, so that is a relaxation: when
+        it fails, so does the true problem, which gets stuck no later. The
+        error then needs the true costs only on the candidates up to there.
+        """
+        table, k = self._forward(B, surrogate=True, ub=math.inf, prune=False)
+        if table is None:
+            _, k = self._forward(B[: k + 1], surrogate=False, ub=math.inf, prune=False)
+            raise ValueError(self._infeasible(B, k))
+        bounds, opts = self._backtrack(B, *table)
+        return self.total(bounds, opts)[0] * (1 + 1e-9) + 1e-12
+
+    def _forward(self, B: np.ndarray, *, surrogate: bool, ub: float, prune: bool):
+        """
+        The program's table over breakpoints ``B``, ``(F, bp_j, bp_o, bp_l)``
+        (None when no segmentation reaches ``B[-1]``), and the index of the
+        latest candidate a segmentation reaches.
+        """
         m, O, L = len(B), self.O, self.L
         F = np.full((m, O, L), math.inf)
         bp_j = np.full((m, O, L), -1, dtype=np.int64)
@@ -591,7 +636,9 @@ class _Problem:
             dur = self.ts[q - 1] - t_first[:k] + self.dt
             spans = p1 > p0[:k]
             same = same_all[:k]
-            for st, members in self.by_state.items():
+            for st, members in self.placeable.items():
+                if not members:
+                    continue
                 okds = [(dur >= self.min_d[o] - 1e-9) & (dur <= self.max_d[o] + 1e-9) & reachable[:k]
                         for o in members]
                 okd_any = okds[0] if len(okds) == 1 else np.logical_or.reduce(okds)
@@ -611,9 +658,13 @@ class _Problem:
                     F[k, o], bp_j[k, o], bp_o[k, o], bp_l[k, o] = self._best_ending_at(k, o, C, F, same, spans)
             reachable[k] = np.isfinite(F[k]).any()
         if not np.isfinite(F[m - 1]).any():
-            raise ValueError("no segmentation satisfies the constraints (counts, durations, transitions) on these "
-                             "candidate breakpoints")
-        o, l = (int(v) for v in np.unravel_index(int(np.argmin(F[m - 1])), (O, L)))
+            return None, int(np.flatnonzero(reachable).max())
+        return (F, bp_j, bp_o, bp_l), m - 1
+
+    def _backtrack(self, B: np.ndarray, F: np.ndarray, bp_j: np.ndarray, bp_o: np.ndarray, bp_l: np.ndarray):
+        """The optimal (bounds, options) from the table of ``_forward``."""
+        m = len(B)
+        o, l = (int(v) for v in np.unravel_index(int(np.argmin(F[m - 1])), F.shape[1:]))
         k = m - 1
         bounds, opts = [int(B[k])], []
         while k > 0:
@@ -622,6 +673,29 @@ class _Problem:
             bounds.append(int(B[j]))
             k, o, l = j, po, pl
         return bounds[::-1], opts[::-1]
+
+    def _infeasible(self, B: np.ndarray, k: int) -> str:
+        """
+        The error for a record no segmentation covers. ``B[k]`` is the latest
+        candidate breakpoint any segmentation reaches, the earliest candidate
+        time after which none can continue. No search for the constraint to blame.
+        """
+        stuck = int(B[k])
+        unit = "" if self.idx is not None else " s"
+        at = self.idx[stuck] if self.idx is not None else float(self.ts[stuck])
+        if self.per is None:
+            where = "the whole record"
+        else:
+            start = _period_starts(np.array([self.pid[stuck]]), self.idx, self.per, self.period_origin)[0]
+            where = f"the period starting {start}{unit}"
+        caps = {st: int(v) for st, v in (self.given_caps or {}).items()} or "none"
+        if self.per is not None and self.given_caps:
+            caps = f"{caps} per period ({self.per})"
+        trans = self.given_transitions
+        trans = "any" if trans is None else {a: sorted(set(b)) for a, b in trans.items()}
+        return (f"no segmentation satisfies the constraints (counts, durations, transitions) on these candidate "
+                f"breakpoints: none can continue from {at}{unit} (sample {stuck}), in {where}. "
+                f"In force: max_counts={caps}, transitions={trans}.")
 
     def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, same: np.ndarray, spans: np.ndarray):
         """Best value, and back-pointers, of a segment with option ``o`` ending at ``B[k]``, per count layer."""
@@ -860,7 +934,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
 
     options, counters, allowed, columns = _options(states, pen, max_counts, transitions, min_duration_s,
                                                    max_duration_s)
-    prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin)
+    prob = _Problem(ts, y, idx, models, options, counters, allowed, columns, per, period_origin, max_counts,
+                    transitions)
     if method in ("subset", "refine"):
         if candidates is None:
             raise ValueError(f"method {method!r} needs candidates (segments or sample indices)")
@@ -875,12 +950,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             B = np.flatnonzero(np.diff(np.concatenate(([cell[0] - 1], cell))) != 0)
         B = np.unique(np.concatenate((B, _candidates(candidates, n))))
 
-    ub = math.inf
     slow = any(not prob.costs.is_fast(st) for st in states)
-    if prune and slow:
-        # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
-        sb, so = prob.solve(B, surrogate=True, prune=False)
-        ub = prob.total(sb, so)[0] * (1 + 1e-9) + 1e-12
+    # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
+    ub = prob.upper_bound(B) if prune and slow else math.inf
     bounds, opts = prob.solve(B, ub=ub, prune=prune)
     if method == "refine":
         if refine_s is None:
