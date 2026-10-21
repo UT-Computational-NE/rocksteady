@@ -102,7 +102,9 @@
 - A `FutureWarning` fails the test that raises it (`filterwarnings` in
   `pyproject.toml`). `count_by_period` and `OptimalSegmentation.counts`
   build their table as integers, so pandas 2.2 and 2.3 no longer warn
-  about downcasting on `fillna`; the tables are unchanged (#75).
+  about downcasting on `fillna`. The tables are unchanged, except that
+  `count_by_period` with no segments and a `DatetimeIndex` no longer fails
+  on pandas 1.5 (#75).
 
 ## 0.5.0
 

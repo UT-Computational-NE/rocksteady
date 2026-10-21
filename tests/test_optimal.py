@@ -177,6 +177,14 @@ def test_spanning_segments_count_against_every_period_they_touch():
     assert count_by_period(split, idx, "1D")["steady"].tolist() == [1, 1, 1, 1]
 
 
+def test_count_tables_without_segments_or_columns_are_empty():
+    idx = pd.date_range("2026-03-02", periods=48, freq="1h")
+    none = count_by_period([], idx, "1D", states=["steady"])
+    assert none.shape == (0, 1) and list(none.columns) == ["steady"] and none.index.name == "period"
+    assert count_by_period([Segment(0, 48, ST)], idx, "1D", states=[]).shape == (0, 0)
+    assert count_by_period([Segment(0, 48, ST)], np.arange(48.0), 25.0, states=[]).shape == (0, 0)
+
+
 def test_per_period_limits_bind():
     """Two plateaus per 100 s period; at most one steady segment per period."""
     rng = np.random.default_rng(2)
