@@ -535,6 +535,7 @@ pip install -e ".[dev]"
 python -m pytest                    # everything
 python -m pytest -m "not slow"      # skip the Monte Carlo calibration
 python tests/test_regression.py     # regenerate golden snapshots after an intended label change
+python tests/test_optimal_snapshot.py  # regenerate the best-fit segments snapshot after an intended change
 ```
 
 See [CHANGELOG.md](https://github.com/UT-Computational-NE/rocksteady/blob/main/CHANGELOG.md) for changes between versions.

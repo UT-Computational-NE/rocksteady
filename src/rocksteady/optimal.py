@@ -545,8 +545,8 @@ class _Problem:
         return _count_table(spans, [name for name, _ in self.columns], self.pid, self.idx, self.per,
                             self.period_origin)
 
-    def _state_costs(self, st: str, okd: np.ndarray, max_d: float, min_pen: float, starts: np.ndarray, q: int,
-                     dur: np.ndarray, surrogate: bool, ub: float, prune: bool) -> np.ndarray:
+    def _state_costs(self, st: str, okd: np.ndarray, starts: np.ndarray, q: int, dur: np.ndarray, surrogate: bool,
+                     ub: float, prune: bool) -> np.ndarray:
         """Model costs of ``[starts[j], q)`` for state ``st`` where ``okd``; infinite elsewhere."""
         k = len(okd)
         if self.costs.is_fast(st):
@@ -554,6 +554,7 @@ class _Problem:
         if surrogate:  # cheap constant-fit costs, only to find a feasible solution
             return np.where(okd, _poly0(self.costs, starts[:k], q), math.inf)
         C = np.full(k, math.inf)
+        max_d, min_pen = self.state_max_d[st], self.state_min_pen[st]
         for j in range(k - 1, -1, -1):  # growing segments: costs never decrease, so stop at the bound
             if dur[j] > max_d + 1e-9:
                 break
@@ -596,8 +597,7 @@ class _Problem:
                 okd_any = okds[0] if len(okds) == 1 else np.logical_or.reduce(okds)
                 if not okd_any.any():
                     continue
-                C_st = self._state_costs(st, okd_any, self.state_max_d[st], self.state_min_pen[st], starts, q, dur,
-                                         surrogate, ub, prune)
+                C_st = self._state_costs(st, okd_any, starts, q, dur, surrogate, ub, prune)
                 for o, okd in zip(members, okds):
                     if not okd.any():
                         continue
