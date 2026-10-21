@@ -1,0 +1,899 @@
+{
+ "startup-subset": {
+  "segments": [
+   [
+    0,
+    437,
+    "steady"
+   ],
+   [
+    437,
+    700,
+    "transient"
+   ],
+   [
+    700,
+    1259,
+    "steady"
+   ],
+   [
+    1259,
+    1450,
+    "transient"
+   ],
+   [
+    1450,
+    1800,
+    "steady"
+   ]
+  ],
+  "objective": 82267.25890782743,
+  "sse": 82217.25890782743,
+  "n_candidates": 6,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     3,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-refine": {
+  "segments": [
+   [
+    0,
+    409,
+    "steady"
+   ],
+   [
+    409,
+    535,
+    "transient"
+   ],
+   [
+    535,
+    1306,
+    "steady"
+   ],
+   [
+    1306,
+    1369,
+    "transient"
+   ],
+   [
+    1369,
+    1800,
+    "steady"
+   ]
+  ],
+  "objective": 11298.263499056091,
+  "sse": 11248.263499056091,
+  "n_candidates": 6,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     3,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-exact": {
+  "segments": [
+   [
+    0,
+    410,
+    "steady"
+   ],
+   [
+    410,
+    535,
+    "transient"
+   ],
+   [
+    535,
+    1305,
+    "steady"
+   ],
+   [
+    1305,
+    1370,
+    "transient"
+   ],
+   [
+    1370,
+    1800,
+    "steady"
+   ]
+  ],
+  "objective": 11335.0198635019,
+  "sse": 11285.0198635019,
+  "n_candidates": 363,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     3,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-exact-bic": {
+  "segments": [
+   [
+    0,
+    410,
+    "steady"
+   ],
+   [
+    410,
+    540,
+    "transient"
+   ],
+   [
+    540,
+    1310,
+    "steady"
+   ],
+   [
+    1310,
+    1370,
+    "transient"
+   ],
+   [
+    1370,
+    1800,
+    "steady"
+   ]
+  ],
+  "objective": 12405.923572574295,
+  "sse": 12380.619571149047,
+  "n_candidates": 181,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     3,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-exp-refine": {
+  "segments": [
+   [
+    0,
+    402,
+    "steady"
+   ],
+   [
+    402,
+    1301,
+    "transient"
+   ],
+   [
+    1301,
+    1800,
+    "transient"
+   ]
+  ],
+  "objective": 471.434390262558,
+  "sse": 450.3477224081845,
+  "n_candidates": 19,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     1,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-exp-subset-noprune": {
+  "segments": [
+   [
+    0,
+    400,
+    "steady"
+   ],
+   [
+    400,
+    1300,
+    "transient"
+   ],
+   [
+    1300,
+    1800,
+    "transient"
+   ]
+  ],
+  "objective": 471.94024375668283,
+  "sse": 450.85357590230933,
+  "n_candidates": 19,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     1,
+     2
+    ]
+   ]
+  }
+ },
+ "startup-alternating": {
+  "segments": [
+   [
+    0,
+    400,
+    "steady"
+   ],
+   [
+    400,
+    460,
+    "transient"
+   ],
+   [
+    460,
+    500,
+    "steady"
+   ],
+   [
+    500,
+    560,
+    "transient"
+   ],
+   [
+    560,
+    600,
+    "steady"
+   ],
+   [
+    600,
+    690,
+    "transient"
+   ],
+   [
+    690,
+    750,
+    "steady"
+   ],
+   [
+    750,
+    840,
+    "transient"
+   ],
+   [
+    840,
+    1300,
+    "steady"
+   ],
+   [
+    1300,
+    1340,
+    "transient"
+   ],
+   [
+    1340,
+    1380,
+    "steady"
+   ],
+   [
+    1380,
+    1420,
+    "transient"
+   ],
+   [
+    1420,
+    1460,
+    "steady"
+   ],
+   [
+    1460,
+    1720,
+    "transient"
+   ],
+   [
+    1720,
+    1800,
+    "steady"
+   ]
+  ],
+  "objective": 3630.178190693118,
+  "sse": 3591.178190693118,
+  "n_candidates": 181,
+  "counts": {
+   "index": [
+    "all"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     8,
+     7
+    ]
+   ]
+  }
+ },
+ "startup-three-states": {
+  "segments": [
+   [
+    0,
+    400,
+    "steady"
+   ],
+   [
+    400,
+    420,
+    "transient"
+   ],
+   [
+    420,
+    520,
+    "indeterminate"
+   ],
+   [
+    520,
+    540,
+    "steady"
+   ],
+   [
+    540,
+    620,
+    "transient"
+   ],
+   [
+    620,
+    640,
+    "steady"
+   ],
+   [
+    640,
+    760,
+    "transient"
+   ],
+   [
+    760,
+    1300,
+    "steady"
+   ],
+   [
+    1300,
+    1320,
+    "transient"
+   ],
+   [
+    1320,
+    1400,
+    "indeterminate"
+   ],
+   [
+    1400,
+    1440,
+    "steady"
+   ],
+   [
+    1440,
+    1800,
+    "transient"
+   ]
+  ],
+  "objective": 844.5863531550137,
+  "sse": 619.5863531550137,
+  "n_candidates": 91,
+  "counts": {
+   "index": [
+    "0.0",
+    "600.0",
+    "1200.0"
+   ],
+   "columns": [
+    "steady",
+    "transient",
+    "indeterminate"
+   ],
+   "values": [
+    [
+     2,
+     2,
+     1
+    ],
+    [
+     2,
+     2,
+     0
+    ],
+    [
+     2,
+     2,
+     1
+    ]
+   ]
+  }
+ },
+ "plateaus-per-period": {
+  "segments": [
+   [
+    0,
+    50,
+    "steady"
+   ],
+   [
+    50,
+    100,
+    "transient"
+   ],
+   [
+    100,
+    150,
+    "steady"
+   ],
+   [
+    150,
+    200,
+    "transient"
+   ],
+   [
+    200,
+    250,
+    "transient"
+   ],
+   [
+    250,
+    300,
+    "steady"
+   ],
+   [
+    300,
+    350,
+    "steady"
+   ],
+   [
+    350,
+    400,
+    "transient"
+   ]
+  ],
+  "objective": 84.99702559649523,
+  "sse": 0.997025596495228,
+  "n_candidates": 41,
+  "counts": {
+   "index": [
+    "0.0",
+    "100.0",
+    "200.0",
+    "300.0"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     1
+    ]
+   ]
+  }
+ },
+ "plateaus-spanning": {
+  "segments": [
+   [
+    0,
+    400,
+    "steady"
+   ]
+  ],
+  "objective": 0.0,
+  "sse": 0.0,
+  "n_candidates": 9,
+  "counts": {
+   "index": [
+    "0.0",
+    "100.0",
+    "200.0",
+    "300.0"
+   ],
+   "columns": [
+    "steady"
+   ],
+   "values": [
+    [
+     1
+    ],
+    [
+     1
+    ],
+    [
+     1
+    ],
+    [
+     1
+    ]
+   ]
+  }
+ },
+ "plateaus-subset-periods": {
+  "segments": [
+   [
+    0,
+    50,
+    "steady"
+   ],
+   [
+    50,
+    100,
+    "steady"
+   ],
+   [
+    100,
+    150,
+    "steady"
+   ],
+   [
+    150,
+    200,
+    "steady"
+   ],
+   [
+    200,
+    250,
+    "steady"
+   ],
+   [
+    250,
+    300,
+    "steady"
+   ],
+   [
+    300,
+    350,
+    "steady"
+   ],
+   [
+    350,
+    400,
+    "steady"
+   ]
+  ],
+  "objective": 9.005147357271397,
+  "sse": 1.0051473572713974,
+  "n_candidates": 17,
+  "counts": {
+   "index": [
+    "0.0",
+    "100.0",
+    "200.0",
+    "300.0"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     2,
+     0
+    ],
+    [
+     2,
+     0
+    ],
+    [
+     2,
+     0
+    ],
+    [
+     2,
+     0
+    ]
+   ]
+  }
+ },
+ "plateaus-refine-periods": {
+  "segments": [
+   [
+    0,
+    50,
+    "steady"
+   ],
+   [
+    50,
+    57,
+    "transient"
+   ],
+   [
+    57,
+    100,
+    "steady"
+   ],
+   [
+    100,
+    106,
+    "transient"
+   ],
+   [
+    106,
+    150,
+    "steady"
+   ],
+   [
+    150,
+    200,
+    "steady"
+   ],
+   [
+    200,
+    208,
+    "transient"
+   ],
+   [
+    208,
+    250,
+    "steady"
+   ],
+   [
+    250,
+    271,
+    "transient"
+   ],
+   [
+    271,
+    300,
+    "steady"
+   ],
+   [
+    300,
+    350,
+    "steady"
+   ],
+   [
+    350,
+    374,
+    "transient"
+   ],
+   [
+    374,
+    400,
+    "steady"
+   ]
+  ],
+  "objective": 108.93722922176316,
+  "sse": 0.9372292217631601,
+  "n_candidates": 15,
+  "counts": {
+   "index": [
+    "0.0",
+    "100.0",
+    "200.0",
+    "300.0"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     2,
+     1
+    ],
+    [
+     2,
+     1
+    ],
+    [
+     2,
+     2
+    ],
+    [
+     2,
+     1
+    ]
+   ]
+  }
+ },
+ "days-exact": {
+  "segments": [
+   [
+    0,
+    54,
+    "transient"
+   ],
+   [
+    54,
+    96,
+    "transient"
+   ],
+   [
+    96,
+    198,
+    "steady"
+   ],
+   [
+    198,
+    240,
+    "transient"
+   ],
+   [
+    240,
+    342,
+    "steady"
+   ],
+   [
+    342,
+    384,
+    "transient"
+   ],
+   [
+    384,
+    432,
+    "transient"
+   ]
+  ],
+  "objective": 757.1642691388048,
+  "sse": 407.1642691388048,
+  "n_candidates": 145,
+  "counts": {
+   "index": [
+    "2026-03-02 00:00:00",
+    "2026-03-03 00:00:00",
+    "2026-03-04 00:00:00"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ]
+  }
+ },
+ "days-refine": {
+  "segments": [
+   [
+    0,
+    54,
+    "steady"
+   ],
+   [
+    54,
+    96,
+    "steady"
+   ],
+   [
+    96,
+    101,
+    "transient"
+   ],
+   [
+    101,
+    198,
+    "steady"
+   ],
+   [
+    198,
+    240,
+    "steady"
+   ],
+   [
+    240,
+    258,
+    "transient"
+   ],
+   [
+    258,
+    342,
+    "steady"
+   ],
+   [
+    342,
+    384,
+    "steady"
+   ],
+   [
+    384,
+    392,
+    "transient"
+   ],
+   [
+    392,
+    432,
+    "steady"
+   ]
+  ],
+  "objective": 518.6865093967855,
+  "sse": 394.5049162215637,
+  "n_candidates": 25,
+  "counts": {
+   "index": [
+    "2026-03-02 00:00:00",
+    "2026-03-03 00:00:00",
+    "2026-03-04 00:00:00"
+   ],
+   "columns": [
+    "steady",
+    "transient"
+   ],
+   "values": [
+    [
+     3,
+     1
+    ],
+    [
+     3,
+     1
+    ],
+    [
+     3,
+     1
+    ]
+   ]
+  }
+ }
+}
