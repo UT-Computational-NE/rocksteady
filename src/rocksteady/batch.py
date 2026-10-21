@@ -1,6 +1,6 @@
 """
-Batch evaluation of a record with a detector, signal values, and interval
-extraction.
+Batch evaluation of a record with a detector: labels, signal values, and
+the index runs that carry a label.
 
 The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.
@@ -58,7 +58,7 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     t : array of float, optional
         Sample times in seconds. Default: seconds since the first row if
         ``df`` has a ``DatetimeIndex``, otherwise the row number times the
-        sample period. Times in an ``EventLog`` must use the same origin.
+        sample spacing. Times in an ``EventLog`` must use the same origin.
     with_results : bool
         Also return one column per criterion with its margin ratio, and one
         per declared diagnostic (``Criterion.detail_keys``) named
@@ -155,7 +155,7 @@ def fit_report(detector: Detector, df: "pd.DataFrame", models, *, labels=None, b
 
     Sample times come from, in order: ``t``; the ``t_s`` column of a
     ``batch.run`` output passed as ``labels``; ``df``'s ``DatetimeIndex``;
-    the row number times the sample period. ``labels`` must have one entry
+    the row number times the sample spacing. ``labels`` must have one entry
     per row of ``df`` (and, for a ``batch.run`` output, the same index), and
     an explicit ``t`` must agree with saved ``t_s``.
     """

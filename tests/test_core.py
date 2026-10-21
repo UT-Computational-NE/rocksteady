@@ -303,7 +303,7 @@ def test_ramp_near_the_limit_and_effective_timing():  # #15
     assert eff["block_s"] == 1.0 and eff["window_samples"] == 6 and eff["evaluated_samples"] == 6
     odd = rs.Timing(sample_period_s=1.0, block_s=2.0, window_s=7.0)
     assert odd.n_blocks == 3 and odd.evaluated_samples == 6 and odd.evaluated_window_s == 6.0
-    with pytest.raises(ValueError, match="at least one sample period"):
+    with pytest.raises(ValueError, match="at least one sample spacing"):
         rs.Timing(sample_period_s=1.0, block_s=0.4, window_s=5.0)
 
 

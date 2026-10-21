@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
+  published as a glossary page with ADR 0001 (subtypes) and the
+  contributor-agent notes (`AGENTS.md`, `docs/agents/`) (#56). Wording only;
+  no API names change:
+  - a contiguous run in one state is a *segment*; the "Intervals" guide
+    page is now "Segments, fits and statistics by state";
+  - the optimiser has *constraints* (counts per period, transitions,
+    durations, penalties); a *limit* is a criterion's threshold;
+  - overrides are domain knowledge that forces a label, not "rules";
+  - the spacing of samples is the *sample spacing*; a *period* is the
+    optimiser's counting span.
+- Error messages say "sample spacing" for `Timing.sample_period_s`, and an
+  infeasible `optimal_segments` reports that no segmentation satisfies the
+  *constraints* (#56).
+- `Report.provenance["parameter_reference"]` says "segment centre" for
+  `poly` (was "interval centre"), so exported JSON reads differently (#56).
+
 ## 0.5.0
 
 Best-fit segments under limits (#45), the documentation site (#47, #49), the

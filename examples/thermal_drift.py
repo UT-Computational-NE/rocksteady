@@ -61,19 +61,19 @@ print("limiting signal while settling:", fails.head(3).to_dict())
 # --- the approach to the new setpoint, and a channel comparison --------------
 # During a slow approach the labels can flicker between settling (a window
 # fails) and indeterminate (a window is undecided); merging runs shorter than
-# two minutes keeps the intervals meaningful.
+# two minutes keeps the segments meaningful.
 run_out = rs.batch.run(detector, df)
 segs = rs.segments_from(detector, run_out, min_samples=120)
 values = rs.batch.signal_values(detector, df)
 t = np.arange(n, dtype=float)
 event = int(events[0][0])
 next_steady = next(s for s in segs if s.state == rs.State.STEADY and s.start > event)
-span = slice(event, next_steady.start)  # from the logged change to the next steady interval
+span = slice(event, next_steady.start)  # from the logged change to the next steady segment
 fit = rs.fit.fit_model("first_order", t[span], values["T_mean"].to_numpy()[span])
 print(f"\nT_mean from {event} s to {next_steady.start} s: tau = {fit.params['tau']:.0f} +/- {fit.u['tau']:.0f} s "
       f"(simulated {tau:.0f} s), asymptote {fit.params['y_inf']:.3f} +/- {fit.u['y_inf']:.3f} C"
       + (f"  {sorted(fit.flags)}" if fit.flags else ""))
-print(f"{len(segs)} intervals: " + ", ".join(f"{s.state.value} {s.start}-{s.stop} s" for s in segs))
+print(f"{len(segs)} segments: " + ", ".join(f"{s.state.value} {s.start}-{s.stop} s" for s in segs))
 print()
 print(rs.report.compare_report(values["T1"], values["T_mean"], segs, names=("T1", "T_mean"), dt=1.0, units="C"))
 

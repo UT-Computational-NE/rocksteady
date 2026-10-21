@@ -7,7 +7,7 @@ any module can use them.
 consecutive samples. It is never formed: ``R @ x`` costs O(n) time and
 memory instead of O(n^2).
 
-With ``steps`` (the spacing of consecutive samples, in sample periods), the
+With ``steps`` (how many sample spacings separate consecutive samples), the
 samples need not be consecutive: ``R_ij = phi^|s_i - s_j|`` for sample
 positions ``s``, the correlation of an AR(1) (Ornstein-Uhlenbeck) process
 observed with some samples missing.
@@ -50,8 +50,8 @@ def _scan_steps(col: list, decay: list) -> list:
 
 def gap_steps(t: np.ndarray, dt: float) -> Optional[np.ndarray]:
     """
-    Spacing of consecutive times ``t`` in whole sample periods ``dt`` (at
-    least 1), or None when every step is one period (consecutive samples).
+    Spacing of consecutive times ``t`` in whole sample spacings ``dt`` (at
+    least 1), or None when every step is one spacing (consecutive samples).
     """
     if len(t) < 2 or not dt > 0:
         return None
@@ -70,7 +70,7 @@ def ar1_apply(x: np.ndarray, phi: float, steps: Optional[Sequence[float]] = None
     indexing numpy rows for the short windows of the streaming detector.
 
     ``steps`` (length n - 1): the spacing of consecutive samples in sample
-    periods. Then ``R_ij = phi^(s_j - s_i)`` for positions ``s``, and the
+    spacings. Then ``R_ij = phi^(s_j - s_i)`` for positions ``s``, and the
     recursions decay by ``phi^step`` across each step.
     """
     x = np.asarray(x, dtype=float)

@@ -1,0 +1,3 @@
+# Once a state has subtypes, every segment of it takes one
+
+In `optimal_segments`, if the caller declares any subtype of a state, every segment of that state must take one of them; there is no implicit untyped segment (`subtype=None` means only that the state has no subtypes). We considered allowing untyped segments freely, and allowing them only when no subtype's conditions accept the segment. Both let the optimiser get around a per-subtype cap: with `cold` and `hot` covering every level and `max_counts={"hot": 1}`, a second hot plateau could be returned as an untyped `steady` segment. A caller who wants "left untyped" declares a catch-all subtype (for example `"other": rs.Subtype("transient")`), which they can then cap or restrict in `transitions` like any other.

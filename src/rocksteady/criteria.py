@@ -5,7 +5,7 @@ Each returns a ``CriterionResult`` (statistic, uncertainty, limit, k). The
 detector turns that into a margin ratio and a three-way test, so a new
 criterion only has to say what it measures and how well.
 
-- ``DeviationCriterion``: the signal stays within a tolerance of a fitted
+- ``DeviationCriterion``: the signal stays within a limit of a fitted
   model (constant or linear) over the window. Uncertainty comes from a
   measurement-noise model.
 - ``DriftCriterion``: slope equivalence, ``|b| + k u_b <= b_crit``, with an
@@ -47,13 +47,13 @@ def _sigma(noise: NoiseModel, level: float) -> float:
 @registry.criteria.register("deviation")
 class DeviationCriterion(Criterion):
     """
-    Max deviation of the block means from a fitted model within a tolerance.
+    Max deviation of the block means from a fitted model within a limit.
 
     Parameters
     ----------
     signal : str
     limit : float
-        Tolerance on the true max deviation (signal units, or relative if
+        Limit on the true max deviation (signal units, or relative if
         ``relative`` is True).
     noise : float or callable(level) -> float
         Standard deviation of a block mean due to measurement noise (same
@@ -214,7 +214,7 @@ class AsymptoteCriterion(Criterion):
         d(tau) = A exp(-(t_end - t0) / tau) = -tau * y'(t_end).
 
     In a ``Detector``, ``t_end`` is the current sample, half of
-    ``block_samples - 1`` sample periods after the last block centre (see
+    ``block_samples - 1`` sample spacings after the last block centre (see
     ``bind_timing``). An instance is bound to one detector's timing.
 
     ``tau`` is rarely determined well by one window, and a test that trusts a
@@ -309,7 +309,7 @@ class AsymptoteCriterion(Criterion):
         """
         Where the current sample is, in the detector's block-time frame (block
         times are measured from the window's centre): half of
-        ``block_samples - 1`` sample periods after the nominal centre of the
+        ``block_samples - 1`` sample spacings after the nominal centre of the
         last block. It is always a valid sample, whatever the coverage of the
         blocks before it. Without a timing (``evaluate`` called on its own)
         the remaining approach is taken at the last block time, which is
@@ -322,7 +322,7 @@ class AsymptoteCriterion(Criterion):
         self._bound = key
         self._t_now = (0.5 * (timing.n_blocks - 1) * timing.effective_block_s
                        + 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
-        # Block starts (first sample of each block) in the same frame, and the sample period.
+        # Block starts (first sample of each block) in the same frame, and the sample spacing.
         self._starts = ((np.arange(timing.n_blocks) - 0.5 * (timing.n_blocks - 1)) * timing.effective_block_s
                         - 0.5 * (timing.block_samples - 1) * timing.sample_period_s)
         self._block_samples, self._dt = timing.block_samples, timing.sample_period_s
