@@ -25,6 +25,23 @@
   `max_rise_s` of its first sample, `y0` being its first finite sample, so
   rise time works for a non-zero baseline. A segment with no finite sample
   meets neither, and a segment must meet all of its subtype's conditions.
+- Every constraint of `optimal_segments` can name subtypes, and the
+  record's first and last segments can be restricted (#63, part of #55).
+  `transitions` names states or subtypes; a state's name stands for all of
+  its subtypes, and the allowed pairs are the union over all entries, so
+  the operating sequence (cold → heat-up → hot → cool-down → cold) tells
+  apart transient subtypes with the same conditions by their neighbours.
+  New `initial=` and `final=` sets of state or subtype names restrict the
+  first and last segments (default: any; a one-segment record must satisfy
+  both), so a transient cut off by the record's edge need not be called a
+  startup. `min_duration_s` / `max_duration_s` take subtypes, and a
+  subtype's and its state's bounds both bind; a subtype whose bounds leave
+  no duration is refused up front. `penalty` takes subtypes: a
+  subtype's value replaces its state's, and with `"bic"` (or when the
+  mapping does not name it) a subtype takes its state's.
+  `OptimalSegmentation.penalty` lists every state's and then every
+  subtype's penalty. The infeasibility error names `initial` and `final`
+  when they are given.
 - The error for an infeasible `optimal_segments` also names the subtypes'
   conditions (#61).
 - `optimal_segments` names the argument and the valid states when `models`
@@ -32,6 +49,9 @@
 
 ### Changed
 
+- A `penalty` mapping for `optimal_segments` that names something other
+  than a state with a model or a subtype is now rejected, like every other
+  constraint; it used to be ignored (#63).
 - When no segmentation satisfies the constraints, the `ValueError` from
   `optimal_segments` names the earliest candidate time after which none can
   continue, the period containing it (its start, as `count_by_period`

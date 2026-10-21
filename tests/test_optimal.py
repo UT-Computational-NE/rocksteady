@@ -29,11 +29,15 @@ def _sse(spec, t, y, state):
 
 
 def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None, penalty=0.0, positions=None,
-           subtypes=None):
+           subtypes=None, max_d=None, initial=None, final=None):
     """
     The best objective over every segmentation and every choice for each segment, by exhaustive depth-first
     search: a choice is a state without subtypes, or one subtype of a state that has some. It cuts a branch
     only when it breaks a constraint, never on cost. Returns (objective, (bounds, choices)).
+
+    Constraints name states or subtypes. A choice's durations are its state's and its own (both bind), and
+    its penalty is its own, else its state's. In ``transitions``, ``initial`` and ``final`` a state stands for
+    every choice of the state.
     """
     n = len(y)
     dt = float(np.median(np.diff(t)))
@@ -46,6 +50,17 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
         choices += [(k, st, s) for k, s in mine] or [(st, st, None)]
     caps = dict(max_counts or {})
     sse = {}
+
+    def expand(names):
+        return {c for c, st, _ in choices if c in names or st in names}
+
+    pairs = None if transitions is None else {(a, b) for k, v in transitions.items() for a in expand({k})
+                                              for b in expand(set(v))}
+    first = expand(set(initial)) if initial is not None else None
+    last = expand(set(final)) if final is not None else None
+    pen = {c: (penalty.get(c, penalty.get(st, 0.0)) if isinstance(penalty, dict) else penalty) for c, st, _ in choices}
+    lo = {c: max((min_d or {}).get(k, 0.0) for k in (c, st)) for c, st, _ in choices}
+    hi = {c: min((max_d or {}).get(k, math.inf) for k in (c, st)) for c, st, _ in choices}
 
     def cost(st, p, q):
         if (st, p, q) not in sse:
@@ -64,9 +79,12 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
             return
         for q in sorted(c for c in cuts if c > p):
             for name, st, sub in choices:
-                if min_d and t[q - 1] - t[p] + dt < min_d.get(st, 0) - 1e-9:
+                if not lo[name] - 1e-9 <= t[q - 1] - t[p] + dt <= hi[name] + 1e-9:
                     continue
-                if transitions is not None and prev is not None and st not in transitions[prev]:
+                if pairs is not None and prev is not None and (prev, name) not in pairs:
+                    continue
+                if (p == 0 and first is not None and name not in first) or (q == n and last is not None
+                                                                              and name not in last):
                     continue
                 if not meets(sub, p, q):
                     continue
@@ -77,7 +95,7 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
                             new[(pp, key)] = new.get((pp, key), 0) + 1
                 if any(new[(pp, key)] > caps[key] for pp, key in new):
                     continue
-                search(q, st, new, acc + cost(st, p, q) + penalty, path + [(p, q, name)])
+                search(q, name, new, acc + cost(st, p, q) + pen[name], path + [(p, q, name)])
 
     search(0, None, {}, 0.0, [])
     if best[1] is None:
@@ -699,15 +717,24 @@ def test_refine_keeps_every_segment_within_its_level():
     assert [s.subtype for s in ref.segments if s.state == ST] == [s.subtype for s in sub.segments if s.state == ST]
 
 
-def test_pruning_stays_exact_with_subtypes():
-    """Several options per state, conditions that reject segments, and a cap on a state and on its subtype."""
+@pytest.mark.parametrize("named", [False, True])
+def test_pruning_stays_exact_with_subtypes(named):
+    """
+    Several options per state, conditions that reject segments, and a cap on a state and on its subtype; and
+    (``named``) subtypes' own penalties and durations, transitions between subtypes, and the first and last.
+    """
     t, y, (up, down) = _startup_record(n=900)
     models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 1.0, "tau_max": 1e3}}
     subtypes = {"zero": rs.Subtype("steady", level=(None, 5.0)), "power": rs.Subtype("steady", level=(60.0, None)),
                 "rising": rs.Subtype("transient", level=(None, 50.0)), "other": rs.Subtype("transient")}
+    extra = dict(penalty={"transient": 50.0, "other": 5.0, "zero": 20.0}, max_duration_s={"rising": 300.0},
+                 min_duration_s={"transient": 30.0, "other": 60.0}, initial={"zero"}, final={"steady", "other"},
+                 transitions={"zero": ["rising"], "rising": ["power"], "power": ["other"], "other": ["steady"]}
+                 ) if named else {}
     for kw in (dict(method="exact", grid_s=30), dict(method="subset", candidates=list(range(0, 901, 25)))):
         a, b = (optimal_segments(t, y, models, subtypes=subtypes, per=450.0, prune=prune,
-                                 max_counts={"steady": 2, "power": 1, "transient": 2}, **kw) for prune in (True, False))
+                                 max_counts={"steady": 2, "power": 1, "transient": 2}, **kw, **extra)
+                for prune in (True, False))
         assert a.objective == pytest.approx(b.objective, rel=1e-12)
         assert [(s.start, s.stop, s.subtype) for s in a.segments] == [(s.start, s.stop, s.subtype) for s in b.segments]
         if kw["method"] == "exact":
@@ -756,8 +783,8 @@ def test_subtype_validation():
         run({"hot": rs.Subtype("steady")}, max_counts={"warm": 1})
     with pytest.raises(ValueError, match=r"max_counts\['hot'\] must be a non-negative integer"):
         run({"hot": rs.Subtype("steady")}, max_counts={"hot": -1})
-    with pytest.raises(ValueError, match="penalty names subtype 'hot'; it takes states only"):
-        run({"hot": rs.Subtype("steady")}, penalty={"hot": 5.0})
+    with pytest.raises(ValueError, match="penalty names 'warm', which is not a state with a model or a subtype"):
+        run({"hot": rs.Subtype("steady")}, penalty={"warm": 5.0})
     with pytest.raises(ValueError, match="subtypes' conditions"):
         run({"hot": rs.Subtype("steady", level=(100.0, None))})
     with pytest.raises(ValueError, match=r"max_counts=\{'hot': 0\} per period \(5.0\)"):  # a subtype's cap
@@ -966,3 +993,217 @@ def test_refine_keeps_every_segment_within_its_peak_and_rise():
         moved_out |= not all(_meets_conditions(subtypes[a.subtype], t[b.slice], y[b.slice])
                              for a, b in zip(sub.segments, free.segments))
     assert moved_out
+
+
+# -- every constraint can name subtypes; initial and final (#63) -------------------------
+
+
+def _operating_day(seed=60, n=100):
+    """Cold, a rise to hot, hot, a fall back to cold, cold."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(float(n))
+    y = np.interp(t, [0, 20, 30, 60, 70, n], [0.0, 0.0, 5.0, 5.0, 0.0, 0.0]) + rng.normal(0, 0.05, n)
+    return t, y
+
+
+_LEVELS = {"cold": rs.Subtype("steady", level=(None, 2.5)), "hot": rs.Subtype("steady", level=(2.5, None))}
+_SEQUENCE = {"cold": ["heat-up"], "heat-up": ["hot"], "hot": ["cool-down"], "cool-down": ["cold"]}
+
+
+@pytest.mark.parametrize("order", [("heat-up", "cool-down"), ("cool-down", "heat-up")])
+def test_transient_subtypes_with_the_same_conditions_are_told_apart_by_transitions(order):
+    """Heat-up and cool-down have no conditions: only their neighbours in `transitions` tell them apart."""
+    t, y = _operating_day()
+    subtypes = {**_LEVELS, **{name: rs.Subtype("transient") for name in order}}
+    kw = dict(method="exact", grid_s=5, penalty=1.0, subtypes=subtypes)
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, transitions=_SEQUENCE, **kw)
+    assert [s.subtype for s in r.segments] == ["cold", "heat-up", "hot", "cool-down", "cold"]
+    alternate = {"steady": ["transient"], "transient": ["steady"]}
+    free = optimal_segments(t, y, {"steady": 0, "transient": 1}, transitions=alternate, **kw)
+    assert [s.subtype for s in free.segments] == ["cold", order[0], "hot", order[0], "cold"]  # a tie: the first
+
+
+_BY_STATE = [  # (with state names, the same with every subtype listed)
+    ({"steady": ["transient"], "transient": ["steady"]},
+     {"cold": ["heat-up", "cool-down"], "hot": ["heat-up", "cool-down"], "heat-up": ["cold", "hot"],
+      "cool-down": ["cold", "hot"]}),
+    ({"steady": ["transient"], "transient": ["hot"], "hot": ["cool-down"], "cool-down": ["cold"]},  # a union
+     {"cold": ["heat-up", "cool-down"], "hot": ["heat-up", "cool-down"], "heat-up": ["hot"],
+      "cool-down": ["hot", "cold"]}),
+    ({"cold": ["transient"], "transient": ["steady", "transient"], "hot": ["cool-down"]},
+     {"cold": ["heat-up", "cool-down"], "heat-up": ["cold", "hot", "heat-up", "cool-down"],
+      "cool-down": ["cold", "hot", "heat-up", "cool-down"], "hot": ["cool-down"]}),
+]
+
+
+@pytest.mark.parametrize("seed", range(2))
+@pytest.mark.parametrize("case", range(len(_BY_STATE)))
+def test_a_states_name_in_transitions_is_all_of_its_subtypes(seed, case):
+    t, y = _operating_day(seed=seed)
+    subtypes = {**_LEVELS, "heat-up": rs.Subtype("transient"), "cool-down": rs.Subtype("transient")}
+    by_state, listed = _BY_STATE[case]
+    kw = dict(method="exact", grid_s=5, penalty=[0.2, 1.0][seed], subtypes=subtypes, max_counts={"heat-up": 1})
+    a = optimal_segments(t, y, {"steady": 0, "transient": 1}, transitions=by_state, **kw)
+    b = optimal_segments(t, y, {"steady": 0, "transient": 1}, transitions=listed, **kw)
+    assert [(s.start, s.subtype) for s in a.segments] == [(s.start, s.subtype) for s in b.segments]
+    assert a.objective == b.objective
+
+
+def _cut_off_day():
+    """A day that starts partway up a rise (its cold side is missing), then hot, a fall, and cold."""
+    t, y = _operating_day()
+    return t[25:] - 25.0, y[25:]
+
+
+@pytest.mark.parametrize("initial, first", [(None, "heat-up"), ({"steady", "other"}, "other"), (["other"], "other"),
+                                            ({"cold", "transient"}, "heat-up")])
+def test_a_transient_at_the_start_takes_no_subtype_initial_excludes(initial, first):
+    t, y = _cut_off_day()
+    subtypes = {**_LEVELS, "heat-up": rs.Subtype("transient"), "other": rs.Subtype("transient")}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                         transitions={"steady": ["transient"], "transient": ["steady"]}, subtypes=subtypes,
+                         initial=initial)
+    assert [s.subtype for s in r.segments] == [first, "hot", "heat-up", "cold"]
+
+
+@pytest.mark.parametrize("final, last", [(None, "cool-down"), ({"steady", "other"}, "other")])
+def test_a_transient_at_the_end_takes_no_subtype_final_excludes(final, last):
+    """The day reversed: it ends partway down a fall, whose cold side is missing."""
+    t, y = _cut_off_day()
+    y = y[::-1].copy()
+    subtypes = {**_LEVELS, "cool-down": rs.Subtype("transient"), "other": rs.Subtype("transient")}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                         transitions={"steady": ["transient"], "transient": ["steady"]}, subtypes=subtypes,
+                         final=final)
+    assert [s.subtype for s in r.segments] == ["cold", "cool-down", "hot", last]
+
+
+@pytest.mark.parametrize("initial, final, want", [({"a", "b"}, {"b"}, "b"), ({"b"}, {"a", "b"}, "b"),
+                                                  ({"a"}, {"b"}, None), ({"steady"}, {"b"}, "b")])
+def test_a_one_segment_record_satisfies_both_initial_and_final(initial, final, want):
+    t = np.arange(10.0)
+    y = np.random.default_rng(61).normal(0, 0.1, 10)
+    subtypes = {"a": rs.Subtype("steady"), "b": rs.Subtype("steady")}
+    kw = dict(method="subset", candidates=[0, 10], penalty=0, subtypes=subtypes, initial=initial, final=final)
+    if want is None:
+        with pytest.raises(ValueError, match=r"initial=\['a'\], final=\['b'\]"):
+            optimal_segments(t, y, {"steady": 0}, **kw)
+    else:
+        assert [s.subtype for s in optimal_segments(t, y, {"steady": 0}, **kw).segments] == [want]
+
+
+def _constraint_scheme(rng):
+    """Random constraints naming states and subtypes: transitions, initial and final, durations, penalties."""
+    names = ["steady", "transient", "cold", "hot", "up", "down", "other"]
+
+    def pick(k):
+        return sorted(set(rng.choice(names, int(k), replace=True).tolist()))
+
+    kw = {}
+    if rng.random() < 0.7:
+        kw["transitions"] = {a: pick(rng.integers(1, 4)) for a in pick(rng.integers(2, 6))}
+    for edge in ("initial", "final"):
+        if rng.random() < 0.6:
+            kw[edge] = pick(rng.integers(1, 3))
+    if rng.random() < 0.6:
+        kw["min_d"] = {k: float(rng.integers(1, 4)) for k in pick(rng.integers(1, 3))}
+    if rng.random() < 0.6:
+        kw["max_d"] = {k: float(rng.integers(2, 6)) for k in pick(rng.integers(1, 3))}
+    kw["penalty"] = {k: float(rng.choice([0.0, 0.3, 1.0, 3.0])) for k in pick(rng.integers(1, 5))}
+    return kw
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_exact_matches_brute_force_with_constraints_naming_subtypes(seed):
+    rng = np.random.default_rng(900 + seed)
+    n = 7
+    t = np.arange(n, dtype=float)
+    y = np.where(t < rng.integers(2, 5), 0.0, 3.0) + rng.normal(0, 0.3, n)
+    a = float(rng.uniform(0.5, 2.5))
+    subtypes = {"cold": rs.Subtype("steady", level=(None, a)), "hot": rs.Subtype("steady", level=(a, None)),
+                "up": rs.Subtype("transient", peak=(a, None)), "down": rs.Subtype("transient"),
+                "other": rs.Subtype("transient")}
+    models = {"steady": 0, "transient": 1}
+    kw = _constraint_scheme(rng)
+    caps = {"steady": 2, "up": 1} if seed % 2 else None
+    per = 3.0 if seed % 3 == 0 else None
+    want_cost, want = _brute(t, y, models, per=per, max_counts=caps, subtypes=subtypes, **kw)
+    args = dict(method="exact", subtypes=subtypes, per=per, max_counts=caps, penalty=kw["penalty"],
+                transitions=kw.get("transitions"), initial=kw.get("initial"), final=kw.get("final"),
+                min_duration_s=kw.get("min_d"), max_duration_s=kw.get("max_d"))
+    if want is None:
+        with pytest.raises(ValueError, match="no segmentation satisfies the constraints"):
+            optimal_segments(t, y, models, **args)
+        return
+    got = optimal_segments(t, y, models, **args)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    pen = {s: kw["penalty"].get(s.subtype, kw["penalty"].get(s.state.value, 0.0)) for s in got.segments}
+    assert sum(_sse(models[s.state.value], t[s.slice], y[s.slice], s.state.value) + pen[s]
+               for s in got.segments) == pytest.approx(got.objective, rel=1e-9, abs=1e-9)
+
+
+def test_constraints_naming_subtypes_validation():
+    t, y = np.arange(10.0), np.zeros(10)
+
+    def run(**kw):
+        return optimal_segments(t, y, {"steady": 0}, method="exact", subtypes={"hot": rs.Subtype("steady")}, **kw)
+
+    for what in ("transitions", "min_duration_s", "max_duration_s", "penalty", "initial", "final"):
+        bad = {"transitions": {"hot": ["warm"]}, "initial": ["warm"], "final": {"warm"}}.get(what, {"warm": 1.0})
+        with pytest.raises(ValueError, match=f"{what} names 'warm', which is not a state with a model or a subtype"):
+            run(**{what: bad})
+        bad = {"transitions": {"transient": ["hot"]}, "initial": ["transient"], "final": {"transient"}}.get(
+            what, {"transient": 1.0})
+        with pytest.raises(ValueError, match=f"{what} names state 'transient', which has no model"):
+            run(**{what: bad})
+    for what in ("initial", "final"):
+        with pytest.raises(ValueError, match=f"{what} must be a collection of state or subtype names, got 'hot'"):
+            run(**{what: "hot"})
+        with pytest.raises(ValueError, match=f"{what} is empty: name at least one state or subtype"):
+            run(**{what: set()})
+        assert [s.subtype for s in run(**{what: ("hot",)}).segments] == ["hot"]
+    for what in ("min_duration_s", "max_duration_s"):
+        with pytest.raises(ValueError, match=rf"{what}\['hot'\] must be >= 0"):
+            run(**{what: {"hot": -1.0}})
+    with pytest.raises(ValueError, match=r"penalties must be finite and >= 0, got .*'hot': -1.0"):
+        run(penalty={"hot": -1.0})
+    assert run(penalty={"steady": 2.0, "hot": 5.0}).penalty == {"steady": 2.0, "hot": 5.0}
+    assert run(penalty=2.0).penalty == {"steady": 2.0, "hot": 2.0}
+    noisy = np.random.default_rng(62).normal(0, 1.0, 10)
+    pen = optimal_segments(t, noisy, {"steady": 0}, method="exact", subtypes={"hot": rs.Subtype("steady")}).penalty
+    plain = optimal_segments(t, noisy, {"steady": 0}, method="exact").penalty
+    assert pen == {"steady": plain["steady"], "hot": plain["steady"]} and plain["steady"] > 0  # "bic": the state's
+
+
+@pytest.mark.parametrize("subtypes", [None, {**_LEVELS, "other": rs.Subtype("transient")}])
+def test_initial_and_final_naming_every_state_change_nothing(subtypes):
+    t, y = _operating_day()
+    kw = dict(method="exact", grid_s=5, penalty=1.0, max_counts={"steady": 3, "transient": 2}, subtypes=subtypes,
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    every = {"steady", "transient"}
+    a = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
+    b = optimal_segments(t, y, {"steady": 0, "transient": 1}, initial=every, final=every, **kw)
+    assert a.segments == b.segments and a.objective == b.objective and a.counts.equals(b.counts)
+
+
+@pytest.mark.parametrize("lo, hi", [("hot", "steady"), ("steady", "hot"), ("hot", "hot")])
+def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
+    """Review 1 of PR #102: such a subtype could never be used, and its segments would silently go elsewhere."""
+    t, y = _operating_day()
+    culprit = f"min_duration_s 50.0 s ({lo}) > max_duration_s 40.0 s ({hi})"
+    with pytest.raises(ValueError, match=re.escape(f"subtype 'hot' can take no segment: {culprit}")):
+        optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, subtypes=dict(_LEVELS),
+                         min_duration_s={lo: 50.0}, max_duration_s={hi: 40.0})
+    # A state's own bounds are as in 0.5.0: never refused, the state is just never used.
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                         min_duration_s={"transient": 50.0}, max_duration_s={"transient": 40.0})
+    assert {s.state for s in r.segments} == {ST}
+
+
+@pytest.mark.parametrize("b, want", [(0.5, "b"), (1.0, "a"), (1.5, "a")])
+def test_a_subtypes_own_penalty_decides_before_declaration_order(b, want):
+    """Review 1 of PR #102: subtypes tie only at the same penalty, and then the one declared first wins."""
+    t, y = _operating_day()
+    r = optimal_segments(t, y, {"steady": 0}, method="exact", grid_s=5, penalty={"steady": 1.0, "b": b},
+                         subtypes={"a": rs.Subtype("steady"), "b": rs.Subtype("steady")})
+    assert len(r.segments) > 1 and {s.subtype for s in r.segments} == {want}
