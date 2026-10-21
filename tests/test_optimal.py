@@ -1,4 +1,4 @@
-"""Constrained optimal segmentation: best-fit segments under per-period constraints (#45)."""
+"""Constrained optimal segmentation: best-fit segments under constraints (#45)."""
 
 import itertools
 import math

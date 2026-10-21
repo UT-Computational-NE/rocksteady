@@ -65,7 +65,7 @@ def build_detector(c: LoopCriteria = LoopCriteria(), events=()) -> rs.Detector:
 
 # [stream]
 class LiveMonitor:
-    """Feed one sample per period; get the label and the worst margin ratio."""
+    """Feed one sample at a time; get the label and the worst margin ratio."""
 
     def __init__(self, c: LoopCriteria = LoopCriteria(), events=()):
         self.detector = build_detector(c, events)
@@ -78,7 +78,7 @@ class LiveMonitor:
 
 # [batch]
 def qualify(df: pd.DataFrame, events=(), c: LoopCriteria = LoopCriteria()):
-    """Labels, accepted intervals and a fit report for a stored record."""
+    """Labels, accepted runs and a fit report for a stored record."""
     det = build_detector(c, events)
     out = rs.batch.run(det, df)               # one row per sample: label, reason, eta, ...
     segs = rs.segments_from(det, out)         # steady / transient / indeterminate, backfilled

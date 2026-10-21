@@ -52,7 +52,7 @@ consecutive valid samples as one sample apart, and such fits carry the
 flag ``time_gaps``. In Monte Carlo checks (AR(1) noise with phi up to
 0.97, 30-60 % of samples missing in runs of 20) the level uncertainty
 stayed within about +10 % of the true spread: slightly conservative.
-``uncertainty="ar1_time"`` instead takes the spacing in whole periods of
+``uncertainty="ar1_time"`` instead takes the spacing in whole multiples of
 the median spacing and uses ``R = phi^|s_i - s_j|`` over the sample
 positions ``s``, with ``phi`` from adjacent pairs only. It was no better
 calibrated in those checks, so it is opt-in. Without gaps the two agree.
@@ -265,7 +265,7 @@ def propagate_cov(cov: Optional[np.ndarray], jac: np.ndarray) -> Optional[np.nda
 
 def _steps(t_valid: np.ndarray, flags: Set[str]) -> Optional[np.ndarray]:
     """
-    Spacing of the valid samples in whole periods of their median spacing
+    Spacing of the valid samples in whole multiples of their median spacing
     (``_ar1.gap_steps``), or None when they are consecutive. Flags
     ``time_gaps`` when they are not.
     """

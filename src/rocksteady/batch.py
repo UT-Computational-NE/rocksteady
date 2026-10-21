@@ -1,6 +1,6 @@
 """
-Batch evaluation of a record with a detector, signal values, and the
-index runs that carry a label.
+Batch evaluation of a record with a detector: labels, signal values, and
+the index runs that carry a label.
 
 The detector is causal, so running it over a stored record gives exactly
 the labels the online detector would have produced.

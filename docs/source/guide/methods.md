@@ -6,10 +6,10 @@ the {doc}`../references`.
 
 ## Notation
 
-Samples arrive at times $t_i = t_0 + i\,\Delta$, where the sample spacing $\Delta$ is
-`Timing.sample_period_s`. A **signal** $s(x_i)$ is a scalar computed from the
-raw sample $x_i$: a column, or a builder such as the mean or spread of
-several columns (`rocksteady.signals`).
+Samples arrive at times $t_i = t_0 + i\,\Delta$, where the sample spacing
+$\Delta$ is `Timing.sample_period_s`. A **signal** $s(x_i)$ is a scalar
+computed from the raw sample $x_i$: a column, or a builder such as the mean
+or spread of several columns (`rocksteady.signals`).
 
 ## Blocks and the window
 

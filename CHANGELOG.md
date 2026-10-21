@@ -5,7 +5,9 @@
 ### Documentation
 
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
-  published as a glossary page (#56). Wording only; no API names change:
+  published as a glossary page with ADR 0001 (subtypes) and the
+  contributor-agent notes (`AGENTS.md`, `docs/agents/`) (#56). Wording only;
+  no API names change:
   - a contiguous run in one state is a *segment*; the "Intervals" guide
     page is now "Segments, fits and statistics by state";
   - the optimiser has *constraints* (counts per period, transitions,

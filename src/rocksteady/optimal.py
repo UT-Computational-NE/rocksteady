@@ -1,5 +1,5 @@
 """
-Best-fit segments under constraints: constrained optimal segmentation.
+Best-fit segments under constraints: optimal segmentation.
 
 ``optimal_segments`` splits a record into segments, gives each a state
 (``steady``, ``transient`` or ``indeterminate``), and fits each with the model
@@ -676,7 +676,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                      candidates=None, grid_s: Optional[float] = None, refine_s: Optional[float] = None,
                      period_origin=None, prune: bool = True) -> OptimalSegmentation:
     """
-    Best-fit segments of ``y`` under per-period constraints (see the module docstring).
+    Best-fit segments of ``y`` under constraints (see the module docstring).
 
     Parameters
     ----------
