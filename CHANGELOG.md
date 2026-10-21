@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Added
+
+- Subtypes for best-fit segments (#61, part of #55): `rs.Subtype(state,
+  level=(lo, hi))` names a refinement of a state whose segments' mean lies
+  in `[lo, hi)` (`None` for an open end), and `optimal_segments(...,
+  subtypes={name: Subtype})` gives every segment of that state one of its
+  subtypes (ADR 0001; a subtype with no conditions is a catch-all).
+  `max_counts` caps subtypes per period as well as states, and both caps
+  bind. Subtypes of one state may overlap; an exact tie goes to the one
+  declared first (among segmentations of equal objective, the least sum of
+  the subtypes' positions, which can also decide an exact tie between
+  states). `refine` keeps each segment's subtype, and pruning stays exact.
+  Segments carry `Segment.subtype` (None for a state without subtypes),
+  `OptimalSegmentation.subtypes` holds the subtypes, `counts` has a column
+  per subtype, and `summary()` lists counts by subtype. With no subtypes,
+  results are unchanged.
+- The error for an infeasible `optimal_segments` also names the subtypes'
+  conditions (#61).
+- `optimal_segments` names the argument and the valid states when `models`
+  names an unknown state (#61).
+
+### Changed
+
+- When no segmentation satisfies the constraints, the `ValueError` from
+  `optimal_segments` names the earliest candidate time after which none can
+  continue, the period containing it (its start, as `count_by_period`
+  indexes periods, or "the whole record"), and the caps and transitions in
+  force, so the unusual day in a long batch run can be found (#62).
+- `optimal_segments` no longer fits the model of a state capped at 0
+  segments per period, which can never be used, so `n_fits` can be lower;
+  the results are unchanged. With pruning, an infeasible call fits models
+  only up to where every segmentation gets stuck (#62).
+
 ### Documentation
 
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now

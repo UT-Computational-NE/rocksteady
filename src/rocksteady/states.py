@@ -53,13 +53,16 @@ class Segment:
     Samples ``[start, stop)`` in one state.
 
     ``forced`` is True when an override forced the label of at least one of
-    its samples, so the state is not (only) certified by data.
+    its samples, so the state is not (only) certified by data. ``subtype``
+    names the segment's subtype (``optimal.Subtype``), or is None when its
+    state has none.
     """
 
     start: int
     stop: int
     state: State
     forced: bool = False
+    subtype: Optional[str] = None
 
     def __len__(self) -> int:
         return self.stop - self.start
