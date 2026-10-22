@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, mypy (configured
 # in pyproject.toml), and the strict docs build. Needs the modules of the dev extra (a selection: the test extra);
-# when they are missing it says how to install them. Runs the code of the checkout it is called from, so a worktree
-# tests its own src/ even when the environment's editable install points at another checkout. Set PYTHON to pick the interpreter (default: python on PATH). With arguments,
+# when they are missing it says how to install them. Exports PYTHONPATH=src for the docs build, which imports this
+# checkout's rocksteady (pytest, and the processes tests start, get src/ from pyproject.toml and tests/conftest.py).
+# Set PYTHON to pick the interpreter (default: python on PATH). With arguments,
 # it runs only that pytest selection, without mypy or the docs build: tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail
 cd "$(dirname "$0")/.."
