@@ -26,6 +26,9 @@ def test_an_sdists_tests_import_the_installed_package():
     assert not rocksteady.__file__.startswith(SRC), rocksteady.__file__
 
 
+CHILD_TEST = "test_a_process_a_test_starts_imports_the_same_rocksteady"
+
+
 def test_a_process_a_test_starts_imports_the_same_rocksteady():
     """Tests that run `python -c` or a script must check the code the tests check."""
     run = subprocess.run([sys.executable, "-c", "import rocksteady; print(rocksteady.__file__)"],
@@ -50,3 +53,20 @@ def test_pytest_imports_the_checkouts_own_src_over_another_install(tmp_path):
                          env=env, capture_output=True, text=True, check=False, timeout=120)
     assert run.returncode == 0, run.stdout + run.stderr
     assert pathlib.Path(imported_from).read_text() == os.path.join(SRC, "rocksteady", "__init__.py")
+
+
+def test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_install(tmp_path):
+    """
+    The child-process test above, run where PYTHONPATH already names a decoy rocksteady: the conftest must put
+    the tests' rocksteady before it, not after.
+    """
+    decoy = tmp_path / "decoy" / "rocksteady"
+    decoy.mkdir(parents=True)
+    (decoy / "__init__.py").write_text("")
+    env = dict(os.environ, PYTHONPATH=str(tmp_path / "decoy"))
+    env.pop("PYTEST_ADDOPTS", None)
+    child_test = f"{os.path.join(ROOT, 'tests', 'test_import_source.py')}::{CHILD_TEST}"
+    run = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c",
+                          os.path.join(ROOT, "pyproject.toml"), "--rootdir", ROOT, child_test],
+                         env=env, capture_output=True, text=True, check=False, timeout=120)
+    assert run.returncode == 0 and "1 passed" in run.stdout, run.stdout + run.stderr
