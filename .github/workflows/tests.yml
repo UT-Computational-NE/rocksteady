@@ -45,7 +45,7 @@ jobs:
       - run: python -m pip install -e ".[typecheck]"
       - run: python -m mypy
 
-  # pylint on the messages tools/lint.sh enforces, over src, tests, tools and examples.
+  # tools/lint.sh: pylint on the messages it enforces, and pycodestyle on blank lines.
   lint:
     runs-on: ubuntu-latest
     steps:

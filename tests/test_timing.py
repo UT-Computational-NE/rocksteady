@@ -99,7 +99,6 @@ def test_a_suggested_timing_keeps_the_drift_test_calibrated():
     assert passes / reps <= 0.05
 
 
-
 def test_missing_samples_keep_their_place_on_the_time_grid():
     """Correlation is measured within contiguous runs, never across a gap (the time axis is not compressed)."""
     x = ar1_noise(np.random.default_rng(2026), 100000, 0.9)  # tau_int = 19 s at 1 Hz

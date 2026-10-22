@@ -28,7 +28,7 @@ classifiers = [
 test = ["pytest>=7"]  # 7.0 added the `pythonpath` option
 docs = ["sphinx>=7", "sphinx-rtd-theme>=2", "myst-parser>=2"]
 typecheck = ["mypy>=1.10"]
-lint = ["pylint>=3"]
+lint = ["pylint>=3", "pycodestyle>=2.11"]
 dev = ["rocksteady[docs,test,typecheck,lint]", "build"]
 
 [project.urls]

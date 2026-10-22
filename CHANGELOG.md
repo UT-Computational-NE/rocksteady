@@ -159,6 +159,10 @@
   names a review or a pull request by number (`review 1 of PR #83`,
   `PR #46`, `pull request #102`); a test says what it pins down. The
   existing ones are reworded (#106).
+- `tools/lint.sh` also runs pycodestyle on blank lines (E301, E302, E303,
+  E305, E306): two around a top-level definition, one around a method, none
+  in excess. pylint does not check these. `pycodestyle` joins the `lint`
+  extra, and the three hits it found are fixed (#111).
 
 ## 0.5.0
 
