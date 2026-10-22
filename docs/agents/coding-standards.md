@@ -5,9 +5,9 @@ The judgement calls a reviewer checks in every diff. A rule a tool can decide li
 - `tools/lint.sh`: the lint rules this repo enforces.
 - mypy: the types in `src/rocksteady`.
 - `tests/test_vocabulary.py`: the phrases `GLOSSARY.md` avoids that are always wrong. A phrase wrong only in some contexts is a review call.
-- `tests/test_wording_of_tests.py`: tests say what they pin down, not the review that found them.
+- `tests/test_wording_of_tests.py`: tests say what they pin down, not the review or PR that found them.
 
-Add a rule here when reviews raise the same call twice. Move it into a check, and delete it here, once a tool can decide it.
+Add a rule here when reviews raise the same call twice, or when the user admits one sooner (recorded on #92). Move it into a check, and delete it here, once a tool can decide it.
 
 ## Rules
 
