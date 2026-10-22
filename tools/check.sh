@@ -3,8 +3,8 @@
 # in pyproject.toml), tools/lint.sh (pylint on the messages it enforces, pycodestyle on blank lines), and the strict
 # docs build. Needs the modules of the dev extra (a selection: the test extra); when they are missing it says how
 # to install them. Exports PYTHONPATH=src for the docs build, which imports this checkout's rocksteady (pytest, and
-# the processes tests start, get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the interpreter
-# (default: python on PATH).
+# the processes tests start, get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the
+# interpreter (default: python on PATH).
 # With arguments, it runs only that pytest selection, without mypy, lint or the docs build:
 # tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail

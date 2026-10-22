@@ -43,7 +43,7 @@ def test_every_public_frozen_value_has_a_case():
 def test_a_frozen_value_rebuilds_from_its_own_fields(value):
     rebuilt = {
         "replace": dataclasses.replace(value),
-        "constructor": type(value)(**{f.name: getattr(value, f.name) for f in dataclasses.fields(value) if f.init}),
+        "constructor": type(value)(**{f.name: getattr(value, f.name) for f in dataclasses.fields(value)}),
         "pickle": pickle.loads(pickle.dumps(value)),
     }
     for how, other in rebuilt.items():

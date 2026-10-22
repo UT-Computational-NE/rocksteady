@@ -166,9 +166,11 @@
   `PR #46`, `pull request #102`); a test says what it pins down. The
   existing ones are reworded (#106).
 - `tools/lint.sh` also runs pycodestyle on blank lines (E301, E302, E303,
-  E305, E306): two around a top-level definition, one around a method, none
-  in excess. pylint does not check these. `pycodestyle` joins the `lint`
-  extra, and the three hits it found are fixed (#111).
+  E305, E306): two around a top-level definition, one before a method or a
+  nested definition, none in excess. pylint does not check these. Both
+  linters always run, so one run reports every finding. `pycodestyle` joins
+  the `lint` extra, the three hits it found are fixed, and CI's `lint` job
+  also runs `tests/test_lint_sh.py` (#111).
 - `tests/test_frozen_values.py`: every public frozen value (`Signal`,
   `Timing`, `Subtype`, `Segment`), with every optional field set, rebuilds
   equal and hashes alike through `dataclasses.replace`, its constructor

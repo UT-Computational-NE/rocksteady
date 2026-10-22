@@ -49,3 +49,9 @@ def test_definitions_need_their_blank_lines(tmp_path, source, code):
     run = _lint(tmp_path, source)
     assert run.returncode != 0
     assert code in run.stdout + run.stderr
+
+
+def test_one_run_reports_pylints_and_pycodestyles_findings(tmp_path):
+    run = _lint(tmp_path, "import os\n" + CLEAN.replace("\n\n\ndef g", "\n\ndef g"))
+    assert run.returncode != 0
+    assert "unused-import" in run.stdout and "E302" in run.stdout
