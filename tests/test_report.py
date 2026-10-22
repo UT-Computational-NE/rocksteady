@@ -46,7 +46,7 @@ def build():
 
 
 def test_fit_report_states_intervals_and_parameters():
-    vals, segs, rep, _ = build()
+    vals, _, rep, _ = build()
     assert [b.name for b in rep] == ["y", "z"]
     for block in rep:
         assert list(block.by_state.index) == ["all", "steady", "transient", "indeterminate"]

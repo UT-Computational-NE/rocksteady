@@ -242,7 +242,7 @@ def test_bound_criterion_uncertainty_accounts_for_autocorrelation():
     assert r.uncertainty > e.std(ddof=1) / np.sqrt(n) * 1.5
 
 
-# -- review fixes ------------------------------------------------------------------
+# -- duplicate names, effective block timing and event logs ------------------------
 
 
 def test_duplicate_names_are_rejected_before_any_data():  # #14

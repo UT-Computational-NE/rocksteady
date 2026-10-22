@@ -106,6 +106,10 @@
   waiting for CI, and test-merge it with the current base before merging.
   The issue format asks for boundaries and tie-breaks as checkable
   properties (#93).
+- `docs/agents/review.md`: probe restatements. For each argument or rule a
+  change alters, grep its name in the module docstring, `README.md`,
+  `docs/source/` and the error messages, and check that each sentence is
+  still true (#106).
 
 ### Tests and CI
 
@@ -146,6 +150,15 @@
   `rocksteady` first on `PYTHONPATH`). To run an unpacked sdist's tests
   against an installed package, pass `-o pythonpath=`, as CI's `build`
   job does; a test fails when an sdist's tests import its own `src/` (#99).
+- `tools/lint.sh` runs pylint on four messages only: unused imports,
+  unused variables, self-assignment and lambda assignment, over `src`,
+  `tests`, `tools` and `examples`. The full `tools/check.sh` run and a new
+  `lint` CI job run it (a `lint` extra, included in `dev`). The 16 hits it
+  found are fixed, one an unused import in `rocksteady.report` (#106).
+- `tests/test_wording_of_tests.py` fails on a test comment or docstring that
+  names a review or a pull request by number (`review 1 of PR #83`,
+  `PR #46`, `pull request #102`); a test says what it pins down. The
+  existing ones are reworded (#106).
 
 ## 0.5.0
 

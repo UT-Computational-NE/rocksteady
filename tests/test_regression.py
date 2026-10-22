@@ -63,7 +63,10 @@ def actuator_case():
 
     floor = 1.0
     signals = [rs.Signal("level", lambda s: 0.0 if s["level"] < floor else float(s["level"])), rs.Signal("act", "act")]
-    noise = lambda m: 0.0 if m <= 0 else (0.003 if m < 100 else 0.002)  # noqa: E731
+
+    def noise(m):
+        return 0.0 if m <= 0 else (0.003 if m < 100 else 0.002)
+
     criteria = [
         rs.DeviationCriterion("level", 0.025, noise, model="constant", relative=True, scale_floor=floor, name="level"),
         rs.DeviationCriterion("act", 1.0, 0.05, model="linear", name="act"),

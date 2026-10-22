@@ -45,6 +45,17 @@ jobs:
       - run: python -m pip install -e ".[typecheck]"
       - run: python -m mypy
 
+  # pylint on the messages tools/lint.sh enforces, over src, tests, tools and examples.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[lint]"
+      - run: tools/lint.sh
+
   # The Read the Docs site (https://rocksteady.readthedocs.io), built as Read the Docs builds it:
   # any Sphinx warning (for example a malformed docstring) fails the job.
   docs:

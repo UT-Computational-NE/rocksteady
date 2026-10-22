@@ -31,7 +31,7 @@ import numpy as np
 
 from .fit import FitResult, PiecewiseFit, normalize_model, piecewise_fit, resolve_model, validate_models
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
-from .states import Segment, State
+from .states import Segment
 
 FIT_INTERVAL_COLUMNS = ["segment", "state", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
                         "n", "mean", "std", "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]

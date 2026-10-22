@@ -533,8 +533,9 @@ The mathematics of each method, as implemented, is on the documentation's
 
 ```
 pip install -e ".[dev]"
-tools/check.sh                      # what CI runs, fast: tests without the slow ones, mypy, strict docs build
-tools/check.sh tests/test_optimal.py -k infeasible  # one selection of those tests, no mypy or docs build
+tools/check.sh                      # what CI runs, fast: tests without the slow ones, mypy, pylint, strict docs build
+tools/check.sh tests/test_optimal.py -k infeasible  # one selection of those tests, no mypy, pylint or docs build
+tools/lint.sh                       # pylint alone, on the few messages the repo enforces
 python -m pytest                    # everything
 python -m pytest -m "not slow"      # skip the Monte Carlo calibration
 # After an intended change, regenerate a snapshot (run as a script, outside pytest, so name src/):

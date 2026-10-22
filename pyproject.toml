@@ -28,7 +28,8 @@ classifiers = [
 test = ["pytest>=7"]  # 7.0 added the `pythonpath` option
 docs = ["sphinx>=7", "sphinx-rtd-theme>=2", "myst-parser>=2"]
 typecheck = ["mypy>=1.10"]
-dev = ["rocksteady[docs,test,typecheck]", "build"]
+lint = ["pylint>=3"]
+dev = ["rocksteady[docs,test,typecheck,lint]", "build"]
 
 [project.urls]
 Homepage = "https://github.com/UT-Computational-NE/rocksteady"
@@ -63,7 +64,7 @@ module = ["pandas", "pandas.*"]
 ignore_missing_imports = true  # no bundled type information; pandas-stubs is not a dependency
 
 # For editors that lint with pylint: the line length the code uses, and no notices for the docstring, size and
-# naming conventions it does not follow.
+# naming conventions it does not follow. tools/lint.sh, which tools/check.sh and CI run, enforces a few messages only.
 [tool.pylint.format]
 max-line-length = 120
 
