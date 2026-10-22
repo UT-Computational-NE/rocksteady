@@ -1,8 +1,8 @@
 """
 Scaling benchmarks for the streaming detector and the shared numerics (#25).
 
-    python tools/benchmark.py            # all
-    python tools/benchmark.py slope acf  # some
+    PYTHONPATH=src python tools/benchmark.py            # all
+    PYTHONPATH=src python tools/benchmark.py slope acf  # some
 
 Sections:
 

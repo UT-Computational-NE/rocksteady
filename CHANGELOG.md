@@ -143,6 +143,13 @@
   `git ls-files tests` (#75).
 - A `FutureWarning` fails the test that raises it (`filterwarnings` in
   `pyproject.toml`) (#75).
+- pytest imports the checkout's own `src/` (`pythonpath` in
+  `pyproject.toml`; the `test` extra needs `pytest>=7`), even where the
+  environment's editable install points at another checkout, and so do
+  the processes tests start (`tests/conftest.py` puts the same
+  `rocksteady` first on `PYTHONPATH`). To run an unpacked sdist's tests
+  against an installed package, pass `-o pythonpath=`, as CI's `build`
+  job does; a test fails when an sdist's tests import its own `src/` (#99).
 - `tools/lint.sh` runs pylint on four messages only: unused imports,
   unused variables, self-assignment and lambda assignment, over `src`,
   `tests`, `tools` and `examples`. The full `tools/check.sh` run and a new

@@ -34,7 +34,7 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
     # the environment's editable install at the worktree.
     # With the minimum versions the extras in pyproject.toml ask for.
-    want = "'pytest' 'mypy>=1.10' 'pylint>=3' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
+    want = "'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
     assert f"{sys.executable} -m pip install {want}" in run.stderr
     # A fresh environment also needs the package's own dependencies: the editable install, from the main checkout.
     assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
