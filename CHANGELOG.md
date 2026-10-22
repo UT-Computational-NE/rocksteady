@@ -25,8 +25,7 @@
   (either end open), and `max_rise_s` with `rise_fraction` (default 0.95)
   needs the segment to reach `y0 + rise_fraction * (top - y0)` within
   `max_rise_s` of its first sample, `y0` being its first finite sample and
-  `top` its maximum, so
-  rise time works for a non-zero baseline. A segment with no finite sample
+  `top` its maximum, so rise time works for a non-zero baseline. A segment with no finite sample
   meets neither, and a segment must meet all of its subtype's conditions.
 - Event conditions for subtypes (#65, part of #55): `optimal_segments(...,
   events={name: boolean mask})` takes named masks with one value per

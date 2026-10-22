@@ -720,7 +720,7 @@ class _Levels:
         self._exact: Optional[Tuple[np.ndarray, int]] = None
 
     @property
-    def exact(self) -> Tuple[np.ndarray, int]:
+    def exact_prefix(self) -> Tuple[np.ndarray, int]:
         """
         Exact prefix sums of the finite samples, ``(P, e0)``: the sum over
         ``[p, q)`` is ``(P[q] - P[p]) * 2**e0``, with ``P`` Python integers.
@@ -744,7 +744,7 @@ class _Levels:
         ``ps`` (each range with a finite sample). The sums are exact integers, so no rounding can decide:
         ``fsum(y) / n`` rounds twice, and 53 samples of 0.7 would fall below 0.7.
         """
-        P, e0 = self.exact
+        P, e0 = self.exact_prefix
         (mt,), (et,) = (v.tolist() for v in _as_integers(np.array([thr])))
         total = P[q] - P[ps]  # times 2**e0
         target = (self.N[q] - self.N[ps]).astype(np.int64).astype(object) * mt  # times 2**et
@@ -769,12 +769,12 @@ class _Levels:
                 near |= np.abs(mean - thr) <= err
             close = np.flatnonzero(near & (n > 0))
             if len(close):  # decided exactly, all at once
-                exact = np.ones(len(close), dtype=bool)
+                within = np.ones(len(close), dtype=bool)
                 if lo is not None:
-                    exact &= self.at_least(ps[close], q, lo)
+                    within &= self.at_least(ps[close], q, lo)
                 if hi is not None:
-                    exact &= ~self.at_least(ps[close], q, hi)
-                out[close] = exact
+                    within &= ~self.at_least(ps[close], q, hi)
+                out[close] = within
             return out
 
         return level_ok
@@ -1386,18 +1386,15 @@ def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transi
     options: List[_Option] = []
     options_of: Dict[str, FrozenSet[int]] = {}
 
-    def durations(*names: str) -> Tuple[float, float]:
-        (lo, _), (hi, _) = _duration_bounds(names, min_duration_s, max_duration_s)
-        return lo, hi
-
     for st in states:
         mine = [(name, sub) for name, sub in subtypes.items() if sub.state.value == st]
         first = len(options)
         if not mine:
-            options.append(_Option(st, pen[st], *durations(st)))
+            (lo, _), (hi, _) = _duration_bounds((st,), min_duration_s, max_duration_s)
+            options.append(_Option(st, pen[st], lo, hi))
         for rank, (name, sub) in enumerate(mine):
-            options.append(_Option(st, pen[name], *durations(st, name), accepts=conditions.of(sub), subtype=name,
-                                   rank=rank))
+            (lo, _), (hi, _) = _duration_bounds((st, name), min_duration_s, max_duration_s)
+            options.append(_Option(st, pen[name], lo, hi, accepts=conditions.of(sub), subtype=name, rank=rank))
             options_of[name] = frozenset([len(options) - 1])
         options_of[st] = frozenset(range(first, len(options)))
     names = list(states) + list(subtypes)  # states first, so that without subtypes the counters are as before
@@ -1553,9 +1550,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         pairs are the union over all entries. Default: any may follow any.
     min_duration_s, max_duration_s : mapping, optional
         Bounds on segment duration per state or subtype. A subtype's and its
-        state's both bind. A state whose minimum exceeds its maximum, or a
-        subtype whose bounds and its state's leave no duration, is refused
-        (``ValueError``), with or without subtypes.
+        state's both bind. A state whose minimum exceeds its maximum, with
+        or without subtypes, is refused (``ValueError``), as is a subtype
+        whose bounds and its state's leave no duration.
     penalty : "bic", float, or mapping
         Added per segment (per state or subtype with a mapping; a state
         missing from it gets 0). A subtype's penalty replaces its state's;
