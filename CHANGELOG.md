@@ -52,6 +52,18 @@
   `OptimalSegmentation.penalty` lists every state's and then every
   subtype's penalty. The infeasibility error names `initial` and `final`
   when they are given.
+- `rs.classify_segments(t, y, segments, subtypes=..., events=...,
+  transitions=..., initial=..., final=...)` gives subtypes to segments the
+  analyst already has, such as the detector's, by the same definitions as
+  `optimal_segments` (#66, part of #55). It runs the optimiser's dynamic
+  program with the breakpoints and states fixed and no count caps,
+  durations or penalties, so ties go to the subtype declared first and a
+  transient with no conditions is typed from its neighbours, as in the
+  optimiser; on the optimiser's own segments it returns the optimiser's
+  subtypes when those constraints name states only. It returns the
+  segments with `subtype` set (None for a state without subtypes), and
+  when they cannot be typed it raises a `ValueError` that names where, as
+  the optimiser's infeasibility error does.
 - The error for an infeasible `optimal_segments` also names the subtypes'
   conditions (#61).
 - `optimal_segments` names the argument and the valid states when `models`
