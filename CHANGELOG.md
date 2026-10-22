@@ -32,7 +32,8 @@
   `[start, stop)`, so that a driven transient is told apart from an
   undriven one, by actuator. There is no tolerance; widen a mask to accept
   an event just outside a segment. Every mask a condition names must be
-  given, and every mask must be boolean and as long as `t`.
+  given, every mask must be boolean and as long as `t`, and a subtype
+  names each mask once.
   `info["events"]` holds the masks.
 - Every constraint of `optimal_segments` can name subtypes, and the
   record's first and last segments can be restricted (#63, part of #55).

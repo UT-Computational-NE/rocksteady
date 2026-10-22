@@ -1287,6 +1287,7 @@ def test_exact_matches_brute_force_with_events_and_constraints_naming_subtypes(s
                            min_duration_s={"drift": 2.0}, **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
 
+
 def test_an_event_condition_reads_the_mask_whatever_the_signal():
     """Decided on #65: a flag on a non-finite sample counts, even in a segment with no finite sample."""
     t = np.arange(12.0)
@@ -1366,6 +1367,10 @@ def test_event_validation():
     with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\} or "
                                          r"\(mask name, True or False\) pairs"):
         rs.Subtype("transient", events=[("heater", True, 1)])
+    for twice in ([("heater", True), ("heater", False)], [("heater", True), ("heater", True)],
+                  {("heater", True), ("heater", False)}):  # a set's order would decide which one wins
+        with pytest.raises(ValueError, match="Subtype events names mask 'heater' twice"):
+            rs.Subtype("transient", events=twice)
     for bad in (["heater"], "heater", True):
         with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\}"):
             rs.Subtype("transient", events=bad)
@@ -1398,8 +1403,8 @@ def test_event_validation():
     for bad in (mask.astype(int), mask.astype(float), [0] * 10):
         with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean, got values of type"):
             run({"heater": bad})
-    with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean with no missing values, got 1 missing"):
-        run({"heater": pd.array([True] + [None] + [False] * 8, dtype="boolean")})
+    with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean with no missing values, got 2 missing"):
+        run({"heater": pd.array([True, None, False, None] + [False] * 6, dtype="boolean")})
     with pytest.raises(ValueError, match=r"events\['valve'\] must be boolean"):  # a mask no condition names
         run({"heater": mask, "valve": mask.astype(int)})
     r = run({"heater": list(mask), "valve": pd.Series(mask)}, subtypes={"heat_up": heat_up,
