@@ -203,9 +203,11 @@
   any test runs). The tool runs the selection once per mutant and restores
   the file byte for byte after each, also on Ctrl-C. It reports each mutant
   red or survived, and exits non-zero when an unmarked mutant survives.
-  The file's cached bytecode is deleted first, so a same-length mutant
-  cannot run as the cached original. `docs/agents/review.md` points the
-  mutant probe at it.
+  A mutant whose tests hang is stopped after a timeout (`TIMEOUT`, or ten
+  times the unmutated run, at least 60 s) and counts as red. The file's
+  cached bytecode is deleted first, so a same-length mutant cannot run as
+  the cached original, and a second run on the same file is refused.
+  `docs/agents/review.md` points the mutant probe at it.
 
 ## 0.5.0
 
