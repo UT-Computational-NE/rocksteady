@@ -81,8 +81,9 @@ subtype's segments are fitted with its state's model, so two subtypes that
 accept a segment and carry the same penalty tie exactly, and the tie goes
 to the subtype declared first. Precisely, among segmentations of equal
 objective it takes the least sum, over segments, of each subtype's position
-among its state's subtypes, so no segment could take an earlier-declared
-subtype that accepts it, at the same penalty, without breaking a cap.
+among its state's subtypes, so no segment could, on its own, take an
+earlier-declared subtype that accepts it, at the same penalty, without
+breaking a cap, a transition, or ``initial`` or ``final``.
 That sum also decides exact ties between different states or boundaries,
 so declaring subtypes can change which of two equally good segmentations
 is returned. ``refine`` keeps every segment's subtype and rejects a move
@@ -91,9 +92,8 @@ after which a segment fails its subtype's conditions.
 ``classify_segments`` gives subtypes to segments the analyst already has
 (the detector's, say) by the same definitions: the same program with the
 breakpoints and states fixed and no count caps, durations or penalties, so
-each segment takes the first declared subtype it can within
-``transitions``, ``initial`` and ``final``, and a segmentation that cannot
-be typed raises an error that names where, as above.
+ties go to the least sum of positions as above, and a segmentation that
+cannot be typed raises an error that names where.
 
 Methods
 -------
@@ -910,14 +910,14 @@ class _Option:
     rank: int = 0
 
 
-def _only(segments: Sequence[Segment], opt: _Option) -> Callable[[np.ndarray, int], np.ndarray]:
+def _fixed_to(segments: Sequence[Segment], opt: _Option) -> Callable[[np.ndarray, int], np.ndarray]:
     """
     ``opt``'s test restricted to the given segments: ``[p, q)`` must be one
     of them, in ``opt``'s state, and meet ``opt``'s condition.
     """
     start = {s.stop: (s.start, State(s.state).value) for s in segments}  # each segment, by where it stops
 
-    def only(ps: np.ndarray, q: int) -> np.ndarray:
+    def fixed_to(ps: np.ndarray, q: int) -> np.ndarray:
         ps = np.asarray(ps, dtype=np.int64)
         p, st = start.get(q, (-1, None))
         out = (ps == p) & (st == opt.state)
@@ -926,7 +926,7 @@ def _only(segments: Sequence[Segment], opt: _Option) -> Callable[[np.ndarray, in
             out[keep] = opt.accepts(ps[keep], q)
         return out
 
-    return only
+    return fixed_to
 
 
 @dataclass(frozen=True)
@@ -959,7 +959,7 @@ class _Problem:
         # ``fixed``: segments covering the record, whose breakpoints and states the program keeps; it only types them.
         self.fixed = fixed is not None
         if fixed is not None:
-            options = [replace(opt, accepts=_only(fixed, opt)) for opt in options]
+            options = [replace(opt, accepts=_fixed_to(fixed, opt)) for opt in options]
         # The caller's caps and transitions, as given: the infeasibility error names them.
         self.given_caps, self.given_transitions = max_counts, transitions
         self.given_initial_final = dict(initial_final or {})  # when given
@@ -1373,7 +1373,7 @@ def _candidates(candidates, n: int) -> np.ndarray:
     return np.unique(np.clip(np.asarray(pts + [0, n], dtype=np.int64), 0, n))
 
 
-def _record(t, y) -> Tuple[np.ndarray, Any, np.ndarray]:
+def _checked_record(t, y) -> Tuple[np.ndarray, Any, np.ndarray]:
     """Seconds from the first sample, the DatetimeIndex (or None) and the signal, checked."""
     ts, idx = _times(t)
     y = np.asarray(y, dtype=float)
@@ -1389,6 +1389,8 @@ def _record(t, y) -> Tuple[np.ndarray, Any, np.ndarray]:
 
 def _checked_subtypes(subtypes: Optional[Mapping[str, Subtype]], states: Sequence[str]) -> Dict[str, Subtype]:
     """``subtypes`` as a dict, checked: each a ``Subtype`` of one of ``states``, under a name no state has."""
+    if subtypes is not None and not isinstance(subtypes, Mapping):
+        raise ValueError(f"subtypes must be a mapping {{name: Subtype}}, got {subtypes!r}")
     subtypes = dict(subtypes or {})
     for name, sub in subtypes.items():
         _v.name(name, "a subtype's name")
@@ -1521,7 +1523,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
-    ts, idx, y = _record(t, y)
+    ts, idx, y = _checked_record(t, y)
     n = len(y)
     if not isinstance(models, Mapping) or not models:
         raise ValueError("models must be a non-empty mapping {state: model spec}")
@@ -1615,7 +1617,7 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
                       final: Optional[Collection[str]] = None) -> List[Segment]:
     """
     Subtypes for segments the analyst already has (the detector's, say),
-    by the same definitions as ``optimal_segments``, so that their labels
+    by the same definitions as ``optimal_segments``, so that their subtypes
     and the optimiser's constraints share one definition.
 
     It runs the optimiser's dynamic program with the breakpoints and states
@@ -1623,9 +1625,12 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
     it meets, the sequence obeys ``transitions``, ``initial`` and ``final``
     (a state's name stands for all of its subtypes, as there), and of the
     choices that do, the one with the least sum of the subtypes' positions
-    among their states' wins: each segment takes the first declared subtype
-    it can. A transient subtype with no conditions is told apart from
-    another by its neighbours, as in the optimiser. Count caps, durations
+    among their states' wins. So no segment could, on its own, take an
+    earlier-declared subtype whose conditions it meets without breaking
+    ``transitions``, ``initial`` or ``final``; without them, each segment
+    takes the first declared subtype it meets. A transient subtype with no
+    conditions is told apart from another by its neighbours, as in the
+    optimiser. Count caps, durations
     and penalties constrain the optimiser's choice of segments, not what a
     subtype means, so there are none here; on the optimiser's own segments
     it returns the optimiser's subtypes when those constraints name states
@@ -1660,23 +1665,22 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
         none can continue, and the transitions, ``initial`` and ``final`` in
         force.
     """
-    ts, idx, y = _record(t, y)
+    ts, idx, y = _checked_record(t, y)
     n = len(y)
     segs = check_segments(segments, n, require_full=True)
     for i, s in enumerate(segs):
         if s.state not in _STATE_NAMES:
             raise ValueError(f"segment {i} has state {s.state!r}, which is not a state ({', '.join(_STATE_NAMES)})")
-    if not isinstance(subtypes, Mapping):
-        raise ValueError(f"subtypes must be a mapping {{name: Subtype}}, got {subtypes!r}")
     states = list(_STATE_NAMES)
     subs = _checked_subtypes(subtypes, states)
     initial_final = _checked_sequence(transitions, initial, final, _name_check(states, subs, models=False))
     masks = _event_masks(events, n, subs)
     no_penalty = {name: 0.0 for name in states + list(subs)}
     options, counters, allowed, may_start, may_end, columns = _options(
-        states, no_penalty, None, transitions, None, None, subs, _Conditions(ts, y, masks), initial, final)
-    prob = _Problem(ts, y, idx, {}, options, counters, allowed, may_start, may_end, columns, None, None, None,
-                    transitions, initial_final, fixed=segs)
+        states, no_penalty, max_counts=None, transitions=transitions, min_duration_s=None, max_duration_s=None,
+        subtypes=subs, conditions=_Conditions(ts, y, masks), initial=initial, final=final)
+    prob = _Problem(ts, y, idx, {}, options, counters, allowed, may_start, may_end, columns, per=None,
+                    period_origin=None, transitions=transitions, initial_final=initial_final, fixed=segs)
     _, opts = prob.solve(np.array([0] + [s.stop for s in segs], dtype=np.int64), prune=False)
     return [replace(s, subtype=options[o].subtype) for s, o in zip(segs, opts)]
 

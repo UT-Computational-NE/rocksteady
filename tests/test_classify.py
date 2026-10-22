@@ -149,8 +149,9 @@ def test_validation():
         rs.classify_segments(t, y, [Segment(0, 50, ST), Segment(50, 100, "warm")], subtypes=LEVELS)
     with pytest.raises(ValueError, match="t and y must be one-dimensional and of the same length"):
         rs.classify_segments(t, y[:-1], full, subtypes=LEVELS)
-    with pytest.raises(ValueError, match=r"subtypes must be a mapping \{name: Subtype\}"):
-        rs.classify_segments(t, y, full, subtypes=[LEVELS["cold"]])
+    for run in (rs.classify_segments, lambda *a, **kw: rs.optimal_segments(t, y, {"steady": 0}, method="exact", **kw)):
+        with pytest.raises(ValueError, match=r"subtypes must be a mapping \{name: Subtype\}"):
+            run(t, y, full, subtypes=[LEVELS["cold"]])
     with pytest.raises(ValueError, match="subtype 'steady' has the name of a state"):
         rs.classify_segments(t, y, full, subtypes={"steady": LEVELS["cold"]})
     with pytest.raises(ValueError, match="transitions names 'warm', which is not a state or a subtype"):
@@ -163,3 +164,17 @@ def test_validation():
     sequence = {"indeterminate": ["cold"], "cold": ["transient"]}
     got = rs.classify_segments(t, y, full, subtypes=LEVELS, transitions=sequence)
     assert [s.subtype for s in got] == ["cold", None]
+
+
+def test_ties_go_to_the_least_sum_of_positions_not_to_the_first_segment():
+    """Steady a (0) then transient e (2) sums to 2; b (1) then c (0) sums to 1 and wins, as in the optimiser."""
+    t, y = np.arange(20.0), np.zeros(20)
+    segments = [Segment(0, 10, ST), Segment(10, 20, TR)]
+    subtypes = {name: rs.Subtype(state) for name, state in
+                [("a", "steady"), ("b", "steady"), ("c", "transient"), ("d", "transient"), ("e", "transient")]}
+    sequence = {"a": ["e"], "b": ["c"]}
+    got = rs.classify_segments(t, y, segments, subtypes=subtypes, transitions=sequence)
+    assert [s.subtype for s in got] == ["b", "c"]
+    r = rs.optimal_segments(t, y, {"steady": 0, "transient": 0}, method="subset", candidates=[0, 10, 20], penalty=0,
+                            subtypes=subtypes, transitions=sequence, initial=["steady"], final=["transient"])
+    assert [s.subtype for s in r.segments] == ["b", "c"]
