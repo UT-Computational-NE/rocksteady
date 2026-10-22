@@ -52,6 +52,7 @@ pythonpath = ["src"]
 markers = ["slow: Monte Carlo calibration checks (deselect with -m 'not slow')"]
 # Unit tests use short windows on purpose; tests of the warning itself use pytest.warns, which still sees it.
 # A FutureWarning (a deprecation in numpy or pandas) fails the test that raises it, so none passes unseen.
+# tests/conftest.py adds error::pandas.errors.Pandas4Warning (a DeprecationWarning) where pandas defines it.
 filterwarnings = ["error::FutureWarning", "ignore::rocksteady.core.CalibrationWarning"]
 
 # tools/check.sh and CI's typecheck job run `mypy` (no arguments: `files` below).
