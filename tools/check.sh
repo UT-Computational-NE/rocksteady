@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, mypy (configured
-# in pyproject.toml), pylint on the messages tools/lint.sh enforces, and the strict docs build. Needs the modules of
-# the dev extra (a selection: the test extra); when they are missing it says how to install them. Exports
-# PYTHONPATH=src for the docs build, which imports this checkout's rocksteady (pytest, and the processes tests start,
-# get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the interpreter (default: python on PATH).
-# With arguments, it runs only that pytest selection, without mypy, pylint or the docs build:
+# in pyproject.toml), tools/lint.sh (pylint on the messages it enforces, pycodestyle on blank lines), and the strict
+# docs build. Needs the modules of the dev extra (a selection: the test extra); when they are missing it says how
+# to install them. Exports PYTHONPATH=src for the docs build, which imports this checkout's rocksteady (pytest, and
+# the processes tests start, get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the
+# interpreter (default: python on PATH).
+# With arguments, it runs only that pytest selection, without mypy, lint or the docs build:
 # tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 py="${PYTHON:-python}"
 # Agent shells can inherit another environment's python first on PATH: say which one runs, and stop early
-# when it lacks the extra the run needs: dev (mypy, pylint and the modules of the `test` and `docs` extras in
-# pyproject.toml), or only test for a selection.
+# when it lacks the extra the run needs: dev (mypy, the `lint` extra's pylint and pycodestyle, and the modules of
+# the `test` and `docs` extras in pyproject.toml), or only test for a selection.
 selection=$([ $# -gt 0 ] && echo yes || echo no)
 if [ "$selection" = yes ]; then
   extra=test; needs=(pytest)
 else
-  extra=dev; needs=(pytest mypy pylint sphinx sphinx_rtd_theme myst_parser)
+  extra=dev; needs=(pytest mypy pylint pycodestyle sphinx sphinx_rtd_theme myst_parser)
 fi
 if ! command -v "$py" >/dev/null; then
   echo "check.sh: there is no interpreter $py. Set PYTHON to one that has the $extra extra." >&2
@@ -45,7 +46,7 @@ for dist in sys.argv[1:]:
 fi
 "$py" -m pytest -m "not slow" -q "$@"  # with arguments, only that selection; a later -m overrides "not slow"
 if [ "$selection" = yes ]; then
-  echo "check.sh: the selected tests passed; no mypy, pylint or docs build"
+  echo "check.sh: the selected tests passed; no mypy, lint or docs build"
   exit 0
 fi
 "$py" -m mypy
@@ -53,4 +54,4 @@ PYTHON="$py" tools/lint.sh
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 "$py" -m sphinx -W --keep-going -q -b html docs/source "$out"
-echo "check.sh: tests, mypy, pylint and strict docs build passed"
+echo "check.sh: tests, mypy, lint and strict docs build passed"
