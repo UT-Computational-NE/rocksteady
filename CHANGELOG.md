@@ -163,6 +163,11 @@
   E305, E306): two around a top-level definition, one around a method, none
   in excess. pylint does not check these. `pycodestyle` joins the `lint`
   extra, and the three hits it found are fixed (#111).
+- `tests/test_frozen_values.py`: every public frozen value (`Signal`,
+  `Timing`, `Subtype`, `Segment`), with every optional field set, rebuilds
+  equal and hashes alike through `dataclasses.replace`, its constructor
+  given every field, and pickle. A public frozen dataclass without a case
+  fails it (#111).
 
 ## 0.5.0
 
