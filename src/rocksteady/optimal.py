@@ -41,7 +41,7 @@ Constraints
   both. A data gap does not start or end the record.
 - ``min_duration_s`` / ``max_duration_s``: per state or subtype. The
   duration of a segment is from its first to its last sample, plus one
-  sample spacing.
+  sample spacing. A state whose minimum exceeds its maximum is refused.
 - ``penalty``: added for every segment, per state or subtype. With 0, more
   segments never fit worse, so every allowed slot is used. The default,
   ``"bic"``, charges ``sigma^2 (p + 1) ln n`` for a model with ``p`` parameters,
@@ -261,26 +261,32 @@ _EPS = float(np.finfo(float).eps)
 _REDUCED_FLAGS = frozenset({"order_reduced"})  # the fit used fewer parameters than the model has
 
 
+_BLOCK = 64  # samples per block of _RangeSum and _RangeMax
+
+
+def _blocked(x: np.ndarray, size: int, fill: float) -> np.ndarray:
+    """``x`` padded with ``fill`` to whole blocks covering indices ``[0, size)``, as (blocks, ``_BLOCK``)."""
+    nb = -(-size // _BLOCK)
+    v = np.full(nb * _BLOCK, fill)
+    v[:len(x)] = x
+    return v.reshape(nb, _BLOCK)
+
+
 class _RangeSum:
     """
     Sums of ``x`` over ``[p, q)`` from prefix sums, with an error bound.
 
     Prefix sums lose a short range's sum when the record elsewhere is much
-    larger. Here the prefix is kept in blocks of ``B`` samples: a running sum
+    larger. Here the prefix is kept in blocks of ``_BLOCK`` samples: a running sum
     within each block, and the block totals accumulated with compensated
     (Neumaier) summation. The error of a range sum is then bounded by the
     range's own magnitude and the magnitudes of the two blocks at its ends,
     not by the whole record before it. ``range`` returns the sum and that bound.
     """
 
-    B = 64
-
     def __init__(self, x: np.ndarray):
-        n = len(x)
-        nb = n // self.B + 1  # so that index n is in range
-        xp = np.zeros(nb * self.B)
-        xp[:n] = x
-        blocks = xp.reshape(nb, self.B)
+        blocks = _blocked(x, len(x) + 1, 0.0)  # so that index n is in range
+        nb = len(blocks)
         local = np.cumsum(blocks, axis=1)
         self.loc = np.concatenate((np.zeros((nb, 1)), local[:, :-1]), axis=1).ravel()  # within-block, exclusive
         self.mass = np.abs(blocks).sum(axis=1)
@@ -294,9 +300,9 @@ class _RangeSum:
             acc = t
 
     def range(self, p, q):
-        bp, bq = p // self.B, q // self.B
+        bp, bq = p // _BLOCK, q // _BLOCK
         v = (self.hi[bq] - self.hi[bp]) + ((self.lo[bq] - self.lo[bp]) + (self.loc[q] - self.loc[p]))
-        err = 4.0 * _EPS * (np.abs(v) + self.B * (self.mass[bp] + self.mass[bq]))
+        err = 4.0 * _EPS * (np.abs(v) + _BLOCK * (self.mass[bp] + self.mass[bq]))
         return v, err
 
 
@@ -552,7 +558,11 @@ _STATE_NAMES = tuple(s.value for s in State)
 
 def _range(value, what: str) -> Tuple[Optional[float], Optional[float]]:
     """A half-open range ``(lo, hi)``, either end None (open); lo < hi when both are given."""
-    if isinstance(value, (str, bytes)) or np.ndim(value) != 1 or len(value) != 2:
+    try:
+        pair = not isinstance(value, (str, bytes)) and np.ndim(value) == 1 and len(value) == 2
+    except ValueError:  # numpy cannot make an array of a ragged sequence such as (1, (2, 3))
+        pair = False
+    if not pair:
         raise ValueError(f"{what} must be a pair (lo, hi), got {value!r}")
     lo, hi = (_v.optional_finite(v, f"{what} {end}") for v, end in zip(value, ("lo", "hi")))
     _v.ordered(lo, hi, f"{what} lo", f"{what} hi", strict=True)
@@ -575,12 +585,12 @@ class Subtype:
     - ``peak=(lo, hi)``: the maximum lies in ``[lo, hi)``, either end open,
       so that, say, a startup must reach operating level.
     - ``max_rise_s`` with ``rise_fraction`` (default 0.95): with ``y0`` the
-      first finite sample and ``peak`` the maximum, the time from the
+      first finite sample and ``top`` the maximum, the time from the
       segment's first sample to its first sample with
-      ``y >= y0 + rise_fraction * (peak - y0)`` is at most ``max_rise_s``
+      ``y >= y0 + rise_fraction * (top - y0)`` is at most ``max_rise_s``
       seconds. Measured from the segment's own start, it works for a signal
       whose baseline is not zero, and tells a pulse from an ordinary rise.
-      The peak itself always counts as reached.
+      The maximum itself always counts as reached.
     - ``events={mask name: True or False}``: the segment does, or does not,
       contain a flagged sample of that mask (one of the ``events`` given to
       ``optimal_segments``), that is, a flagged sample in ``[start, stop)``.
@@ -687,14 +697,10 @@ def _event_masks(events, n: int, subtypes: Mapping[str, "Subtype"]) -> Dict[str,
     return masks
 
 
-def _above(y: np.ndarray, thr: float) -> bool:
-    """
-    Whether the mean of the finite samples of ``y`` (at least one) is at least ``thr``, exactly: ``fsum``
-    rounds the exact ``sum(y) - n * thr`` correctly, so its sign is exact. ``fsum(y) / n`` rounds twice, and
-    53 samples of 0.7 would fall below 0.7.
-    """
-    v = y[np.isfinite(y)].tolist()
-    return math.fsum(v + [-thr] * len(v)) >= 0.0
+def _as_integers(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Finite floats ``x`` exactly as ``m * 2**e``: the integers ``m`` and ``e`` (``m = 0`` for zero)."""
+    mant, e = np.frexp(x)
+    return (mant * 2.0 ** 53).astype(np.int64), e.astype(np.int64) - 53  # a mantissa has 53 bits
 
 
 class _Levels:
@@ -702,14 +708,49 @@ class _Levels:
     The level condition, vectorised over segment starts. Means come from
     range sums with an error bound; where a mean is too close to an end of
     the range to decide from them, the segment is compared exactly
-    (``_above``), so ``[lo, hi)`` holds for the exact mean.
+    (``at_least``), so ``[lo, hi)`` holds for the exact mean.
     """
 
     def __init__(self, y: np.ndarray):
         ok = np.isfinite(y)
+        self.ok = ok
         self.y = y
         self.N = np.concatenate(([0.0], np.cumsum(ok.astype(float))))
         self.S = _RangeSum(np.where(ok, y, 0.0))
+        self._exact: Optional[Tuple[np.ndarray, int]] = None
+
+    @property
+    def exact(self) -> Tuple[np.ndarray, int]:
+        """
+        Exact prefix sums of the finite samples, ``(P, e0)``: the sum over
+        ``[p, q)`` is ``(P[q] - P[p]) * 2**e0``, with ``P`` Python integers.
+        Built on the first close comparison.
+        """
+        if self._exact is None:
+            m, e = _as_integers(np.where(self.ok, self.y, 0.0))
+            nonzero = m != 0
+            e0 = int(e[nonzero].min()) if nonzero.any() else 0
+            P = np.zeros(len(m) + 1, dtype=object)
+            acc = 0
+            for i, (mi, ei) in enumerate(zip(m.tolist(), np.where(nonzero, e - e0, 0).tolist())):
+                acc += mi << ei
+                P[i + 1] = acc
+            self._exact = P, e0
+        return self._exact
+
+    def at_least(self, ps: np.ndarray, q: int, thr: float) -> np.ndarray:
+        """
+        Whether the mean of the finite samples of ``[p, q)`` is at least ``thr``, exactly, for each start in
+        ``ps`` (each range with a finite sample). The sums are exact integers, so no rounding can decide:
+        ``fsum(y) / n`` rounds twice, and 53 samples of 0.7 would fall below 0.7.
+        """
+        P, e0 = self.exact
+        (mt,), (et,) = (v.tolist() for v in _as_integers(np.array([thr])))
+        total = P[q] - P[ps]  # times 2**e0
+        target = (self.N[q] - self.N[ps]).astype(np.int64).astype(object) * mt  # times 2**et
+        if e0 >= et:
+            return np.asarray(total * (1 << (e0 - et)) >= target, dtype=bool)
+        return np.asarray(total >= target * (1 << (et - e0)), dtype=bool)
 
     def accepts(self, lo: Optional[float], hi: Optional[float]) -> Callable[[np.ndarray, int], np.ndarray]:
         def level_ok(ps: np.ndarray, q: int) -> np.ndarray:
@@ -726,9 +767,14 @@ class _Levels:
                     continue
                 out &= (mean >= thr) if above else (mean < thr)
                 near |= np.abs(mean - thr) <= err
-            for i in np.flatnonzero(near & (n > 0)):
-                seg = self.y[int(ps[i]):q]
-                out[i] = (lo is None or _above(seg, lo)) and (hi is None or not _above(seg, hi))
+            close = np.flatnonzero(near & (n > 0))
+            if len(close):  # decided exactly, all at once
+                exact = np.ones(len(close), dtype=bool)
+                if lo is not None:
+                    exact &= self.at_least(ps[close], q, lo)
+                if hi is not None:
+                    exact &= ~self.at_least(ps[close], q, hi)
+                out[close] = exact
             return out
 
         return level_ok
@@ -738,21 +784,16 @@ class _RangeMax:
     """
     The maximum of the finite samples of ``y`` over ``[p, q)``, vectorised
     over ranges (``-inf`` for a range with no finite sample); exact, as a
-    maximum is. Like ``_RangeSum`` it works in blocks of ``B`` samples: the
+    maximum is. Like ``_RangeSum`` it works in blocks of ``_BLOCK`` samples: the
     running maxima from each block's start and to its end, and a sparse
     table over whole blocks, so it takes about three values per sample. A
     range inside one block is read directly.
     """
 
-    B = 64
-
     def __init__(self, y: np.ndarray):
-        n, B = len(y), self.B
-        nb = -(-n // B)
-        v = np.full(nb * B, -math.inf)
-        v[:n] = np.where(np.isfinite(y), y, -math.inf)
-        blocks = v.reshape(nb, B)
-        self.v = v
+        blocks = _blocked(np.where(np.isfinite(y), y, -math.inf), len(y), -math.inf)
+        nb = len(blocks)
+        self.v = blocks.ravel()
         self.pre = np.maximum.accumulate(blocks, axis=1).ravel()  # from the block's start to i
         self.suf = np.maximum.accumulate(blocks[:, ::-1], axis=1)[:, ::-1].ravel()  # from i to the block's end
         self.table = [blocks.max(axis=1)]  # table[k][b]: the maximum of blocks [b, b + 2**k)
@@ -773,8 +814,7 @@ class _RangeMax:
 
     def range(self, ps, qs) -> np.ndarray:
         ps, qs = np.broadcast_arrays(np.asarray(ps, dtype=np.int64), np.asarray(qs, dtype=np.int64))
-        B = self.B
-        bp, bq = ps // B, (qs - 1) // B
+        bp, bq = ps // _BLOCK, (qs - 1) // _BLOCK
         out = np.full(len(ps), -math.inf)
         apart = bp < bq
         if apart.any():
@@ -783,7 +823,7 @@ class _RangeMax:
         within = ~apart & (qs > ps)
         if within.any():
             p, q = ps[within], qs[within]
-            ix = p[:, None] + np.arange(B)
+            ix = p[:, None] + np.arange(_BLOCK)
             out[within] = np.where(ix < q[:, None], self.v[np.minimum(ix, len(self.v) - 1)], -math.inf).max(axis=1)
         return out
 
@@ -840,7 +880,7 @@ class _Conditions:
             top = self.maxima.range(ps, q)
             y0 = y[np.minimum(first, n - 1)]
             with np.errstate(invalid="ignore", over="ignore"):
-                thr = np.minimum(y0 + fraction * (top - y0), top)  # the peak always counts as reached
+                thr = np.minimum(y0 + fraction * (top - y0), top)  # the maximum always counts as reached
             # The samples within max_s of the segment's first, as the difference of their times says: [p, end).
             t0 = ts[ps]
             end = np.searchsorted(ts, t0 + max_s, side="right")
@@ -1110,9 +1150,10 @@ class _Problem:
             raise ValueError(self._infeasible(B, k))
         return self._backtrack(B, *table)
 
-    def upper_bound(self, B: np.ndarray) -> float:
+    def pruning_bound_or_raise(self, B: np.ndarray) -> float:
         """
-        A bound on the optimal objective for pruning: the true cost of the
+        A bound on the optimal objective for pruning, or the infeasibility
+        ``ValueError`` when no segmentation exists: the true cost of the
         optimal segmentation under cheap constant-fit costs. Every segment a
         model can fit has a finite constant fit, so that is a relaxation: when
         it fails, so does the true problem, which gets stuck no later. The
@@ -1317,6 +1358,18 @@ class _Problem:
         return bounds
 
 
+def _duration_bounds(names: Sequence[str], min_duration_s: Optional[Mapping[str, float]],
+                     max_duration_s: Optional[Mapping[str, float]]) -> Tuple[Tuple[float, str], Tuple[float, str]]:
+    """
+    The duration bounds that bind a segment of ``names`` (a state, or a
+    state and its subtype; all of their bounds bind): ``((min, name), (max,
+    name))``, each with the first of ``names`` it comes from.
+    """
+    lo = max(((float((min_duration_s or {}).get(k, 0.0)), k) for k in names), key=lambda b: b[0])
+    hi = min(((float((max_duration_s or {}).get(k, math.inf)), k) for k in names), key=lambda b: b[0])
+    return lo, hi
+
+
 def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transitions, min_duration_s,
              max_duration_s, subtypes: Mapping[str, "Subtype"], conditions: "_Conditions", initial=None, final=None):
     """
@@ -1333,9 +1386,9 @@ def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transi
     options: List[_Option] = []
     options_of: Dict[str, FrozenSet[int]] = {}
 
-    def durations(*names: str) -> Tuple[float, float]:  # the names' bounds all bind
-        return (max(float((min_duration_s or {}).get(k, 0.0)) for k in names),
-                min(float((max_duration_s or {}).get(k, math.inf)) for k in names))
+    def durations(*names: str) -> Tuple[float, float]:
+        (lo, _), (hi, _) = _duration_bounds(names, min_duration_s, max_duration_s)
+        return lo, hi
 
     for st in states:
         mine = [(name, sub) for name, sub in subtypes.items() if sub.state.value == st]
@@ -1500,7 +1553,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         pairs are the union over all entries. Default: any may follow any.
     min_duration_s, max_duration_s : mapping, optional
         Bounds on segment duration per state or subtype. A subtype's and its
-        state's both bind.
+        state's both bind. A state whose minimum exceeds its maximum, or a
+        subtype whose bounds and its state's leave no duration, is refused
+        (``ValueError``), with or without subtypes.
     penalty : "bic", float, or mapping
         Added per segment (per state or subtype with a mapping; a state
         missing from it gets 0). A subtype's penalty replaces its state's;
@@ -1564,12 +1619,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                 raise ValueError(f"max_counts[{st!r}] must be a non-negative integer, got {v!r}")
             if name != "max_counts" and not (float(v) >= 0):
                 raise ValueError(f"{name}[{st!r}] must be >= 0, got {v!r}")
-    for name, sub in subtypes.items():  # a subtype's and its state's durations both bind: they must overlap
-        lo = max(((float((min_duration_s or {}).get(k, 0.0)), k) for k in (sub.state.value, name)), key=lambda b: b[0])
-        hi = min(((float((max_duration_s or {}).get(k, math.inf)), k) for k in (sub.state.value, name)),
-                 key=lambda b: b[0])
+    # A state's durations, and a subtype's with its state's (both bind), must overlap.
+    for what, name, names in ([("state", st, (st,)) for st in states]
+                              + [("subtype", k, (sub.state.value, k)) for k, sub in subtypes.items()]):
+        lo, hi = _duration_bounds(names, min_duration_s, max_duration_s)
         if lo[0] > hi[0]:
-            raise ValueError(f"subtype {name!r} can take no segment: min_duration_s {lo[0]} s ({lo[1]}) > "
+            raise ValueError(f"{what} {name!r} can take no segment: min_duration_s {lo[0]} s ({lo[1]}) > "
                              f"max_duration_s {hi[0]} s ({hi[1]})")
     initial_final = _checked_sequence(transitions, initial, final, check)
     masks = _event_masks(events, n, subtypes)
@@ -1613,7 +1668,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
 
     slow = any(not prob.costs.is_fast(st) for st in states)
     # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
-    ub = prob.upper_bound(B) if prune and slow else math.inf
+    ub = prob.pruning_bound_or_raise(B) if prune and slow else math.inf
     bounds, opts = prob.solve(B, ub=ub, prune=prune)
     if method == "refine":
         if refine_s is None:
