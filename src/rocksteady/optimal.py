@@ -1630,11 +1630,12 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
     ``transitions``, ``initial`` or ``final``; without them, each segment
     takes the first declared subtype it meets. A transient subtype with no
     conditions is told apart from another by its neighbours, as in the
-    optimiser. Count caps, durations
-    and penalties constrain the optimiser's choice of segments, not what a
-    subtype means, so there are none here; on the optimiser's own segments
-    it returns the optimiser's subtypes when those constraints name states
-    only.
+    optimiser. Count caps, durations and penalties constrain the
+    optimiser's choice of segments, not what a subtype means, so there are
+    none here. On the segments of an ``"exact"`` or ``"subset"`` result it
+    returns the optimiser's subtypes when those constraints name states
+    only; a cap on a subtype, say, can make the optimiser put a segment in
+    a catch-all that this gives the capped subtype.
 
     Parameters
     ----------

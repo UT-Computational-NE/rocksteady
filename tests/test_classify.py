@@ -178,3 +178,17 @@ def test_ties_go_to_the_least_sum_of_positions_not_to_the_first_segment():
     r = rs.optimal_segments(t, y, {"steady": 0, "transient": 0}, method="subset", candidates=[0, 10, 20], penalty=0,
                             subtypes=subtypes, transitions=sequence, initial=["steady"], final=["transient"])
     assert [s.subtype for s in r.segments] == ["b", "c"]
+
+
+def test_a_subtype_cap_binds_the_optimiser_but_not_classification():
+    """Decided on #66: a subtype is its conditions and neighbours; caps choose the optimiser's segmentation."""
+    t = np.arange(100.0)
+    y = (np.interp(t, [0, 20, 25, 45, 50, 70, 75, 100], [0, 0, 5, 5, 0, 0, 5, 5])
+         + np.random.default_rng(1).normal(0, 0.05, 100))
+    subtypes = {**LEVELS, "other": rs.Subtype("steady")}
+    r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                            subtypes=subtypes, transitions={"steady": ["transient"], "transient": ["steady"]},
+                            max_counts={"hot": 1})
+    assert [s.subtype for s in r.segments if s.state == ST] == ["cold", "other", "cold", "hot"]
+    got = rs.classify_segments(t, y, r.segments, subtypes=subtypes)
+    assert [s.subtype for s in got if s.state == ST] == ["cold", "hot", "cold", "hot"]
