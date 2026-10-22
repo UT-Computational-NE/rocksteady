@@ -196,15 +196,16 @@ def _count_table(spans: Sequence[Tuple[int, int, Sequence[str]]], columns: Seque
     if pid is None:
         pid = np.zeros(max([q for _, q, _ in spans] + [0]), dtype=np.int64)
     rows: Dict[int, Dict[str, int]] = {}
+    # Periods inside a segment hold no sample of their own only when a gap spans them; they still count.
     for start, stop, names in spans:
         for p in range(int(pid[start]), int(pid[stop - 1]) + 1):
             row = rows.setdefault(p, {})
             for name in names:
                 row[name] = row.get(name, 0) + 1
-    # Periods inside a segment hold no sample of their own only when a gap spans them; they still count.
-    # Every cell is an integer count, 0 where a period has none of a name. A table with no columns has no rows.
-    periods = np.array(sorted(rows) if len(columns) else [], dtype=np.int64)
-    out = pd.DataFrame([[rows[p].get(c, 0) for c in columns] for p in periods], columns=list(columns), dtype=int)
+    # A row for each period some column's name touches; every cell an integer count, 0 where it has none.
+    periods = np.array(sorted(p for p, row in rows.items() if any(c in row for c in columns)), dtype=np.int64)
+    out = pd.DataFrame({c: np.fromiter((rows[p].get(c, 0) for p in periods), np.int64, len(periods)) for c in columns},
+                       columns=list(columns))
     out.index = _period_starts(periods, idx, per, period_origin)
     out.index.name = "period"
     return out

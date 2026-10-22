@@ -42,6 +42,14 @@
   the results are unchanged. With pruning, an infeasible call fits models
   only up to where every segmentation gets stuck (#62).
 
+### Fixed
+
+- `count_by_period` and `OptimalSegmentation.counts` build their table as
+  integers, so pandas 2.2 and 2.3 no longer warn about downcasting on
+  `fillna`; the tables are unchanged. On pandas 1.5, a table with no
+  segments and a `DatetimeIndex` no longer fails, and an empty one with
+  numeric periods has a float index (it was object), as on later pandas (#75).
+
 ### Documentation
 
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
@@ -100,11 +108,7 @@
   needs no listing; CI's `build` job checks the sdist's `tests/` against
   `git ls-files tests` (#75).
 - A `FutureWarning` fails the test that raises it (`filterwarnings` in
-  `pyproject.toml`). `count_by_period` and `OptimalSegmentation.counts`
-  build their table as integers, so pandas 2.2 and 2.3 no longer warn
-  about downcasting on `fillna`. The tables are unchanged, except that
-  `count_by_period` with no segments and a `DatetimeIndex` no longer fails
-  on pandas 1.5 (#75).
+  `pyproject.toml`) (#75).
 
 ## 0.5.0
 
