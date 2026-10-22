@@ -130,7 +130,7 @@ def test_a_gap_reset_releases_overrides():
     det = _det(overrides=[rs.FloorLatch("x", 1.0)], max_gap_s=0)
     x = _latch_record()
     x[15] = NAN
-    labels, reasons = _run(det, x)
+    _, reasons = _run(det, x)
     assert reasons[12:15] == ["forced"] * 3 and reasons[15] == "gap_reset"
     assert "forced" not in reasons[16:]  # the latch state was cleared with the history
     assert reasons[16:21] == ["insufficient_history"] * 5

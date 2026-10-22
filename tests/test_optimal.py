@@ -1,7 +1,6 @@
 """Constrained optimal segmentation: best-fit segments under constraints (#45)."""
 
 import dataclasses
-import itertools
 import math
 import pickle
 import re
@@ -120,9 +119,8 @@ def test_exact_matches_brute_force(seed, case):
         kw.update(transitions={"steady": ["transient"], "transient": ["steady"]}, max_counts={"steady": 2})
     elif case == "min_duration":
         kw.update(min_duration_s={"steady": 3.0, "transient": 2.0})
-    want_cost, (want_b, want_s) = _brute(t, y, models, per=kw.get("per"), max_counts=kw.get("max_counts"),
-                                         transitions=kw.get("transitions"), min_d=kw.get("min_duration_s"),
-                                         penalty=0.5)
+    want_cost, _ = _brute(t, y, models, per=kw.get("per"), max_counts=kw.get("max_counts"),
+                          transitions=kw.get("transitions"), min_d=kw.get("min_duration_s"), penalty=0.5)
     got = optimal_segments(t, y, models, method="exact", **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
 
@@ -361,7 +359,7 @@ def test_validation():
 
 
 def test_clock_origin_does_not_matter():
-    t, y, (up, down) = _startup_record(n=900)
+    t, y, _ = _startup_record(n=900)
     models = {"steady": 0, "transient": 1}
     kw = dict(method="exact", grid_s=10, per=300.0, max_counts={"steady": 2, "transient": 2}, penalty=5.0)
     a = optimal_segments(t, y, models, **kw)
@@ -370,7 +368,7 @@ def test_clock_origin_does_not_matter():
     assert b.objective == pytest.approx(a.objective, rel=1e-6)
 
 
-# -- review regressions (PR #46) -------------------------------------------------------
+# -- pruning, cost precision and clock changes -----------------------------------------
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -646,7 +644,7 @@ def test_exact_matches_brute_force_with_subtypes(seed, scheme, periods):
     if scheme in ("transient", "peak"):
         caps["low"] = 1
     kw = dict(per=3.0, max_counts=caps) if periods else dict(max_counts=caps)
-    want_cost, (_, want_names) = _brute(t, y, models, penalty=0.5, subtypes=subtypes, **kw)
+    want_cost, _ = _brute(t, y, models, penalty=0.5, subtypes=subtypes, **kw)
     got = optimal_segments(t, y, models, method="exact", penalty=0.5, subtypes=subtypes, **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
     assert _independent_objective(t, y, models, got, 0.5) == pytest.approx(got.objective, rel=1e-9, abs=1e-9)
@@ -744,7 +742,7 @@ def test_pruning_stays_exact_with_subtypes(named):
     Several options per state, conditions that reject segments, and a cap on a state and on its subtype; and
     (``named``) subtypes' own penalties and durations, transitions between subtypes, and the first and last.
     """
-    t, y, (up, down) = _startup_record(n=900)
+    t, y, _ = _startup_record(n=900)
     models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 1.0, "tau_max": 1e3}}
     subtypes = {"zero": rs.Subtype("steady", level=(None, 5.0)), "power": rs.Subtype("steady", level=(60.0, None)),
                 "rising": rs.Subtype("transient", level=(None, 50.0)), "other": rs.Subtype("transient")}
@@ -763,7 +761,7 @@ def test_pruning_stays_exact_with_subtypes(named):
 
 
 def test_no_subtypes_gives_the_same_result():
-    t, y, (up, down) = _startup_record(n=900)
+    t, y, _ = _startup_record(n=900)
     kw = dict(method="exact", grid_s=10, per=300.0, max_counts={"steady": 2, "transient": 2}, penalty=5.0)
     a = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
     b = optimal_segments(t, y, {"steady": 0, "transient": 1}, subtypes={}, **kw)
@@ -813,7 +811,7 @@ def test_subtype_validation():
 
 
 def test_a_tie_between_predecessors_of_different_states_still_goes_to_the_subtype_declared_first():
-    """Review 1 of PR #83: [3, 5) took 'mid' although 'low', declared first, accepts it at the same objective."""
+    """[3, 5) takes 'low', declared first, over 'mid' at the same objective, though its predecessor's state differs."""
     t = np.arange(5.0)
     y = np.array([2.0, 1.0, 0.0, 2.0, 1.0])
     subtypes = {"low": rs.Subtype("steady", level=(None, 1.8)), "mid": rs.Subtype("steady", level=(1.4, 1.8)),
@@ -1220,7 +1218,7 @@ def test_initial_and_final_naming_every_state_change_nothing(subtypes):
 
 @pytest.mark.parametrize("lo, hi", [("hot", "steady"), ("steady", "hot"), ("hot", "hot")])
 def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
-    """Review 1 of PR #102: such a subtype could never be used, and its segments would silently go elsewhere."""
+    """Such a subtype could never be used, and its segments would silently go elsewhere: it is refused up front."""
     t, y = _operating_day()
     culprit = f"min_duration_s 50.0 s ({lo}) > max_duration_s 40.0 s ({hi})"
     with pytest.raises(ValueError, match=re.escape(f"subtype 'hot' can take no segment: {culprit}")):
@@ -1234,7 +1232,7 @@ def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
 
 @pytest.mark.parametrize("b, want", [(0.5, "b"), (1.0, "a"), (1.5, "a")])
 def test_a_subtypes_own_penalty_decides_before_declaration_order(b, want):
-    """Review 1 of PR #102: subtypes tie only at the same penalty, and then the one declared first wins."""
+    """Subtypes tie only at the same penalty, and then the one declared first wins."""
     t, y = _operating_day()
     r = optimal_segments(t, y, {"steady": 0}, method="exact", grid_s=5, penalty={"steady": 1.0, "b": b},
                          subtypes={"a": rs.Subtype("steady"), "b": rs.Subtype("steady")})

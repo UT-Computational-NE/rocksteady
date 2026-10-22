@@ -1,7 +1,6 @@
 """Configuration, provider-result and numerical-input validation (#23)."""
 
 import numpy as np
-import pandas as pd
 import pytest
 
 import rocksteady as rs

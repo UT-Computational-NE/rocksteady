@@ -37,7 +37,7 @@ def test_settled_passes_and_approaching_fails(tau, outcome):
 
 def test_flat_window_is_decided_through_tau_max():
     """A flat window has no curve to fit; the bound is then about tau_max times the slope's uncertainty."""
-    t, s, span = _blocks()
+    t, _, span = _blocks()
     y = 5.0 + np.random.default_rng(1).normal(0, 0.005, len(t))
     near = rs.AsymptoteCriterion("x", 0.05, tau_max=2 * span).evaluate(t, y)
     assert near.outcome == Outcome.PASS and near.details["tau_hi"] == pytest.approx(2 * span)
@@ -153,7 +153,7 @@ def test_false_pass_rate_with_partial_blocks(ratio):
     assert passes / reps <= 0.05
 
 
-# -- review fixes (PR #52) ------------------------------------------------------------
+# -- the current sample, block timing and input checks --------------------------------
 
 
 def test_remaining_approach_is_taken_at_the_current_sample():
