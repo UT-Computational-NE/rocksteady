@@ -223,14 +223,25 @@ def test_on_refines_own_segments_it_returns_refines_subtypes(seed):
     assert [s.subtype for s in got] == [s.subtype for s in r.segments]
 
 
-@pytest.mark.parametrize("constraint, want", [
-    (dict(max_counts={"up": 1}), [(0, 34, "other"), (34, 53, "other"), (53, 60, "up")]),
+THREE_TRANSIENTS = 11.228369548678318  # the objective of [0, 34), [34, 53) and [53, 60), each with penalty 1
+
+
+@pytest.mark.parametrize("constraint, want, objective", [
+    (dict(max_counts={"up": 1}), [(0, 34, "other"), (34, 53, "other"), (53, 60, "up")], THREE_TRANSIENTS),
     (dict(transitions={"steady": ["transient"], "other": ["steady", "up"], "up": ["steady"]}),
-     [(0, 18, "other"), (18, 34, "cold"), (34, 53, "other"), (53, 60, "up")]),
-])
-def test_refine_retypes_its_segments_under_every_constraint(constraint, want):
-    """[34, 53) reaches 2.5, but up is capped at one, or may not be followed by up: it stays other."""
+     [(0, 18, "other"), (18, 34, "cold"), (34, 53, "other"), (53, 60, "up")], 10.942807383138128),
+    (dict(final=["steady", "other"]), [(0, 34, "other"), (34, 53, "up"), (53, 60, "other")], THREE_TRANSIENTS),
+    (dict(max_duration_s={"up": 10.0}), [(0, 34, "other"), (34, 53, "other"), (53, 60, "up")], THREE_TRANSIENTS),
+    (dict(penalty={"steady": 1.0, "transient": 1.0, "up": 3.0}),  # up would cost 2 more per segment
+     [(0, 34, "other"), (34, 53, "other"), (53, 60, "other")], THREE_TRANSIENTS),
+], ids=["cap", "transitions", "final", "max_duration", "penalty"])
+def test_refine_retypes_its_segments_under_every_constraint(constraint, want, objective):
+    """
+    [34, 53) reaches 2.5, but up is capped at one, may not be followed by up, may not end the record, may last
+    at most 10 s, or costs more than other: each segment takes the earliest subtype every constraint allows.
+    """
     t, y, cands = _walk(16)
     r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, method="refine", candidates=cands, refine_s=6,
-                            penalty=1.0, subtypes=WALK_SUBTYPES, **constraint)
+                            subtypes=WALK_SUBTYPES, **{"penalty": 1.0, **constraint})
     assert [(s.start, s.stop, s.subtype) for s in r.segments] == want
+    assert r.objective == pytest.approx(objective, rel=1e-12)
