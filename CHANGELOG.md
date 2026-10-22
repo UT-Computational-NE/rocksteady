@@ -148,7 +148,7 @@
   `tests`, `tools` and `examples`. The full `tools/check.sh` run and a new
   `lint` CI job run it (a `lint` extra, included in `dev`). The 16 hits it
   found are fixed, one an unused import in `rocksteady.report` (#106).
-- `tests/test_test_wording.py` fails on a test comment or docstring that
+- `tests/test_wording_of_tests.py` fails on a test comment or docstring that
   names a review or a pull request (`review 1 of PR #83`, `PR #46`); a test
   says what it pins down. The existing ones are reworded (#106).
 

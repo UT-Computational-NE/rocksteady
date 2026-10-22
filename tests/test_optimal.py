@@ -541,7 +541,7 @@ def test_an_infeasible_record_is_not_fitted_past_where_it_gets_stuck(monkeypatch
 
 
 def test_a_state_capped_at_zero_is_never_fitted(monkeypatch):
-    # The probe of review 1 on #82: a transient capped at 0 cannot be placed, so its exp model is never fitted.
+    # A transient capped at 0 cannot be placed, so its exp model is never fitted.
     t = np.arange(300.0)
     y = np.where(t < 100, 0.0, 5.0 * (1 - np.exp(-(t - 100) / 20))) + np.random.default_rng(0).normal(0, 0.05, 300)
     ends = _fit_ends(monkeypatch)

@@ -53,7 +53,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - run: python -m pip install -e ".[lint,test]"
+      - run: python -m pip install -e ".[lint]"
       - run: tools/lint.sh
 
   # The Read the Docs site (https://rocksteady.readthedocs.io), built as Read the Docs builds it:
