@@ -15,8 +15,9 @@ Mutation probe: break a file one mutant at a time and check that the tests notic
 
 For each mutant in turn, the tool replaces ``old`` with ``new``, runs ``python -m pytest *SELECT`` with this
 interpreter, and writes the file back byte for byte, with its modification time, also when pytest cannot collect
-or the run is interrupted. The file's cached bytecode is deleted first and the runs write none, so no mutant can
-run as a cached original. A mutant is red when pytest exits non-zero or times out (a hanging suite fails in CI
+or the run is interrupted (a second Ctrl-C waits for the restore). pytest runs in its own process group, which
+is ended after each run, so no process a test started outlives it. The file's cached bytecode is deleted first
+and the runs write none, so no mutant can run as a cached original. A mutant is red when pytest exits non-zero or times out (a hanging suite fails in CI
 too), and survived when it passes. The report, on stdout, has one line per mutant: red (with the first failing
 test), survived, or survived and marked equivalent; errors go to stderr. A second run on the same file is
 refused while one is running; run no other tests in the same checkout meanwhile, or they test the mutant.
@@ -150,15 +151,71 @@ def _drop_bytecode(path):
             os.remove(pyc)
 
 
-def _run(select, limit):
-    """pytest's exit status and output, or ``(None, "")`` when the run took longer than ``limit`` seconds."""
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+def _end(proc):
+    """
+    End pytest, if it is still running, and every process its tests started (its own process group): SIGTERM
+    first, so that a nested tools/mutate.py run restores its file, then SIGKILL for whatever is left.
+    """
+    if not hasattr(os, "killpg"):  # Windows: no process groups
+        proc.kill()
+        proc.wait()
+        return
+    # The group has ended: ESRCH, or on macOS EPERM when only zombies are left in it.
+    ended = (ProcessLookupError, PermissionError)
     try:
-        run = subprocess.run([sys.executable, "-m", "pytest", *select], capture_output=True, text=True, check=False,
-                             env=env, timeout=limit)
-    except subprocess.TimeoutExpired:  # subprocess.run has killed pytest
-        return None, ""
-    return run.returncode, run.stdout + run.stderr
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ended:
+        proc.wait()
+        return
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:  # the whole group, not only pytest: a nested run may still be restoring
+        proc.poll()  # reap pytest, so that it does not linger in the group
+        try:
+            os.killpg(proc.pid, 0)
+        except ended:
+            break
+        time.sleep(0.05)
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ended:
+            pass
+    proc.wait()
+
+
+def _run(select, limit):
+    """
+    pytest's exit status and output, or ``(None, "")`` when the run took longer than ``limit`` seconds. pytest
+    runs in its own session, so a timeout or an interrupt can end every process its tests started; the terminal's
+    Ctrl-C reaches this process alone, which ends the group.
+    """
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    with subprocess.Popen([sys.executable, "-m", "pytest", *select], stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True) as proc:
+        try:
+            output, _ = proc.communicate(timeout=limit)
+        except subprocess.TimeoutExpired:
+            _end(proc)
+            return None, ""
+        except BaseException:  # Ctrl-C or SIGTERM: end the group, then let it unwind
+            _end(proc)
+            raise
+        _end(proc)  # pytest has ended; a process one of its tests left running has not
+    return proc.returncode, output
+
+
+def _restore(path, original, stat):
+    """Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done."""
+    mask = getattr(signal, "pthread_sigmask", None)  # POSIX
+    if mask:
+        mask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    try:
+        with open(path, "wb") as f:
+            f.write(original)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    finally:
+        if mask:
+            mask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
 
 
 def _verdict(code, output, limit):
@@ -204,9 +261,7 @@ def main(argv):
                     f.write(original.replace(old.encode(), new.encode(), 1))
                 code, output = _run(select, limit)
             finally:
-                with open(path, "wb") as f:
-                    f.write(original)
-                os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                _restore(path, original, stat)
         except KeyboardInterrupt:  # subprocess.run has killed pytest
             print(f"mutate.py: interrupted during {name}; {path} is restored", file=sys.stderr)
             return 130

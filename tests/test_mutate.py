@@ -89,14 +89,17 @@ def test_a_survivor_fails_the_run_unless_marked_equivalent(tmp_path, equivalent,
     ([("bad", "    return 0\n    return x", "y")],
      "bad: old matches 0 times; it must match exactly once (the file has CRLF line endings)",
      CALC.replace("\n", "\r\n")),
+    ([("bad", "x > 0", "y")], "bad: old matches 0 times; it must match exactly once",  # one line: CRLF is no cause
+     CALC.replace("\n", "\r\n")),
     ([("bad", "return x", "return x")], "bad: new is the same as old", CALC),
     ([("bad", "return x", "return \udc80")], "bad: old or new cannot be encoded as UTF-8", CALC),
     ([("bad", "return x", "return 1", "")], "bad: the reason is empty; give one, or leave it out", CALC),
     ([("a\nb", "return x", "return 1")], "'a\\nb': a name must be one non-empty line", CALC),
+    ([("a\rb", "return x", "return 1")], "'a\\rb': a name must be one non-empty line", CALC),
     ([GUARD], "guard: the name is used 2 times", CALC),
     ([GUARD, GUARD], "guard: the name is used 3 times", CALC),  # one line, not one per repeat
-], ids=["no match", "three matches", "overlapping matches", "CRLF", "no change", "not UTF-8", "an empty reason",
-        "a name of two lines", "a name twice", "a name three times"])
+], ids=["no match", "three matches", "overlapping matches", "CRLF", "one line in CRLF", "no change", "not UTF-8",
+        "an empty reason", "a name of two lines", "a name of two CR lines", "a name twice", "a name three times"])
 def test_a_mutant_that_cannot_run_is_refused_before_any_test_runs(tmp_path, extra, why, calc):
     spec = _project(tmp_path, [GUARD, *extra], calc=calc)
     (tmp_path / "conftest.py").write_text("open('ran', 'w').close()\n")  # pytest leaves this mark when it starts
@@ -115,8 +118,13 @@ def test_a_mutant_that_cannot_run_is_refused_before_any_test_runs(tmp_path, extr
     (f"FILE = 'nope.py'\nSELECT = []\nMUTANTS = [{GUARD!r}]\n", "FILE nope.py does not exist"),
     (f"FILE = 'calc.py'\nSELECT = []\nMUTANTS = [{GUARD!r}]\nTIMEOUT = 0\n",
      "TIMEOUT must be a positive number of seconds, got 0"),
+    (f"FILE = 'calc.py'\nSELECT = []\nMUTANTS = [{GUARD!r}]\nTIMEOUT = True\n",
+     "TIMEOUT must be a positive number of seconds, got True"),
+    (f"FILE = 'calc.py'\nSELECT = []\nMUTANTS = [{list(GUARD)!r}]\n",
+     "MUTANTS[0] must be (name, old, new) or (name, old, new, reason), all strings; got ['guard',"),
     ("FILE = 'calc.py'\nSELECT = [\n", "mutants.py cannot be run: SyntaxError: "),
-], ids=["no SELECT", "a short mutant", "no mutants", "SELECT a string", "no FILE", "a zero TIMEOUT", "a syntax error"])
+], ids=["no SELECT", "a short mutant", "no mutants", "SELECT a string", "no FILE", "a zero TIMEOUT", "TIMEOUT True",
+        "a list mutant", "a syntax error"])
 def test_a_malformed_spec_is_refused(tmp_path, spec, why):
     (tmp_path / "calc.py").write_text(CALC)
     (tmp_path / "mutants.py").write_text(spec)
@@ -182,6 +190,21 @@ def _load_tool():
     return module
 
 
+@pytest.mark.parametrize("given, limits", [(None, [None, 300.0]), (5, [5, 5.0])])
+def test_the_mutants_get_the_timeout_of_the_measured_unmutated_run(tmp_path, monkeypatch, given, limits):
+    """The unmutated run takes 30 s on a stub clock: a mutant may take ten times that, or TIMEOUT."""
+    tool = _load_tool()
+    spec = _project(tmp_path, [GUARD], extra="" if given is None else f"TIMEOUT = {given}\n")
+    seen = []
+    monkeypatch.setattr(tool, "_run", lambda select, limit: (seen.append(limit), (0 if not seen[1:] else 1, ""))[1])
+    clock = iter([100.0, 130.0])
+    monkeypatch.setattr(tool.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(tool.signal, "signal", lambda *args: None)  # leave this process's handlers alone
+    monkeypatch.chdir(tmp_path)
+    assert tool.main([str(spec)]) == 0
+    assert seen == limits
+
+
 @pytest.mark.parametrize("baseline_s, given, want", [(0.4, None, 60.0), (30.0, None, 300.0), (30.0, 5, 5.0)])
 def test_the_default_timeout_is_ten_times_the_unmutated_run_and_at_least_a_minute(baseline_s, given, want):
     """Decided on #101; TIMEOUT in the spec replaces it."""
@@ -231,3 +254,85 @@ def test_a_selection_that_times_out_without_mutants_is_refused(tmp_path):
     assert (run.returncode, run.stdout) == (2, "")
     assert run.stderr == ("mutate.py: the selection times out before any mutant (TIMEOUT = 2 s); raise TIMEOUT or "
                           "fix it first\n")
+
+
+CHILD_TEST = ("import os\nimport subprocess\nimport sys\nimport time\n\nimport calc\n\n\ndef test_child():\n"
+              "    if calc.MUTATED:\n"
+              "        subprocess.Popen([sys.executable, '-c', 'import os, signal, time; "
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "  # only SIGKILL ends it
+              "open(\"child.pid\", \"w\").write(str(os.getpid())); time.sleep(60)'])\n"
+              "        {}\n")
+
+
+def _gone(pid, wait_s=10.0):
+    """Whether process ``pid`` has ended (and been reaped), within ``wait_s`` seconds."""
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+@pytest.mark.parametrize("how", ["timeout", "Ctrl-C", "left behind"])
+def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
+    """Decided on #101: a timed-out mutant's run is killed, all of it; an interrupted or finished one too."""
+    wait = "while not os.path.exists('child.pid'): time.sleep(0.05)" if how == "left behind" else "time.sleep(60)"
+    spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=CHILD_TEST.format(wait),
+                    extra="TIMEOUT = 4\n" if how == "timeout" else "")
+    if how == "timeout":
+        run = _mutate(tmp_path, spec)
+        assert run.stdout == "slow: red (timed out after 4 s)\n", run.stderr
+    elif how == "left behind":  # the test passes and leaves its child running
+        run = _mutate(tmp_path, spec)
+        assert run.stdout == "slow: survived\n", run.stderr
+    else:
+        with _running(tmp_path, spec, (tmp_path / "child.pid").exists) as tool:
+            tool.send_signal(signal.SIGINT)
+            tool.communicate(timeout=60)
+        assert tool.returncode == 130
+    pid = int((tmp_path / "child.pid").read_text())
+    assert _gone(pid), f"the child {pid} outlived the run"
+    assert (tmp_path / "calc.py").read_text() == SLOW_CALC
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal masks")
+def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatch):
+    """A second Ctrl-C between the truncating open and the write would leave the file empty."""
+    tool = _load_tool()
+    path = tmp_path / "calc.py"
+    path.write_text("mutated\n")
+    real_open = open
+
+    def interrupted_open(file, mode="r", *args, **kwargs):
+        handle = real_open(file, mode, *args, **kwargs)
+        if "w" in mode:
+            os.kill(os.getpid(), signal.SIGINT)  # lands between the truncation and the write
+        return handle
+
+    monkeypatch.setattr(tool, "open", interrupted_open, raising=False)
+    with pytest.raises(KeyboardInterrupt):
+        tool._restore(str(path), CALC.encode(), os.stat(path))
+    assert path.read_text() == CALC
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_a_nested_run_in_a_timed_out_mutant_restores_its_own_file(tmp_path):
+    """The group gets SIGTERM before SIGKILL, so a run of the tool that a mutant's test started restores its file."""
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    inner_spec = _project(inner, [SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
+    nested = ("import subprocess\nimport sys\nimport time\n\nimport calc\n\n\ndef test_nested():\n"
+              "    if calc.MUTATED:\n"
+              f"        subprocess.Popen([sys.executable, {MUTATE!r}, {str(inner_spec)!r}], cwd={str(inner)!r})\n"
+              "        time.sleep(60)\n")
+    spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=nested, extra="TIMEOUT = 15\n")
+    run = _mutate(tmp_path, spec)
+    assert run.stdout == "slow: red (timed out after 15 s)\n", run.stderr
+    deadline = time.monotonic() + 10
+    while (inner / "calc.py").read_text() != SLOW_CALC and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert (inner / "calc.py").read_text() == SLOW_CALC
