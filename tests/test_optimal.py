@@ -195,6 +195,26 @@ def test_spanning_segments_count_against_every_period_they_touch():
     assert count_by_period(split, idx, "1D")["steady"].tolist() == [1, 1, 1, 1]
 
 
+def test_count_tables_without_segments_or_columns_are_empty():
+    idx = pd.date_range("2026-03-02", periods=48, freq="1h")
+    no_segments = count_by_period([], idx, "1D", states=["steady"])
+    assert no_segments.shape == (0, 1) and list(no_segments.columns) == ["steady"]
+    assert (no_segments.dtypes == "int64").all() and no_segments.index.name == "period"
+    assert count_by_period([Segment(0, 48, ST)], idx, "1D", states=[]).shape == (0, 0)
+    assert count_by_period([Segment(0, 48, ST)], np.arange(48.0), 25.0, states=[]).shape == (0, 0)
+
+
+@pytest.mark.parametrize("datetimes", [False, True])
+def test_a_table_of_some_states_holds_only_the_periods_they_touch(datetimes):
+    t = pd.date_range("2026-03-02", periods=30, freq="1h") if datetimes else np.arange(30.0)
+    per = "10h" if datetimes else 10.0
+    segs = [Segment(0, 10, TR), Segment(10, 20, ST), Segment(20, 30, TR)]
+    kw = dict(period_origin=t[0]) if datetimes else {}
+    steady = count_by_period(segs, t, per, states=["steady"], **kw)
+    assert steady["steady"].tolist() == [1] and steady.index[0] == (t[10] if datetimes else 10.0)
+    assert count_by_period(segs, t, per, states=["indeterminate"], **kw).shape == (0, 1)
+
+
 def test_per_period_limits_bind():
     """Two plateaus per 100 s period; at most one steady segment per period."""
     rng = np.random.default_rng(2)

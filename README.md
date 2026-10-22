@@ -541,6 +541,9 @@ python tests/test_regression.py     # regenerate golden snapshots after an inten
 python tests/test_optimal_snapshot.py  # regenerate the best-fit segments snapshot after an intended change
 ```
 
+Build a release from a clean checkout (`git status --ignored` shows nothing under `tests/`): the sdist ships every
+file under `tests/` that is on disk, tracked or not, and CI checks that only for its own builds.
+
 See [CHANGELOG.md](https://github.com/UT-Computational-NE/rocksteady/blob/main/CHANGELOG.md) for changes between versions.
 
 ## License
