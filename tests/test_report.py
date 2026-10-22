@@ -2,7 +2,7 @@
 Tests of fit and comparison reports and the text formatter.
 
 The formatter is checked against tests/data/report_snapshot.txt. After an
-intended layout change, regenerate it with ``python tests/test_report.py``.
+intended layout change, regenerate it with ``PYTHONPATH=src python tests/test_report.py``.
 """
 
 import os

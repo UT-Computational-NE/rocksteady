@@ -537,8 +537,8 @@ tools/check.sh                      # what CI runs, fast: tests without the slow
 tools/check.sh tests/test_optimal.py -k infeasible  # one selection of those tests, no mypy or docs build
 python -m pytest                    # everything
 python -m pytest -m "not slow"      # skip the Monte Carlo calibration
-python tests/test_regression.py     # regenerate golden snapshots after an intended label change
-python tests/test_optimal_snapshot.py  # regenerate the best-fit segments snapshot after an intended change
+PYTHONPATH=src python tests/test_regression.py     # regenerate golden snapshots after an intended label change
+PYTHONPATH=src python tests/test_optimal_snapshot.py  # regenerate the best-fit segments snapshot after an intended change
 ```
 
 Build a release from a clean checkout (`git status --ignored` shows nothing under `tests/`): the sdist ships every

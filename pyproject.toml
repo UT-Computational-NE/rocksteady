@@ -46,7 +46,7 @@ rocksteady = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Tests import this checkout's src/, even where the environment's editable install points at another checkout.
+# Tests import this checkout's src/, whatever the environment's install points at (AGENTS.md).
 pythonpath = ["src"]
 markers = ["slow: Monte Carlo calibration checks (deselect with -m 'not slow')"]
 # Unit tests use short windows on purpose; tests of the warning itself use pytest.warns, which still sees it.

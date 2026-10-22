@@ -6,7 +6,7 @@ Seeded synthetic records are run through ``subset``, ``refine`` and
 change that alters any of them fails here; if the change is intended,
 regenerate with
 
-    python tests/test_optimal_snapshot.py
+    PYTHONPATH=src python tests/test_optimal_snapshot.py
 
 and record the reason in CHANGELOG.md.
 """
