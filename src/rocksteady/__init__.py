@@ -25,7 +25,7 @@ from .disturbances import EventLog, StepChange
 from .overrides import FloorLatch
 from .factory import build_detector, criterion, disturbance, override
 from .states import Segment, State, segments, segments_from
-from .optimal import Subtype, compare_segments, optimal_segments
+from .optimal import Subtype, classify_segments, compare_segments, optimal_segments
 from .timing import TimingSuggestion, suggest_timing
 from . import batch, factory, fit, metrics, optimal, registry, report, signals, states, stats, timing
 
@@ -36,7 +36,7 @@ __all__ = [
     "Outcome", "Signal", "Timing", "Verdict", "AsymptoteCriterion", "BoundCriterion", "DeviationCriterion",
     "DriftCriterion",
     "EventLog", "FloorLatch", "StepChange", "build_detector", "criterion", "disturbance", "override",
-    "Segment", "State", "segments", "segments_from", "optimal_segments", "compare_segments", "Subtype",
-    "suggest_timing", "TimingSuggestion", "CalibrationWarning",
+    "Segment", "State", "segments", "segments_from", "optimal_segments", "classify_segments", "compare_segments",
+    "Subtype", "suggest_timing", "TimingSuggestion", "CalibrationWarning",
     "batch", "factory", "fit", "metrics", "optimal", "registry", "timing", "report", "signals", "states", "stats",
 ]

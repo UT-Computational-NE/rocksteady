@@ -81,12 +81,23 @@ subtype's segments are fitted with its state's model, so two subtypes that
 accept a segment and carry the same penalty tie exactly, and the tie goes
 to the subtype declared first. Precisely, among segmentations of equal
 objective it takes the least sum, over segments, of each subtype's position
-among its state's subtypes, so no segment could take an earlier-declared
-subtype that accepts it, at the same penalty, without breaking a cap.
+among its state's subtypes, so no segment could, on its own, take an
+earlier-declared subtype that accepts it, at the same penalty, without
+breaking a cap, a transition, or ``initial`` or ``final``.
 That sum also decides exact ties between different states or boundaries,
 so declaring subtypes can change which of two equally good segmentations
-is returned. ``refine`` keeps every segment's subtype and rejects a move
-after which a segment fails its subtype's conditions.
+is returned. ``refine`` keeps every segment's subtype while it moves
+boundaries, and rejects a move after which a segment fails its subtype's
+conditions. A moved segment can then meet an earlier-declared subtype's
+conditions, so ``refine`` types its final segments again with the same
+program, their breakpoints and states fixed and every constraint in force:
+the tie rule holds for every method.
+
+``classify_segments`` gives subtypes to segments the analyst already has
+(the detector's, say) by the same definitions: the same program with the
+breakpoints and states fixed and no count caps, durations or penalties, so
+ties go to the least sum of positions as above, and a segmentation that
+cannot be typed raises an error that names where.
 
 Methods
 -------
@@ -130,10 +141,10 @@ a longer segment never costs less, whichever subtype could take it.
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from numbers import Real
-from typing import (Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple,
-                    Union, cast)
+from typing import (Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol, Sequence,
+                    Tuple, Union, cast)
 
 import numpy as np
 
@@ -401,6 +412,44 @@ class _Costs:
     def full_model(self, st: str, p: int, q: int) -> bool:
         """The fit of ``[p, q)`` used the whole model (no order reduction): costs grow from here on."""
         return not self.reduced.get((st, p, q), False)
+
+
+class _SegmentCosts(Protocol):
+    """What the program asks of segment costs: ``_Costs``, or ``_NoCosts`` for a fixed segmentation."""
+
+    n_fits: int
+
+    def is_fast(self, st: str) -> bool: ...
+
+    def vector(self, st: str, ps: np.ndarray, q: int) -> np.ndarray: ...
+
+    def cost(self, st: str, p: int, q: int) -> float: ...
+
+    def full_model(self, st: str, p: int, q: int) -> bool: ...
+
+
+class _NoCosts:
+    """
+    The costs of a fixed segmentation (``classify_segments``, and ``refine``'s
+    result typed again): every segment costs 0. With the breakpoints and
+    states fixed, a segment's model cost is the same whichever of its
+    state's subtypes it takes, so only the penalties and then the subtypes'
+    ranks decide, as they do between equal objectives in the optimiser.
+    """
+
+    n_fits = 0  # nothing to fit
+
+    def is_fast(self, st: str) -> bool:
+        return True
+
+    def vector(self, st: str, ps: np.ndarray, q: int) -> np.ndarray:
+        return np.zeros(len(ps))
+
+    def cost(self, st: str, p: int, q: int) -> float:
+        return 0.0
+
+    def full_model(self, st: str, p: int, q: int) -> bool:
+        return True
 
 
 def _n_params(models: Mapping[str, Any], st: str, ts: np.ndarray, y: np.ndarray) -> int:
@@ -877,6 +926,25 @@ class _Option:
     rank: int = 0
 
 
+def _fixed_to(segments: Sequence[Segment], opt: _Option) -> Callable[[np.ndarray, int], np.ndarray]:
+    """
+    ``opt``'s test restricted to the given segments: ``[p, q)`` must be one
+    of them, in ``opt``'s state, and meet ``opt``'s condition.
+    """
+    by_stop = {s.stop: (s.start, State(s.state).value) for s in segments}
+
+    def accepts(ps: np.ndarray, q: int) -> np.ndarray:
+        ps = np.asarray(ps, dtype=np.int64)
+        p, st = by_stop.get(q, (-1, None))
+        out = (ps == p) & (st == opt.state)
+        keep = np.flatnonzero(out)
+        if len(keep) and opt.accepts is not _accept_all:
+            out[keep] = opt.accepts(ps[keep], q)
+        return out
+
+    return accepts
+
+
 @dataclass(frozen=True)
 class _Counter:
     """A count cap: at most ``cap`` segments per period whose option is in ``options``."""
@@ -901,8 +969,13 @@ class _Problem:
                  columns: Sequence[Tuple[str, FrozenSet[int]]], per, period_origin,
                  max_counts: Optional[Mapping[str, int]] = None,
                  transitions: Optional[Mapping[str, Sequence[str]]] = None,
-                 initial_final: Optional[Mapping[str, Sequence[str]]] = None):
+                 initial_final: Optional[Mapping[str, Sequence[str]]] = None,
+                 fixed_segments: Optional[Sequence[Segment]] = None):
         self.ts, self.y, self.idx = ts, y, idx
+        # Segments covering the record, whose breakpoints and states the program keeps: it only types them.
+        self.fixed_segments = fixed_segments
+        if fixed_segments is not None:
+            options = [replace(opt, accepts=_fixed_to(fixed_segments, opt)) for opt in options]
         # The caller's caps and transitions, as given: the infeasibility error names them.
         self.given_caps, self.given_transitions = max_counts, transitions
         self.given_initial_final = dict(initial_final or {})  # when given
@@ -918,7 +991,7 @@ class _Problem:
         self.by_state: Dict[str, List[int]] = {}
         for o, opt in enumerate(self.options):
             self.by_state.setdefault(opt.state, []).append(o)
-        self.costs = _Costs(ts, y, models, list(self.by_state))
+        self.costs: _SegmentCosts = _NoCosts() if fixed_segments is not None else _Costs(ts, y, models, list(self.by_state))
         # Over a state's options: the longest duration allowed (where the cost scan stops), and the smallest
         # penalty (so the pruning bound holds for every option).
         self.state_max_d = {st: max(options[o].max_d for o in members) for st, members in self.by_state.items()}
@@ -1010,7 +1083,8 @@ class _Problem:
         if self.costs.is_fast(st):
             return np.where(okd, self.costs.vector(st, starts[:k], q), math.inf)
         if surrogate:  # cheap constant-fit costs, only to find a feasible solution
-            return np.where(okd, _poly0(self.costs, starts[:k], q), math.inf)
+            # Only a model that is not fast has a surrogate, and only _Costs has such models.
+            return np.where(okd, _poly0(cast(_Costs, self.costs), starts[:k], q), math.inf)
         C = np.full(k, math.inf)
         max_d, min_pen = self.state_max_d[st], self.state_min_pen[st]
         for j in range(k - 1, -1, -1):  # growing segments: costs never decrease, so stop at the bound
@@ -1140,6 +1214,10 @@ class _Problem:
         given = self.given_transitions
         trans = "any" if given is None else {a: sorted(set(b)) for a, b in given.items()}
         initial_final = "".join(f", {what}={names}" for what, names in self.given_initial_final.items())
+        if self.fixed_segments is not None:  # classify_segments: no counts or durations; the caller's segments
+            return (f"these segments cannot be typed: no choice of subtypes satisfies the transitions, first and "
+                    f"last segments and the subtypes' conditions: none can continue from {at}{unit} (sample "
+                    f"{stuck}), in {where}. In force: transitions={trans}{initial_final}.")
         return (f"no segmentation satisfies the constraints (counts, durations, transitions, first and last "
                 f"segments) and the subtypes' conditions on these candidate breakpoints: none can continue from "
                 f"{at}{unit} (sample {stuck}), in {where}. In force: max_counts={caps}, "
@@ -1160,15 +1238,20 @@ class _Problem:
         if np.isfinite(C[0]) and self.tgtB[o] >= 0 and self.may_start[o]:
             t_ = self.tgtB[o]
             best_v[t_], best_r[t_], best[t_] = C[0], r_o, (0, -1, -1)
-        # From a previous segment ending at B[j], j >= 1.
-        if k > 1:
-            V = F[1:k] + C[1:k, None, None]  # (k - 1, O, L)
+        # From a previous segment ending at B[j], j >= 1. Only a start with a finite cost can win, so when some are
+        # infinite only the others are scanned, in order (one, for a fixed segmentation).
+        finite = np.isfinite(C[1:k])
+        js = np.arange(1, k) if finite.all() else np.flatnonzero(finite) + 1
+        rows = slice(1, k) if len(js) == k - 1 else js  # a slice is a view: no copy of F when every start can win
+        if len(js):
+            V = F[rows] + C[rows, None, None]  # (len(js), O, L)
             V[:, ~self.allowed[:, o], :] = math.inf
-            for case, mask in (("A", same[1:] & ~spans[1:]), ("B", ~same[1:]), ("C", same[1:] & spans[1:])):
+            sm, sp_ = same[rows], spans[rows]
+            for case, mask in (("A", sm & ~sp_), ("B", ~sm), ("C", sm & sp_)):
                 if not mask.any():
                     continue
-                arg, vmin, rmin = _lexargmin(V[mask], R[1:k][mask])  # over j, for each (option, layer)
-                jidx = np.flatnonzero(mask)[arg] + 1
+                arg, vmin, rmin = _lexargmin(V[mask], R[rows][mask])  # over j, for each (option, layer)
+                jidx = js[mask][arg]
                 for l in range(L):
                     if case == "A":
                         t_ = self.tgtA[o, l]
@@ -1312,6 +1395,74 @@ def _candidates(candidates, n: int) -> np.ndarray:
     return np.unique(np.clip(np.asarray(pts + [0, n], dtype=np.int64), 0, n))
 
 
+def _checked_record(t, y) -> Tuple[np.ndarray, Any, np.ndarray]:
+    """Seconds from the first sample, the DatetimeIndex (or None) and the signal, checked."""
+    ts, idx = _times(t)
+    y = np.asarray(y, dtype=float)
+    if ts.shape != y.shape or ts.ndim != 1:
+        raise ValueError("t and y must be one-dimensional and of the same length")
+    n = len(y)
+    if n == 0:
+        raise ValueError("empty record")
+    if not np.all(np.isfinite(ts)) or (n > 1 and not np.all(np.diff(ts) > 0)):
+        raise ValueError("t must be finite and strictly increasing")
+    return ts, idx, y
+
+
+def _checked_subtypes(subtypes: Optional[Mapping[str, Subtype]], states: Sequence[str]) -> Dict[str, Subtype]:
+    """``subtypes`` as a dict, checked: each a ``Subtype`` of one of ``states``, under a name no state has."""
+    if subtypes is not None and not isinstance(subtypes, Mapping):
+        raise ValueError(f"subtypes must be a mapping {{name: Subtype}}, got {subtypes!r}")
+    subtypes = dict(subtypes or {})
+    for name, sub in subtypes.items():
+        _v.name(name, "a subtype's name")
+        if not isinstance(sub, Subtype):
+            raise ValueError(f"subtypes[{name!r}] must be a Subtype, got {sub!r}")
+        if name in _STATE_NAMES:
+            raise ValueError(f"subtype {name!r} has the name of a state; give it another name")
+        if sub.state.value not in states:
+            raise ValueError(f"subtype {name!r} refines state {sub.state.value!r}, which has no model")
+    return subtypes
+
+
+def _name_check(states: Sequence[str], subtypes: Mapping[str, Subtype], *,
+                models: bool = True) -> Callable[[str, str], None]:
+    """
+    ``check(what, name)``: every constraint names one of ``states`` (those
+    with a model, unless there are no ``models``) or a subtype.
+    """
+    state = "a state with a model" if models else "a state"
+
+    def check(what: str, name: str) -> None:
+        if name in states or name in subtypes:
+            return
+        if name in _STATE_NAMES:
+            raise ValueError(f"{what} names state {name!r}, which has no model")
+        raise ValueError(f"{what} names {name!r}, which is not {state} or a subtype")
+
+    return check
+
+
+def _checked_sequence(transitions, initial, final, check: Callable[[str, str], None]) -> Dict[str, List[str]]:
+    """Check ``transitions``, ``initial`` and ``final``; returns those of ``initial`` and ``final`` given, sorted."""
+    if transitions is not None:
+        for a, nexts in transitions.items():
+            for st in [a, *nexts]:
+                check("transitions", st)
+    initial_final = {}
+    for what, names in (("initial", initial), ("final", final)):
+        if names is None:
+            continue
+        if isinstance(names, (str, bytes)) or not isinstance(names, Collection):
+            raise ValueError(f"{what} must be a collection of state or subtype names, got {names!r}")
+        if not names:
+            raise ValueError(f"{what} is empty: name at least one state or subtype")
+        for name in names:
+            check(what, name)
+        initial_final[what] = sorted(set(names))
+    return initial_final
+
+
 def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: Optional[Mapping[str, int]] = None,
                      transitions: Optional[Mapping[str, Sequence[str]]] = None,
                      min_duration_s: Optional[Mapping[str, float]] = None,
@@ -1394,15 +1545,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
-    ts, idx = _times(t)
-    y = np.asarray(y, dtype=float)
-    if ts.shape != y.shape or ts.ndim != 1:
-        raise ValueError("t and y must be one-dimensional and of the same length")
+    ts, idx, y = _checked_record(t, y)
     n = len(y)
-    if n == 0:
-        raise ValueError("empty record")
-    if not np.all(np.isfinite(ts)) or (n > 1 and not np.all(np.diff(ts) > 0)):
-        raise ValueError("t must be finite and strictly increasing")
     if not isinstance(models, Mapping) or not models:
         raise ValueError("models must be a non-empty mapping {state: model spec}")
     states = list(models)
@@ -1410,24 +1554,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         if st not in _STATE_NAMES:
             raise ValueError(f"models names {st!r}, which is not a state ({', '.join(_STATE_NAMES)})")
     _fit.validate_models({"y": dict(models)}, states=states)
-    subtypes = dict(subtypes or {})
-    for name, sub in subtypes.items():
-        _v.name(name, "a subtype's name")
-        if not isinstance(sub, Subtype):
-            raise ValueError(f"subtypes[{name!r}] must be a Subtype, got {sub!r}")
-        if name in _STATE_NAMES:
-            raise ValueError(f"subtype {name!r} has the name of a state; give it another name")
-        if sub.state.value not in states:
-            raise ValueError(f"subtype {name!r} refines state {sub.state.value!r}, which has no model")
-
-    def check(what: str, name: str) -> None:
-        """Every constraint names states with a model or subtypes."""
-        if name in states or name in subtypes:
-            return
-        if name in _STATE_NAMES:
-            raise ValueError(f"{what} names state {name!r}, which has no model")
-        raise ValueError(f"{what} names {name!r}, which is not a state with a model or a subtype")
-
+    subtypes = _checked_subtypes(subtypes, states)
+    check = _name_check(states, subtypes)
     for name, mapping in (("max_counts", max_counts), ("min_duration_s", min_duration_s),
                           ("max_duration_s", max_duration_s)):
         for st, v in (mapping or {}).items():
@@ -1443,21 +1571,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         if lo[0] > hi[0]:
             raise ValueError(f"subtype {name!r} can take no segment: min_duration_s {lo[0]} s ({lo[1]}) > "
                              f"max_duration_s {hi[0]} s ({hi[1]})")
-    if transitions is not None:
-        for a, nexts in transitions.items():
-            for st in [a, *nexts]:
-                check("transitions", st)
-    initial_final = {}
-    for what, names in (("initial", initial), ("final", final)):
-        if names is None:
-            continue
-        if isinstance(names, (str, bytes)) or not isinstance(names, Collection):
-            raise ValueError(f"{what} must be a collection of state or subtype names, got {names!r}")
-        if not names:
-            raise ValueError(f"{what} is empty: name at least one state or subtype")
-        for name in names:
-            check(what, name)
-        initial_final[what] = sorted(set(names))
+    initial_final = _checked_sequence(transitions, initial, final, check)
     masks = _event_masks(events, n, subtypes)
     # Penalty per state, then per subtype: a subtype's own replaces its state's, which it takes otherwise.
     own: Mapping[str, float] = {}
@@ -1506,6 +1620,13 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             gaps = np.diff(ts[np.minimum(B, n - 1)])
             refine_s = 0.5 * float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 0.0
         bounds = prob.refine(bounds, opts, float(refine_s))
+        if subtypes:
+            # A moved segment can meet an earlier-declared subtype's conditions: type the final segments again,
+            # by the same program with their breakpoints and states fixed, under every constraint.
+            fixed = [Segment(bounds[i], bounds[i + 1], State(options[o].state)) for i, o in enumerate(opts)]
+            retype = _Problem(ts, y, idx, models, options, counters, allowed, may_start, may_end, columns, per,
+                              period_origin, max_counts, transitions, initial_final, fixed_segments=fixed)
+            _, opts = retype.solve(np.asarray(bounds, dtype=np.int64), prune=False)
     objective, sse = prob.total(bounds, opts)
     segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state), subtype=options[o].subtype)
             for i, o in enumerate(opts)]
@@ -1518,4 +1639,81 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                                subtypes)
 
 
-__all__ = ["optimal_segments", "OptimalSegmentation", "Subtype", "compare_segments", "count_by_period", "METHODS"]
+def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[str, Subtype],
+                      events: Optional[Mapping[str, Any]] = None,
+                      transitions: Optional[Mapping[str, Sequence[str]]] = None,
+                      initial: Optional[Collection[str]] = None,
+                      final: Optional[Collection[str]] = None) -> List[Segment]:
+    """
+    Subtypes for segments the analyst already has (the detector's, say),
+    by the same definitions as ``optimal_segments``, so that their subtypes
+    and the optimiser's constraints share one definition.
+
+    It runs the optimiser's dynamic program with the breakpoints and states
+    fixed and no count caps, so a segment takes a subtype whose conditions
+    it meets, the sequence obeys ``transitions``, ``initial`` and ``final``
+    (a state's name stands for all of its subtypes, as there), and of the
+    choices that do, the one with the least sum of the subtypes' positions
+    among their states' wins. So no segment could, on its own, take an
+    earlier-declared subtype whose conditions it meets without breaking
+    ``transitions``, ``initial`` or ``final``; without them, each segment
+    takes the first declared subtype it meets. A transient subtype with no
+    conditions is told apart from another by its neighbours, as in the
+    optimiser. Count caps, durations and penalties constrain the
+    optimiser's choice of segments, not what a subtype means, so there are
+    none here. On the optimiser's own segments, by any method, it returns
+    the optimiser's subtypes when those constraints name states only; a
+    cap on a subtype, say, can make the optimiser put a segment in a
+    catch-all that this gives the capped subtype.
+
+    Parameters
+    ----------
+    t, y
+        Sample times and the signal, as for ``optimal_segments``.
+    segments : sequence of Segment
+        Segments covering the record in order (``states.segments``, or an
+        ``OptimalSegmentation``'s). Any subtype they already carry is
+        replaced.
+    subtypes : mapping
+        ``{name: Subtype}``, as for ``optimal_segments``. Once a state has
+        subtypes, every segment of it takes one (ADR 0001); segments of
+        other states get ``subtype=None``.
+    events, transitions, initial, final
+        As for ``optimal_segments``.
+
+    Returns
+    -------
+    list of Segment
+        The segments with ``subtype`` set; boundaries, states and
+        ``forced`` unchanged.
+
+    Raises
+    ------
+    ValueError
+        When no choice of subtypes satisfies the constraints, naming, as the
+        optimiser's error does, the earliest segment boundary after which
+        none can continue, and the transitions, ``initial`` and ``final`` in
+        force.
+    """
+    ts, idx, y = _checked_record(t, y)
+    n = len(y)
+    segs = check_segments(segments, n, require_full=True)
+    for i, s in enumerate(segs):
+        if s.state not in _STATE_NAMES:
+            raise ValueError(f"segment {i} has state {s.state!r}, which is not a state ({', '.join(_STATE_NAMES)})")
+    states = list(_STATE_NAMES)
+    subs = _checked_subtypes(subtypes, states)
+    initial_final = _checked_sequence(transitions, initial, final, _name_check(states, subs, models=False))
+    masks = _event_masks(events, n, subs)
+    no_penalty = {name: 0.0 for name in states + list(subs)}
+    options, counters, allowed, may_start, may_end, columns = _options(
+        states, no_penalty, max_counts=None, transitions=transitions, min_duration_s=None, max_duration_s=None,
+        subtypes=subs, conditions=_Conditions(ts, y, masks), initial=initial, final=final)
+    prob = _Problem(ts, y, idx, {}, options, counters, allowed, may_start, may_end, columns, per=None,
+                    period_origin=None, transitions=transitions, initial_final=initial_final, fixed_segments=segs)
+    _, opts = prob.solve(np.array([0] + [s.stop for s in segs], dtype=np.int64), prune=False)
+    return [replace(s, subtype=options[o].subtype) for s, o in zip(segs, opts)]
+
+
+__all__ = ["optimal_segments", "OptimalSegmentation", "Subtype", "classify_segments", "compare_segments",
+           "count_by_period", "METHODS"]
