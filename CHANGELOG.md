@@ -116,6 +116,11 @@
   Wait for CI only once `headRefOid` is the pushed SHA, as `mergeable` can
   still describe the previous head; read checks with `--json name,bucket`
   (#111).
+- `docs/agents/coding-standards.md` holds the judgement calls a reviewer
+  checks in every diff, and names the checks that decide the mechanical
+  rules; `docs/agents/review.md` points at it. It starts with two rules from
+  PR #104: a test pins the exact value a conversion produces, and a widened
+  input brings its degenerate cases (#92).
 
 ### Tests and CI
 
