@@ -722,7 +722,12 @@ def test_no_cap_can_be_dodged():
 @pytest.mark.parametrize("y, at", [([40.0] * 6, 40.0), ([39.5, 40.5] * 3, 40.0),
                                    ([1e9, 1e9, 40.0, 40.0, 40.0, 40.0], 40.0),
                                    ([0.7] * 53, 0.7), ([97.7379777971513] * 11, 97.7379777971513),
-                                   ([0.1, 0.3, 0.2], 0.2)])
+                                   ([0.1, 0.3, 0.2], 0.2),
+                                   # samples of other magnitudes than the threshold, below and above it
+                                   ([1.0, 3.0], 2.0), ([-4.0, 8.0], 2.0),
+                                   # means that need every bit of the samples' and the threshold's mantissas
+                                   ([1 + 2 ** -52, 1 + 3 * 2 ** -52], 1 + 2 * 2 ** -52),
+                                   ([2 ** -1074, 3 * 2 ** -1074], 2 ** -1073)])
 def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
     """The exact mean: ``fsum(y) / n`` rounds twice and falls below 0.7 for 53 samples of 0.7."""
     y = np.array(y)
