@@ -15,7 +15,9 @@
   the subtypes' positions, which can also decide an exact tie between
   states). `refine` keeps each segment's subtype while it moves
   boundaries, then types its final segments again by the same rule (#66),
-  and pruning stays exact.
+  and pruning stays exact. A mean is held to `[lo, hi)` exactly, and a
+  mean at an end costs no more than any other (#117); a `level` that is
+  not two numbers in order is refused as "must be a pair".
   Segments carry `Segment.subtype` (None for a state without subtypes),
   `OptimalSegmentation.subtypes` holds the subtypes, `counts` has a column
   per subtype, and `summary()` lists counts by subtype. With no subtypes,
@@ -23,10 +25,11 @@
 - Peak and rise-time conditions for subtypes (#64, part of #55):
   `Subtype(..., peak=(lo, hi))` needs the segment's maximum in `[lo, hi)`
   (either end open), and `max_rise_s` with `rise_fraction` (default 0.95)
-  needs the segment to reach `y0 + rise_fraction * (peak - y0)` within
-  `max_rise_s` of its first sample, `y0` being its first finite sample, so
-  rise time works for a non-zero baseline. A segment with no finite sample
-  meets neither, and a segment must meet all of its subtype's conditions.
+  needs the segment to reach `y0 + rise_fraction * (top - y0)` within
+  `max_rise_s` of its first sample, `y0` being its first finite sample and
+  `top` its maximum, so rise time works for a non-zero baseline. A
+  segment with no finite sample meets neither, and a segment must meet all
+  of its subtype's conditions.
 - Event conditions for subtypes (#65, part of #55): `optimal_segments(...,
   events={name: boolean mask})` takes named masks with one value per
   sample, and `Subtype(..., events={name: True or False})` needs the
@@ -47,10 +50,11 @@
   first and last segments (default: any; a one-segment record must satisfy
   both), so a transient cut off by the record's edge need not be called a
   startup. `min_duration_s` / `max_duration_s` take subtypes, and a
-  subtype's and its state's bounds both bind; a subtype whose bounds leave
-  no duration is refused up front. `penalty` takes subtypes: a
-  subtype's value replaces its state's, and with `"bic"` (or when the
-  mapping does not name it) a subtype takes its state's.
+  subtype's and its state's bounds both bind; a subtype whose minimum or
+  its state's exceeds its maximum or its state's is refused up front.
+  `penalty` takes subtypes: a subtype's value replaces its state's, and
+  with `"bic"` (or when the mapping does not name it) a subtype takes its
+  state's.
   `OptimalSegmentation.penalty` lists every state's and then every
   subtype's penalty. The infeasibility error names `initial` and `final`
   when they are given.
@@ -75,6 +79,10 @@
 
 ### Changed
 
+- `optimal_segments` refuses a state whose own `min_duration_s` exceeds
+  its `max_duration_s` (`ValueError: state 'transient' can take no segment:
+  ...`), with or without subtypes. It used to accept such bounds without
+  subtypes and never use the state (#117).
 - A `penalty` mapping for `optimal_segments` that names something other
   than a state with a model or a subtype is now rejected, like every other
   constraint; it used to be ignored (#63).

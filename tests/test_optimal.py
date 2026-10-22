@@ -33,7 +33,9 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     """
     The best objective over every segmentation and every choice for each segment, by exhaustive depth-first
     search: a choice is a state without subtypes, or one subtype of a state that has some. It cuts a branch
-    only when it breaks a constraint, never on cost. Returns (objective, (bounds, choices)).
+    only when it breaks a constraint, never on cost. Returns (objective, optima): every segmentation within
+    1e-9 * max(1, |best|) of the best objective, each as (bounds, choices); no optima when none satisfies the
+    constraints.
 
     Constraints name states or subtypes. A choice's durations are its state's and its own (both bind), and
     its penalty is its own, else its state's. In ``transitions``, ``initial`` and ``final`` a state stands for
@@ -70,12 +72,11 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     def meets(sub, p, q):
         return sub is None or _meets_conditions(sub, t[p:q], y[p:q], _within(events, slice(p, q)))
 
-    best = [math.inf, None]
+    found = []  # (objective, path) of every complete segmentation
 
     def search(p, prev, counts, acc, path):
         if p == n:
-            if acc < best[0] - 1e-9:
-                best[:] = [acc, path]
+            found.append((acc, path))
             return
         for q in sorted(c for c in cuts if c > p):
             for name, st, sub in choices:
@@ -98,10 +99,23 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
                 search(q, name, new, acc + cost(st, p, q) + pen[name], path + [(p, q, name)])
 
     search(0, None, {}, 0.0, [])
-    if best[1] is None:
-        return math.inf, None
-    path = best[1]
-    return best[0], ([0] + [q for _, q, _ in path], tuple(name for _, _, name in path))
+    if not found:
+        return math.inf, []
+    best = min(acc for acc, _ in found)
+    return best, [([0] + [q for _, q, _ in path], tuple(name for _, _, name in path))
+                  for acc, path in found if acc <= best + 1e-9 * max(1.0, abs(best))]
+
+
+def _segmentation(result):
+    """A result's segmentation as ``_brute`` gives one: (bounds, choices), a choice being the subtype or state."""
+    return [0] + [s.stop for s in result.segments], tuple(s.subtype or s.state.value for s in result.segments)
+
+
+def _rank_sum(choices, subtypes):
+    """The sum of the choices' positions among their states' subtypes (0 for a state without subtypes)."""
+    names = list(subtypes)
+    rank = {k: sum(subtypes[o].state == sub.state for o in names[:i]) for i, (k, sub) in enumerate(subtypes.items())}
+    return sum(rank.get(c, 0) for c in choices)
 
 
 @pytest.mark.parametrize("seed", range(4))
@@ -119,10 +133,11 @@ def test_exact_matches_brute_force(seed, case):
         kw.update(transitions={"steady": ["transient"], "transient": ["steady"]}, max_counts={"steady": 2})
     elif case == "min_duration":
         kw.update(min_duration_s={"steady": 3.0, "transient": 2.0})
-    want_cost, _ = _brute(t, y, models, per=kw.get("per"), max_counts=kw.get("max_counts"),
-                          transitions=kw.get("transitions"), min_d=kw.get("min_duration_s"), penalty=0.5)
+    want_cost, optima = _brute(t, y, models, per=kw.get("per"), max_counts=kw.get("max_counts"),
+                               transitions=kw.get("transitions"), min_d=kw.get("min_duration_s"), penalty=0.5)
     got = optimal_segments(t, y, models, method="exact", **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    assert _segmentation(got) in optima  # its breakpoints and states, not only its objective
 
 
 def test_exact_matches_brute_force_with_a_nonlinear_model():
@@ -644,9 +659,12 @@ def test_exact_matches_brute_force_with_subtypes(seed, scheme, periods):
     if scheme in ("transient", "peak"):
         caps["low"] = 1
     kw = dict(per=3.0, max_counts=caps) if periods else dict(max_counts=caps)
-    want_cost, _ = _brute(t, y, models, penalty=0.5, subtypes=subtypes, **kw)
+    want_cost, optima = _brute(t, y, models, penalty=0.5, subtypes=subtypes, **kw)
     got = optimal_segments(t, y, models, method="exact", penalty=0.5, subtypes=subtypes, **kw)
     assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    # Its breakpoints and each segment's subtype: an optimum, and of equal objectives the least rank sum.
+    assert _segmentation(got) in optima
+    assert _rank_sum(_segmentation(got)[1], subtypes) == min(_rank_sum(names, subtypes) for _, names in optima)
     assert _independent_objective(t, y, models, got, 0.5) == pytest.approx(got.objective, rel=1e-9, abs=1e-9)
     # The result meets its subtypes' conditions and every cap.
     for s in got.segments:
@@ -705,7 +723,14 @@ def test_no_cap_can_be_dodged():
 @pytest.mark.parametrize("y, at", [([40.0] * 6, 40.0), ([39.5, 40.5] * 3, 40.0),
                                    ([1e9, 1e9, 40.0, 40.0, 40.0, 40.0], 40.0),
                                    ([0.7] * 53, 0.7), ([97.7379777971513] * 11, 97.7379777971513),
-                                   ([0.1, 0.3, 0.2], 0.2)])
+                                   ([0.1, 0.3, 0.2], 0.2),
+                                   # samples of other magnitudes than the threshold, below and above it
+                                   ([1.0, 3.0], 2.0), ([-4.0, 8.0], 2.0),
+                                   # means that need every bit of the samples' and the threshold's mantissas
+                                   ([1 + 2 ** -52, 1 + 3 * 2 ** -52], 1 + 2 * 2 ** -52),
+                                   ([2 ** -1074, 3 * 2 ** -1074], 2 ** -1073),
+                                   # an odd count times a full mantissa, which a float would round
+                                   ([1.0, 1 + 2 ** -52, 1 + 2 * 2 ** -52], 1 + 2 ** -52)])
 def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
     """The exact mean: ``fsum(y) / n`` rounds twice and falls below 0.7 for 53 samples of 0.7."""
     y = np.array(y)
@@ -716,6 +741,19 @@ def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
     want = "hot" if _exact_level_ok(y[r.segments[-1].slice], (at, None)) else "cold"
     assert r.segments[-1].subtype == want
     assert want == ("cold" if at == 0.2 else "hot")  # 0.1 + 0.3 + 0.2 is exactly below 0.6
+
+
+def test_a_mean_just_below_a_threshold_on_a_long_segment_takes_the_lower_subtype():
+    """
+    1999 samples of 0.7 and one a step below it: the mean is below 0.7 by about 6e-20. The count times
+    0.7's 53-bit mantissa is beyond a 64-bit integer, so the comparison must not be made in one.
+    """
+    y = np.array([0.7] * 1999 + [np.nextafter(0.7, 0.0)])
+    t = np.arange(float(len(y)))
+    subtypes = {"cold": rs.Subtype("steady", level=(None, 0.7)), "hot": rs.Subtype("steady", level=(0.7, None))}
+    r = optimal_segments(t, y, {"steady": 0}, method="subset", candidates=[0, len(y)], penalty=0, subtypes=subtypes)
+    assert not _exact_level_ok(y, (0.7, None))
+    assert [s.subtype for s in r.segments] == ["cold"]
 
 
 def test_refine_keeps_every_segment_within_its_level():
@@ -774,12 +812,19 @@ def test_subtype_validation():
     y = np.zeros(10)
     with pytest.raises(ValueError, match="Subtype state must be one of steady, transient, indeterminate; got 'warm'"):
         rs.Subtype("warm")
-    assert rs.Subtype("steady", level=np.array([1.0, 2.0])).level == (1.0, 2.0)  # a pair as an array
+    for pair in (np.array([1.0, 2.0]), pd.Series([1.0, 2.0]), [1.0, 2.0]):  # any ordered pair
+        assert rs.Subtype("steady", level=pair).level == (1.0, 2.0)
     for level in [(5.0, 1.0), (1.0, 1.0)]:
         with pytest.raises(ValueError, match=r"level lo \(\S+\) must be < Subtype level hi"):
             rs.Subtype("steady", level=level)
-    with pytest.raises(ValueError, match="level must be a pair"):
-        rs.Subtype("steady", level=40.0)
+    # a number, ragged pairs (which numpy cannot make an array of), unordered pairs, a 2 x 2 array
+    # a pair with no length (an iterator, a generator, a 0-d array), too few or too many items, bytes
+    for level in (40.0, (1, (2, 3)), ((1, 2), (3, 4, 5)), {1.0, 2.0}, {1.0: 2.0, 3.0: 4.0}, np.eye(2),
+                  iter([1.0, 2.0]), (v for v in (1.0, 2.0)), np.array(40.0), (), (1.0,), (1.0, 2.0, 3.0), b"ab", "ab"):
+        with pytest.raises(ValueError, match=re.escape(f"Subtype level must be a pair (lo, hi), got {level!r}")):
+            rs.Subtype("steady", level=level)
+    with pytest.raises(ValueError, match="Subtype peak must be a pair"):
+        rs.Subtype("steady", peak=(1, (2, 3)))
     with pytest.raises(ValueError, match="level lo must be finite"):
         rs.Subtype("steady", level=(float("nan"), None))
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -858,6 +903,10 @@ def _meets_conditions(sub, t, y, events=None):
             return False
     if sub.max_rise_s is not None:
         y0 = y[finite[0]]
+        # The cap is the rule, not a copy of the code: in exact arithmetic the threshold never exceeds the
+        # maximum, and the cap only absorbs rounding. Without it, with rise_fraction=1 about 1.7 % of
+        # sign-changing segments get a threshold just above their own maximum (2.3500000000000005 for 2.35),
+        # which no sample reaches.
         thr = min(y0 + sub.rise_fraction * (top - y0), top)
         first = next(i for i in finite if y[i] >= thr)
         if t[first] - t[0] > sub.max_rise_s:
@@ -1157,11 +1206,11 @@ def test_exact_matches_brute_force_with_constraints_naming_subtypes(seed):
     kw = _constraint_scheme(rng)
     caps = {"steady": 2, "up": 1} if seed % 2 else None
     per = 3.0 if seed % 3 == 0 else None
-    want_cost, want = _brute(t, y, models, per=per, max_counts=caps, subtypes=subtypes, **kw)
+    want_cost, optima = _brute(t, y, models, per=per, max_counts=caps, subtypes=subtypes, **kw)
     args = dict(method="exact", subtypes=subtypes, per=per, max_counts=caps, penalty=kw["penalty"],
                 transitions=kw.get("transitions"), initial=kw.get("initial"), final=kw.get("final"),
                 min_duration_s=kw.get("min_d"), max_duration_s=kw.get("max_d"))
-    if want is None:
+    if not optima:
         with pytest.raises(ValueError, match="no segmentation satisfies the constraints"):
             optimal_segments(t, y, models, **args)
         return
@@ -1224,10 +1273,20 @@ def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
     with pytest.raises(ValueError, match=re.escape(f"subtype 'hot' can take no segment: {culprit}")):
         optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, subtypes=dict(_LEVELS),
                          min_duration_s={lo: 50.0}, max_duration_s={hi: 40.0})
-    # A state's own bounds are as in 0.5.0: never refused, the state is just never used.
-    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
-                         min_duration_s={"transient": 50.0}, max_duration_s={"transient": 40.0})
-    assert {s.state for s in r.segments} == {ST}
+
+
+@pytest.mark.parametrize("subtypes", [None, dict(_LEVELS)])
+@pytest.mark.parametrize("state", ["steady", "transient"])
+def test_a_state_whose_own_durations_do_not_overlap_is_refused(state, subtypes):
+    """A state's own min_duration_s above its max_duration_s is refused, whether or not it has subtypes."""
+    t, y = _operating_day()
+    culprit = f"min_duration_s 50.0 s ({state}) > max_duration_s 40.0 s ({state})"
+    with pytest.raises(ValueError, match=re.escape(f"state {state!r} can take no segment: {culprit}")):
+        optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                         subtypes=subtypes, min_duration_s={state: 50.0}, max_duration_s={state: 40.0})
+    # Equal bounds leave one duration: accepted.
+    optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=5, penalty=1.0,
+                     subtypes=subtypes, min_duration_s={state: 40.0}, max_duration_s={state: 40.0})
 
 
 @pytest.mark.parametrize("b, want", [(0.5, "b"), (1.0, "a"), (1.5, "a")])
