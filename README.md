@@ -137,7 +137,7 @@ The slope uncertainty is pluggable (`method=`):
 
 The table gives Monte Carlo false-pass rates at the limit, for AR(1) noise on the
 block means. The nominal rate is 2.5 % for `"ar1"` and 2.3 % for `"nw"`. Reproduce it with
-`python tools/coverage_mc.py`:
+`PYTHONPATH=src python tools/coverage_mc.py`:
 
 | blocks in window | 10 | | | | 40 | | | | 90 | | | |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -175,7 +175,7 @@ to resolve the curve, is bounded by about `tau_max × |slope|`.
 Monte Carlo false-pass rates at the limit (the true remaining approach equal
 to the limit, AR(1) block-mean noise at 0.1 × the limit, `tau_max` = 2 τ),
 for windows spanning 0.5 to 8 τ; nominal 2.5 %. Reproduce it with
-`python tools/coverage_mc.py --asymptote`:
+`PYTHONPATH=src python tools/coverage_mc.py --asymptote`:
 
 | blocks, φ | 0.5 τ | 1 τ | 2 τ | 4 τ | 8 τ |
 |---|---|---|---|---|---|
@@ -439,7 +439,7 @@ for more. For example, fit `y = t` with constants: the best 2-segment split
 is at 0.5, the best 3-segment split at 1/3 and 2/3. So `subset` is exact
 only when the candidates contain the optimum.
 
-On a synthetic week at 1 Hz (`python tools/benchmark.py optimal`):
+On a synthetic week at 1 Hz (`PYTHONPATH=src python tools/benchmark.py optimal`):
 - `subset` takes about 1 s;
 - `refine` takes about 25 s with exponential transients, almost all of it in
   the exponential fits, and under 1 s with linear ones;
@@ -503,7 +503,7 @@ behind your back.
 `batch.run` loops over samples in Python. With 30 s blocks and 1 Hz data,
 expect a few tens of microseconds per criterion per sample (about 4 s for
 four hours of six drift criteria). The AR(1) drift test costs O(n) in the
-number of blocks, so long windows are affordable. `python tools/benchmark.py`
+number of blocks, so long windows are affordable. `PYTHONPATH=src python tools/benchmark.py`
 measures the scaling.
 
 ## References
@@ -537,12 +537,16 @@ tools/check.sh                      # what CI runs, fast: tests without the slow
 tools/check.sh tests/test_optimal.py -k infeasible  # one selection of those tests, no mypy or docs build
 python -m pytest                    # everything
 python -m pytest -m "not slow"      # skip the Monte Carlo calibration
-python tests/test_regression.py     # regenerate golden snapshots after an intended label change
-python tests/test_optimal_snapshot.py  # regenerate the best-fit segments snapshot after an intended change
+# After an intended change, regenerate a snapshot (run as a script, outside pytest, so name src/):
+PYTHONPATH=src python tests/test_regression.py        # golden labels
+PYTHONPATH=src python tests/test_optimal_snapshot.py  # best-fit segments
 ```
 
 Build a release from a clean checkout (`git status --ignored` shows nothing under `tests/`): the sdist ships every
 file under `tests/` that is on disk, tracked or not, and CI checks that only for its own builds.
+
+To run an unpacked sdist's tests against an installed rocksteady (as a packager would), pass `-o pythonpath=`:
+`pyproject.toml` otherwise puts the sdist's own `src/` first, and `tests/test_import_source.py` fails to say so.
 
 See [CHANGELOG.md](https://github.com/UT-Computational-NE/rocksteady/blob/main/CHANGELOG.md) for changes between versions.
 

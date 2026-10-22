@@ -13,7 +13,7 @@ approach at the window end equals the limit, with AR(1) block-mean noise,
 for each window length, autocorrelation and window span / tau; the
 criterion's ``tau_max`` is ``--tau-factor`` times the true tau.
 
-Usage: python tools/coverage_mc.py [--reps 3000] [--seed 0] [--asymptote]
+Usage: PYTHONPATH=src python tools/coverage_mc.py [--reps 3000] [--seed 0] [--asymptote]
 """
 
 import argparse

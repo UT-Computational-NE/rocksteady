@@ -5,7 +5,7 @@ Two seeded synthetic records, one per detector pattern, are run through
 ``batch.run`` and compared with stored labels and margin ratios. A change
 that alters labels fails here; if the change is intended, regenerate with
 
-    python tests/test_regression.py
+    PYTHONPATH=src python tests/test_regression.py
 
 and record the reason in CHANGELOG.md.
 """
