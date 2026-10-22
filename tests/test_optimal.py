@@ -3,6 +3,7 @@
 import dataclasses
 import itertools
 import math
+import pickle
 import re
 
 import numpy as np
@@ -29,7 +30,7 @@ def _sse(spec, t, y, state):
 
 
 def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None, penalty=0.0, positions=None,
-           subtypes=None, max_d=None, initial=None, final=None):
+           subtypes=None, max_d=None, initial=None, final=None, events=None):
     """
     The best objective over every segmentation and every choice for each segment, by exhaustive depth-first
     search: a choice is a state without subtypes, or one subtype of a state that has some. It cuts a branch
@@ -68,7 +69,7 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
         return sse[(st, p, q)]
 
     def meets(sub, p, q):
-        return sub is None or _meets_conditions(sub, t[p:q], y[p:q])
+        return sub is None or _meets_conditions(sub, t[p:q], y[p:q], _within(events, slice(p, q)))
 
     best = [math.inf, None]
 
@@ -832,8 +833,19 @@ def _exact_level_ok(y, level):
     return (level[0] is None or m >= Fraction(level[0])) and (level[1] is None or m < Fraction(level[1]))
 
 
-def _meets_conditions(sub, t, y):
-    """A segment's samples ``y`` at times ``t`` against every condition of ``sub``, sample by sample."""
+def _within(events, sl):
+    """Each event mask's part within the samples ``sl``."""
+    return {k: m[sl] for k, m in (events or {}).items()}
+
+
+def _meets_conditions(sub, t, y, events=None):
+    """
+    A segment's samples ``y`` at times ``t``, and its part of each event mask (``events``), against every
+    condition of ``sub``, sample by sample.
+    """
+    for name, want in sub.events or ():
+        if any(bool(f) for f in events[name]) != want:
+            return False
     finite = [i for i in range(len(y)) if np.isfinite(y[i])]
     if sub.level is not None and not _exact_level_ok(y, sub.level):
         return False
@@ -1227,3 +1239,198 @@ def test_a_subtypes_own_penalty_decides_before_declaration_order(b, want):
     r = optimal_segments(t, y, {"steady": 0}, method="exact", grid_s=5, penalty={"steady": 1.0, "b": b},
                          subtypes={"a": rs.Subtype("steady"), "b": rs.Subtype("steady")})
     assert len(r.segments) > 1 and {s.subtype for s in r.segments} == {want}
+
+
+# -- event conditions (#65) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("flag, driven", [(4, 1), (7, 1), (3, 0), (8, 2)])
+def test_a_segment_contains_a_flagged_sample_from_its_first_to_its_last_sample_only(flag, driven):
+    """Segments [0, 4), [4, 8), [8, 12): a flag at 4 or 7 lies in the middle one, at 3 or 8 just outside it."""
+    t = np.arange(12.0)
+    heater = np.zeros(12, dtype=bool)
+    heater[flag] = True
+    subtypes = {"driven": rs.Subtype("transient", events={"heater": True}),
+                "undriven": rs.Subtype("transient", events={"heater": False})}
+    r = optimal_segments(t, np.sin(t), {"transient": 1}, method="subset", candidates=[0, 4, 8, 12], penalty=0,
+                         subtypes=subtypes, events={"heater": heater})
+    assert [s.subtype for s in r.segments] == ["driven" if i == driven else "undriven" for i in range(3)]
+
+
+@pytest.mark.parametrize("seed", range(6))
+@pytest.mark.parametrize("periods", [False, True])
+def test_exact_matches_brute_force_with_events_on_two_masks(seed, periods):
+    rng = np.random.default_rng(800 + seed)
+    n = 7
+    t = np.arange(n, dtype=float)
+    y = np.where(t < rng.integers(2, 5), 0.0, 3.0) + rng.normal(0, 0.3, n)
+    events = {"heater": rng.random(n) < 0.25, "valve": rng.random(n) < 0.35}
+    if seed == 5:  # a flag on a non-finite sample: an event condition reads the mask, whatever the signal there
+        y[2] = np.nan
+        events["heater"][2] = True
+    a = float(rng.uniform(0.5, 2.5))
+    subtypes = {"heat_up": rs.Subtype("transient", events={"heater": True}),
+                "quiet": rs.Subtype("transient", events={"heater": False, "valve": False}),
+                "valved": rs.Subtype("steady", level=(a, None), events={"valve": True}),
+                "steady_other": rs.Subtype("steady")}
+    caps = {"heat_up": 1, "valved": 1, "steady": 2}
+    kw = dict(per=3.0, max_counts=caps) if periods else dict(max_counts=caps)
+    want_cost, _ = _brute(t, y, {"steady": 0, "transient": 1}, penalty=0.5, subtypes=subtypes,
+                          events=events, **kw)
+    got = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", penalty=0.5, subtypes=subtypes,
+                           events=events, **kw)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    for s in got.segments:
+        assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], _within(events, s.slice))
+    for name, cap in caps.items():
+        assert (got.counts[name] <= cap).all()
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_exact_matches_brute_force_with_events_and_constraints_naming_subtypes(seed):
+    """Event conditions with transitions, initial and final, durations, caps and penalties that name subtypes."""
+    rng = np.random.default_rng(seed)
+    n = 7
+    t = np.arange(n, dtype=float)
+    y = np.where(t < rng.integers(2, 5), 0.0, 3.0) + rng.normal(0, 0.3, n)
+    events = {"heater": rng.random(n) < 0.3, "valve": rng.random(n) < 0.3}
+    subtypes = {"heat_up": rs.Subtype("transient", events={"heater": True}),
+                "drift": rs.Subtype("transient", events={"heater": False}),
+                "cold": rs.Subtype("steady", level=(None, 1.5), events={"valve": False}), "hot": rs.Subtype("steady")}
+    kw = dict(transitions={"cold": ["heat_up", "drift"], "heat_up": ["hot"], "hot": ["drift", "hot"],
+                           "drift": ["cold", "hot"]},
+              initial=["cold", "hot"], final=["hot", "drift"], max_counts={"heat_up": 1},
+              penalty={"steady": 0.5, "transient": 0.5, "heat_up": 0.2})
+    models = {"steady": 0, "transient": 1}
+    want_cost, _ = _brute(t, y, models, subtypes=subtypes, events=events, min_d={"drift": 2.0}, **kw)
+    got = optimal_segments(t, y, models, method="exact", subtypes=subtypes, events=events,
+                           min_duration_s={"drift": 2.0}, **kw)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+
+
+def test_an_event_condition_reads_the_mask_whatever_the_signal():
+    """Decided on #65: a flag on a non-finite sample counts, even in a segment with no finite sample."""
+    t = np.arange(12.0)
+    y = np.sin(t)
+    y[4:8] = [np.nan, np.inf, np.nan, -np.inf]
+    heater = np.zeros(12, dtype=bool)
+    heater[5] = True
+    subtypes = {"driven": rs.Subtype("transient", events={"heater": True}),
+                "undriven": rs.Subtype("transient", events={"heater": False})}
+    r = optimal_segments(t, y, {"transient": 1}, method="subset", candidates=[0, 4, 8, 12], penalty=0,
+                         max_duration_s={"transient": 4.0}, subtypes=subtypes, events={"heater": heater})
+    assert [s.subtype for s in r.segments] == ["undriven", "driven", "undriven"]
+
+
+def test_a_heat_up_cap_of_one_merges_a_days_two_heat_ups():
+    """A two-stage heat-up: the heater switches on at 08:00 (20 to 50) and again at 09:00 (50 to 80)."""
+    idx = pd.date_range("2026-03-02", periods=24 * 60, freq="1min")
+    hour = (idx - idx[0]).total_seconds().to_numpy() / 3600
+    y = np.interp(hour, [0, 8, 8.5, 9, 9.5, 16, 17, 24], [20, 20, 50, 50, 80, 80, 20, 20])
+    y = y + np.random.default_rng(60).normal(0, 0.3, len(y))
+    events = {"heater_on": np.isin(hour, [8.0, 9.0]), "heater_off": hour == 16.0}
+    subtypes = {"heat_up": rs.Subtype("transient", events={"heater_on": True}),
+                "cool_down": rs.Subtype("transient", events={"heater_off": True}),
+                "plateau": rs.Subtype("steady", events={"heater_on": False, "heater_off": False})}
+    kw = dict(method="exact", grid_s=600, per="1D", penalty=100.0, subtypes=subtypes, events=events,
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+
+    def shape(r):
+        return [(idx[s.start].strftime("%H:%M"), s.subtype) for s in r.segments]
+
+    free = optimal_segments(idx, y, {"steady": 0, "transient": 1}, **kw)
+    assert shape(free) == [("00:00", "plateau"), ("08:00", "heat_up"), ("08:30", "plateau"), ("09:00", "heat_up"),
+                           ("09:30", "plateau"), ("16:00", "cool_down"), ("17:00", "plateau")]
+    capped = optimal_segments(idx, y, {"steady": 0, "transient": 1}, max_counts={"heat_up": 1}, **kw)
+    assert shape(capped) == [("00:00", "plateau"), ("08:00", "heat_up"), ("09:30", "plateau"),
+                             ("16:00", "cool_down"), ("17:00", "plateau")]
+    assert capped.counts["heat_up"].tolist() == [1] and capped.objective > free.objective
+
+
+@pytest.mark.parametrize("where", ["last of the rise", "first of the fall"])
+def test_refine_never_pushes_an_event_across_a_boundary(where):
+    """Without the subtypes, refine moves both transients' boundaries past these flagged samples."""
+    t, y, (up, down) = _startup_record()
+    cands = [0, up + 37, up + 300, down - 41, down + 150, len(y)]
+    switch = np.zeros(len(y), dtype=bool)
+    switch[up + 299 if where == "last of the rise" else down - 41] = True
+    events = {"switch": switch}
+    subtypes = {"driven": rs.Subtype("transient", events={"switch": True}),
+                "undriven": rs.Subtype("transient", events={"switch": False})}
+    kw = dict(candidates=cands, penalty=10.0, max_counts={"steady": 3, "transient": 2})
+    models = {"steady": 0, "transient": 1}
+    sub = optimal_segments(t, y, models, method="subset", subtypes=subtypes, events=events, **kw)
+    driven = [i for i, s in enumerate(sub.segments) if s.subtype == "driven"]
+    assert len(driven) == 1
+    for refine_s in (30.0, 120.0, 400.0):
+        ref = optimal_segments(t, y, models, method="refine", refine_s=refine_s, subtypes=subtypes, events=events, **kw)
+        assert ref.objective <= sub.objective
+        assert [s.subtype for s in ref.segments] == [s.subtype for s in sub.segments]
+        for s in ref.segments:
+            if s.subtype is not None:
+                assert _meets_conditions(subtypes[s.subtype], t[s.slice], y[s.slice], _within(events, s.slice))
+        free = optimal_segments(t, y, models, method="refine", refine_s=refine_s, **kw)
+        assert not switch[free.segments[driven[0]].slice].any()
+
+
+def test_event_validation():
+    heat_up = rs.Subtype("transient", events={"heater": np.True_})
+    assert heat_up.events == (("heater", True),) and rs.Subtype("transient", events={}).events is None
+    assert heat_up == rs.Subtype("transient", events={"heater": True})
+    both = [rs.Subtype("transient", events=dict(e)) for e in ([("a", True), ("b", False)], [("b", False), ("a", True)])]
+    assert both[0] == both[1] and hash(both[0]) == hash(both[1]) and dict(both[0].events) == {"a": True, "b": False}
+    assert pickle.loads(pickle.dumps(heat_up)) == heat_up  # plain data, for batch runs across processes
+    assert type(dict(heat_up.events)["heater"]) is bool  # bool, not np.bool_
+    stricter = dataclasses.replace(heat_up, max_rise_s=5.0)  # a value derived from another, as for level and peak
+    assert stricter.events == heat_up.events and rs.Subtype(**dataclasses.asdict(stricter)) == stricter
+    assert rs.Subtype("transient", events=[("heater", True)]) == heat_up  # the pairs it holds
+    with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\} or "
+                                         r"\(mask name, True or False\) pairs"):
+        rs.Subtype("transient", events=[("heater", True, 1)])
+    for twice in ([("heater", True), ("heater", False)], [("heater", True), ("heater", True)],
+                  {("heater", True), ("heater", False)}):  # a set's order would decide which one wins
+        with pytest.raises(ValueError, match="Subtype events names mask 'heater' twice"):
+            rs.Subtype("transient", events=twice)
+    for bad in (["heater"], "heater", True):
+        with pytest.raises(ValueError, match=r"Subtype events must be a mapping \{mask name: True or False\}"):
+            rs.Subtype("transient", events=bad)
+    for name in ("", 3):
+        with pytest.raises(ValueError, match="a Subtype events mask name must be a non-empty string"):
+            rs.Subtype("transient", events={name: True})
+    for bad in (1, "yes", None):
+        with pytest.raises(ValueError, match=r"Subtype events\['heater'\] must be True or False"):
+            rs.Subtype("transient", events={"heater": bad})
+
+    t = np.arange(10.0)
+    mask = np.zeros(10, dtype=bool)
+
+    def run(events, subtypes=None):
+        return optimal_segments(t, np.zeros(10), {"transient": 1}, method="exact", events=events,
+                                subtypes={"heat_up": heat_up} if subtypes is None else subtypes)
+
+    with pytest.raises(ValueError, match="subtype 'heat_up' needs event mask 'heater', which events does not include"):
+        run(None)
+    with pytest.raises(ValueError, match="subtype 'heat_up' needs event mask 'heater', which events does not include"):
+        run({"valve": mask})
+    with pytest.raises(ValueError, match=r"events must be a mapping \{name: boolean mask\}; give a single mask a name"):
+        run(mask)
+    with pytest.raises(ValueError, match="an event mask's name must be a non-empty string"):
+        run({"heater": mask, 3: mask})
+    for bad in (mask[:9], np.zeros((10, 1), dtype=bool)):
+        with pytest.raises(ValueError, match=r"events\['heater'\] must be a one-dimensional mask with one value "
+                                             r"per sample of t \(10\)"):
+            run({"heater": bad})
+    for bad in (mask.astype(int), mask.astype(float), [0] * 10):
+        with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean, got values of type"):
+            run({"heater": bad})
+    with pytest.raises(ValueError, match=r"events\['heater'\] must be boolean with no missing values, got 2 missing"):
+        run({"heater": pd.array([True, None, False, None] + [False] * 6, dtype="boolean")})
+    with pytest.raises(ValueError, match=r"events\['valve'\] must be boolean"):  # a mask no condition names
+        run({"heater": mask, "valve": mask.astype(int)})
+    r = run({"heater": list(mask), "valve": pd.Series(mask)}, subtypes={"heat_up": heat_up,
+                                                                       "other": rs.Subtype("transient")})
+    assert [s.subtype for s in r.segments] == ["other"] and list(r.info["events"]) == ["heater", "valve"]
+    given = np.zeros(10, dtype=bool)
+    r = run({"heater": given}, subtypes={"heat_up": heat_up, "other": rs.Subtype("transient")})
+    given[3] = True  # the caller reuses its mask: the result keeps the mask it used
+    assert not r.info["events"]["heater"].any()
