@@ -153,7 +153,7 @@ def test_false_pass_rate_with_partial_blocks(ratio):
     assert passes / reps <= 0.05
 
 
-# -- the current sample, block timing and input checks --------------------------------
+# -- the current sample, block timing, degenerate levels and inputs -------------------
 
 
 def test_remaining_approach_is_taken_at_the_current_sample():

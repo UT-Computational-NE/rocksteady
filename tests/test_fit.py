@@ -104,7 +104,7 @@ def test_sandwich_is_invariant_to_parameter_units():
             ref = u if ref is None else ref
             assert u == pytest.approx(ref, rel=1e-8)
         if method == "iid":
-            assert ref == pytest.approx(0.11947, rel=1e-4)  # a fixed reference: a change in the result fails here
+            assert ref == pytest.approx(0.11947, rel=1e-4)  # the uncertainty at unit scale, which rescaling must keep
 
 
 def test_sandwich_matches_dense_formula_when_full_rank():

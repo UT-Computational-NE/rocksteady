@@ -1218,7 +1218,7 @@ def test_initial_and_final_naming_every_state_change_nothing(subtypes):
 
 @pytest.mark.parametrize("lo, hi", [("hot", "steady"), ("steady", "hot"), ("hot", "hot")])
 def test_a_subtype_whose_durations_do_not_overlap_is_refused(lo, hi):
-    """Such a subtype could never be used, and its segments would silently go elsewhere: it is refused up front."""
+    """A subtype whose durations and its state's leave none could never be used: it is refused up front."""
     t, y = _operating_day()
     culprit = f"min_duration_s 50.0 s ({lo}) > max_duration_s 40.0 s ({hi})"
     with pytest.raises(ValueError, match=re.escape(f"subtype 'hot' can take no segment: {culprit}")):
