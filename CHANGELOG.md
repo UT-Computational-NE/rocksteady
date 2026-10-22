@@ -139,6 +139,10 @@
   `git ls-files tests` (#75).
 - A `FutureWarning` fails the test that raises it (`filterwarnings` in
   `pyproject.toml`) (#75).
+- pytest imports the checkout's own `src/` (`pythonpath` in
+  `pyproject.toml`), even where the environment's editable install points
+  at another checkout. CI's `build` job opts out (`-o pythonpath=`), so
+  the sdist's tests still run against the installed wheel (#99).
 
 ## 0.5.0
 

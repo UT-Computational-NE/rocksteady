@@ -89,11 +89,12 @@ jobs:
           /tmp/wheel-env/bin/pip install dist/*.whl pytest
           cd /tmp && /tmp/wheel-env/bin/python -c "import rocksteady; print(rocksteady.__version__)"
       # The sdist's tests (and their data) against the installed wheel, outside the source tree:
-      # no editable install, no PYTHONPATH, and pytest run as a script so the cwd is not on sys.path.
+      # no editable install, no PYTHONPATH, pytest run as a script so the cwd is not on sys.path, and
+      # `-o pythonpath=` so pytest does not put the sdist's src/ first (pyproject.toml does, for development).
       - name: Test the sdist against the wheel
         run: |
           mkdir /tmp/sdist && tar -xzf dist/*.tar.gz -C /tmp/sdist
           cd /tmp/sdist/rocksteady-*
           env -u PYTHONPATH /tmp/wheel-env/bin/python -c \
             "import rocksteady; f = rocksteady.__file__; print(f); assert '/tmp/wheel-env/' in f"
-          env -u PYTHONPATH /tmp/wheel-env/bin/pytest -m "not slow" -p no:cacheprovider
+          env -u PYTHONPATH /tmp/wheel-env/bin/pytest -m "not slow" -p no:cacheprovider -o pythonpath=

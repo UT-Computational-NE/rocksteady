@@ -16,7 +16,7 @@ Single-context: root `GLOSSARY.md` + `docs/adr/` (created lazily). See `docs/age
 
 ### Worktrees and branches
 
-Use one worktree per ticket: `git worktree add .claude/worktrees/feat-<n> -b feat/<n>-<slug> origin/main`. A stacked PR branches from its blocker's branch instead. The environment's editable install may point at another checkout, so run code with `tools/check.sh` or with `PYTHONPATH=src`, and install packages by name: `pip install -e .` in a worktree points that shared install at the worktree.
+Use one worktree per ticket: `git worktree add .claude/worktrees/feat-<n> -b feat/<n>-<slug> origin/main`. A stacked PR branches from its blocker's branch instead. The environment's editable install may point at another checkout. pytest imports the checkout's own `src/` (`pythonpath` in `pyproject.toml`); run other code (scripts, `python -c`) with `PYTHONPATH=src`, and install packages by name: `pip install -e .` in a worktree points that shared install at the worktree.
 
 ### Checks
 
