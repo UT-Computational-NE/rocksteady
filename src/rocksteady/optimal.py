@@ -143,7 +143,7 @@ a longer segment never costs less, whichever subtype could take it.
 import math
 from dataclasses import dataclass, field, replace
 from numbers import Real
-from typing import (Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol, Sequence,
+from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol, Sequence,
                     Tuple, Union, cast)
 
 import numpy as np
@@ -558,13 +558,15 @@ _STATE_NAMES = tuple(s.value for s in State)
 
 def _range(value, what: str) -> Tuple[Optional[float], Optional[float]]:
     """A half-open range ``(lo, hi)``, either end None (open); lo < hi when both are given."""
+    # Two items in order, each a scalar. The items are checked one by one: numpy makes no array of a ragged
+    # sequence such as (1, (2, 3)), and older numpy makes an object array of it, with a warning.
     try:
-        pair = not isinstance(value, (str, bytes)) and np.ndim(value) == 1 and len(value) == 2
-    except ValueError:  # numpy cannot make an array of a ragged sequence such as (1, (2, 3))
-        pair = False
-    if not pair:
+        items = None if isinstance(value, (str, bytes, Mapping, AbstractSet)) else list(value)
+    except TypeError:  # not iterable, such as a number
+        items = None
+    if items is None or len(items) != 2 or any(np.ndim(v) != 0 for v in items):
         raise ValueError(f"{what} must be a pair (lo, hi), got {value!r}")
-    lo, hi = (_v.optional_finite(v, f"{what} {end}") for v, end in zip(value, ("lo", "hi")))
+    lo, hi = (_v.optional_finite(v, f"{what} {end}") for v, end in zip(items, ("lo", "hi")))
     _v.ordered(lo, hi, f"{what} lo", f"{what} hi", strict=True)
     return lo, hi
 

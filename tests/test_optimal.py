@@ -796,11 +796,13 @@ def test_subtype_validation():
     y = np.zeros(10)
     with pytest.raises(ValueError, match="Subtype state must be one of steady, transient, indeterminate; got 'warm'"):
         rs.Subtype("warm")
-    assert rs.Subtype("steady", level=np.array([1.0, 2.0])).level == (1.0, 2.0)  # a pair as an array
+    for pair in (np.array([1.0, 2.0]), pd.Series([1.0, 2.0]), [1.0, 2.0]):  # any ordered pair
+        assert rs.Subtype("steady", level=pair).level == (1.0, 2.0)
     for level in [(5.0, 1.0), (1.0, 1.0)]:
         with pytest.raises(ValueError, match=r"level lo \(\S+\) must be < Subtype level hi"):
             rs.Subtype("steady", level=level)
-    for level in (40.0, (1, (2, 3)), ((1, 2), (3, 4, 5))):  # ragged pairs, which numpy cannot make an array of
+    # a number, ragged pairs (which numpy cannot make an array of), unordered pairs, a 2 x 2 array
+    for level in (40.0, (1, (2, 3)), ((1, 2), (3, 4, 5)), {1.0, 2.0}, {1.0: 2.0, 3.0: 4.0}, np.eye(2)):
         with pytest.raises(ValueError, match=re.escape(f"Subtype level must be a pair (lo, hi), got {level!r}")):
             rs.Subtype("steady", level=level)
     with pytest.raises(ValueError, match="Subtype peak must be a pair"):
