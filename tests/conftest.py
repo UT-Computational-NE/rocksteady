@@ -1,12 +1,12 @@
 """
-Processes the tests start (``python -c``, a script) import the rocksteady the tests import (#99).
+Set-up for every test: the processes tests start import the tests' rocksteady (#99), and a Pandas4Warning fails
+the test that raises it (#109).
 
-pytest's ``pythonpath`` puts this checkout's src/ first for the tests themselves; a child process starts
-from the environment, whose editable install may point at another checkout. Putting the tests' own
-rocksteady first on PYTHONPATH gives children src/ in a checkout, and the installed package when an
-sdist's tests run with ``-o pythonpath=``.
-
-A Pandas4Warning fails the test that raises it, where pandas defines the class (``pytest_configure``).
+Processes the tests start (``python -c``, a script) import the rocksteady the tests import. pytest's
+``pythonpath`` puts this checkout's src/ first for the tests themselves; a child process starts from the
+environment, whose editable install may point at another checkout. Putting the tests' own rocksteady first on
+PYTHONPATH gives children src/ in a checkout, and the installed package when an sdist's tests run with
+``-o pythonpath=``.
 """
 
 import os

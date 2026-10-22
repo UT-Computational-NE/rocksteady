@@ -117,15 +117,19 @@ def _read_golden(path):
     return pd.read_csv(path, keep_default_na=False, na_values=["nan", ""])
 
 
-def _assert_same_text(got, want):
-    """``limiting`` and ``forced_by`` hold the same text, a missing entry counting as ``""``.
+def _text(column):
+    """The column as text, a missing entry as ``""``.
 
     A golden column with no text reads as float64; filling a float column with ``""`` is deprecated (Pandas4Warning
-    from pandas 3.1), so each column becomes object first.
+    from pandas 3.1), so the column becomes object first.
     """
+    return column.astype(object).fillna("").astype(str).to_numpy()
+
+
+def _assert_same_text(got, want):
+    """``limiting`` and ``forced_by`` hold the same text, a missing entry counting as ``""``."""
     for col in ("limiting", "forced_by"):
-        np.testing.assert_array_equal(got[col].astype(object).fillna("").astype(str).to_numpy(),
-                                      want[col].astype(object).fillna("").astype(str).to_numpy(), err_msg=col)
+        np.testing.assert_array_equal(_text(got[col]), _text(want[col]), err_msg=col)
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -139,12 +143,13 @@ def test_golden(case):
         np.testing.assert_allclose(got[col].to_numpy(float), want[col].to_numpy(float), rtol=1e-9, equal_nan=True)
 
 
-def test_the_text_comparison_fails_when_the_text_differs():
+def test_the_text_comparison_matches_missing_text_and_nothing_else():
     """A golden column with no text reads as float64 NaN; it equals a column of missing text, and nothing else."""
     want = _read_golden(io.StringIO("label,limiting,forced_by\nsteady,a,\nsteady,,\n"))
     assert want["forced_by"].dtype == float
     _assert_same_text(pd.DataFrame({"limiting": ["a", None], "forced_by": [None, None]}), want)
-    for limiting, forced_by in ((["a", "b"], [None, None]), (["a", None], ["floor", None]), (["a", None], [None, "floor"])):
+    differing = ((["a", "b"], [None, None]), (["a", None], ["floor", None]), (["a", None], [None, "floor"]))
+    for limiting, forced_by in differing:
         with pytest.raises(AssertionError):
             _assert_same_text(pd.DataFrame({"limiting": limiting, "forced_by": forced_by}), want)
 
