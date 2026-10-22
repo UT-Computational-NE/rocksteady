@@ -422,10 +422,11 @@ detector's criteria.
 
 | Constraint | Meaning |
 |---|---|
-| `per`, `max_counts` | at most N segments of a state per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
-| `transitions` | which state may follow which; default any. This constrains the sequence of states only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
-| `min_duration_s`, `max_duration_s` | per state |
-| `penalty` | added per segment. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. |
+| `per`, `max_counts` | at most N segments of a state or subtype per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
+| `transitions` | which state or subtype may follow which; default any. A state's name stands for all of its subtypes. This constrains the sequence of segments only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
+| `initial`, `final` | the states or subtypes the record's first and last segments may take; default any |
+| `min_duration_s`, `max_duration_s` | per state or subtype; a subtype's and its state's both bind |
+| `penalty` | added per segment, per state or subtype; a subtype's replaces its state's. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. |
 
 | `method` | Candidate breakpoints | Result |
 |---|---|---|
