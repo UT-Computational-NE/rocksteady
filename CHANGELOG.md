@@ -124,6 +124,17 @@
   change alters, grep its name in the module docstring, `README.md`,
   `docs/source/` and the error messages, and check that each sentence is
   still true (#106).
+- `docs/agents/review.md`: probe with mutants. Break each added line once,
+  besides disabling each guard: drop each coercion, swap each reduction for
+  its neighbour, shift each index or bound by one; some test must go red.
+  Wait for CI only once `headRefOid` is the pushed SHA, as `mergeable` can
+  still describe the previous head; read checks with `--json name,bucket`
+  (#111).
+- `docs/agents/coding-standards.md` holds the judgement calls a reviewer
+  checks in every diff, and names the checks that decide the mechanical
+  rules; `docs/agents/review.md` points at it. It starts with two rules from
+  PR #104: a test pins the exact value a conversion produces, and a widened
+  input brings its degenerate cases (#92).
 
 ### Tests and CI
 
@@ -173,6 +184,17 @@
   names a review or a pull request by number (`review 1 of PR #83`,
   `PR #46`, `pull request #102`); a test says what it pins down. The
   existing ones are reworded (#106).
+- `tools/lint.sh` also runs pycodestyle on blank lines (E301, E302, E303,
+  E305, E306): two around a top-level definition, one before a method or a
+  nested definition, none in excess. pylint does not check these. Both
+  linters always run, so one run reports every finding. `pycodestyle` joins
+  the `lint` extra, the three hits it found are fixed, and CI's `lint` job
+  also runs `tests/test_lint_sh.py` (#111).
+- `tests/test_frozen_values.py`: every public frozen value (`Signal`,
+  `Timing`, `Subtype`, `Segment`), with every optional field set, rebuilds
+  equal and hashes alike through `dataclasses.replace`, its constructor
+  given every field, and pickle. A public frozen dataclass without a case
+  fails it (#111).
 
 ## 0.5.0
 
