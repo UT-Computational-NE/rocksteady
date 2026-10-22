@@ -110,6 +110,12 @@
   change alters, grep its name in the module docstring, `README.md`,
   `docs/source/` and the error messages, and check that each sentence is
   still true (#106).
+- `docs/agents/review.md`: probe with mutants. Break each added line once,
+  besides disabling each guard: drop each coercion, swap each reduction for
+  its neighbour, shift each index or bound by one; some test must go red.
+  Wait for CI only once `headRefOid` is the pushed SHA, as `mergeable` can
+  still describe the previous head; read checks with `--json name,bucket`
+  (#111).
 
 ### Tests and CI
 
