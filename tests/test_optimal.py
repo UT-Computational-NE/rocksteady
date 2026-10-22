@@ -34,7 +34,8 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     The best objective over every segmentation and every choice for each segment, by exhaustive depth-first
     search: a choice is a state without subtypes, or one subtype of a state that has some. It cuts a branch
     only when it breaks a constraint, never on cost. Returns (objective, optima): every segmentation within
-    1e-9 of the best objective, each as (bounds, choices); no optima when none satisfies the constraints.
+    1e-9 * max(1, |best|) of the best objective, each as (bounds, choices); no optima when none satisfies the
+    constraints.
 
     Constraints name states or subtypes. A choice's durations are its state's and its own (both bind), and
     its penalty is its own, else its state's. In ``transitions``, ``initial`` and ``final`` a state stands for
@@ -727,7 +728,9 @@ def test_no_cap_can_be_dodged():
                                    ([1.0, 3.0], 2.0), ([-4.0, 8.0], 2.0),
                                    # means that need every bit of the samples' and the threshold's mantissas
                                    ([1 + 2 ** -52, 1 + 3 * 2 ** -52], 1 + 2 * 2 ** -52),
-                                   ([2 ** -1074, 3 * 2 ** -1074], 2 ** -1073)])
+                                   ([2 ** -1074, 3 * 2 ** -1074], 2 ** -1073),
+                                   # an odd count times a full mantissa, which a float would round
+                                   ([1.0, 1 + 2 ** -52, 1 + 2 * 2 ** -52], 1 + 2 ** -52)])
 def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
     """The exact mean: ``fsum(y) / n`` rounds twice and falls below 0.7 for 53 samples of 0.7."""
     y = np.array(y)
@@ -738,6 +741,19 @@ def test_a_mean_exactly_at_a_threshold_takes_the_upper_subtype(y, at):
     want = "hot" if _exact_level_ok(y[r.segments[-1].slice], (at, None)) else "cold"
     assert r.segments[-1].subtype == want
     assert want == ("cold" if at == 0.2 else "hot")  # 0.1 + 0.3 + 0.2 is exactly below 0.6
+
+
+def test_a_mean_just_below_a_threshold_on_a_long_segment_takes_the_lower_subtype():
+    """
+    1999 samples of 0.7 and one a step below it: the mean is below 0.7 by about 6e-20. The count times
+    0.7's 53-bit mantissa is beyond a 64-bit integer, so the comparison must not be made in one.
+    """
+    y = np.array([0.7] * 1999 + [np.nextafter(0.7, 0.0)])
+    t = np.arange(float(len(y)))
+    subtypes = {"cold": rs.Subtype("steady", level=(None, 0.7)), "hot": rs.Subtype("steady", level=(0.7, None))}
+    r = optimal_segments(t, y, {"steady": 0}, method="subset", candidates=[0, len(y)], penalty=0, subtypes=subtypes)
+    assert not _exact_level_ok(y, (0.7, None))
+    assert [s.subtype for s in r.segments] == ["cold"]
 
 
 def test_refine_keeps_every_segment_within_its_level():
@@ -802,7 +818,9 @@ def test_subtype_validation():
         with pytest.raises(ValueError, match=r"level lo \(\S+\) must be < Subtype level hi"):
             rs.Subtype("steady", level=level)
     # a number, ragged pairs (which numpy cannot make an array of), unordered pairs, a 2 x 2 array
-    for level in (40.0, (1, (2, 3)), ((1, 2), (3, 4, 5)), {1.0, 2.0}, {1.0: 2.0, 3.0: 4.0}, np.eye(2)):
+    # a pair with no length (an iterator, a generator, a 0-d array), too few or too many items, bytes
+    for level in (40.0, (1, (2, 3)), ((1, 2), (3, 4, 5)), {1.0, 2.0}, {1.0: 2.0, 3.0: 4.0}, np.eye(2),
+                  iter([1.0, 2.0]), (v for v in (1.0, 2.0)), np.array(40.0), (), (1.0,), (1.0, 2.0, 3.0), b"ab", "ab"):
         with pytest.raises(ValueError, match=re.escape(f"Subtype level must be a pair (lo, hi), got {level!r}")):
             rs.Subtype("steady", level=level)
     with pytest.raises(ValueError, match="Subtype peak must be a pair"):

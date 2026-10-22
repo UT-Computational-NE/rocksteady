@@ -72,7 +72,8 @@ Every constraint can name subtypes as well as states. In ``transitions``,
 the allowed pairs or names are the union over all entries, so the operating
 sequence ``cold -> heat-up -> hot -> cool-down -> cold`` tells apart two
 transient subtypes with the same conditions by their neighbours. A
-subtype's durations and its state's both bind, and must overlap. A
+subtype's durations and its state's both bind: no minimum may exceed a
+maximum. A
 subtype's penalty replaces its state's; without one (and with ``"bic"``) it
 takes its state's.
 
@@ -143,8 +144,8 @@ a longer segment never costs less, whichever subtype could take it.
 import math
 from dataclasses import dataclass, field, replace
 from numbers import Real
-from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol, Sequence,
-                    Tuple, Union, cast)
+from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol,
+                    Sequence, Sized, Tuple, Union, cast)
 
 import numpy as np
 
@@ -558,11 +559,13 @@ _STATE_NAMES = tuple(s.value for s in State)
 
 def _range(value, what: str) -> Tuple[Optional[float], Optional[float]]:
     """A half-open range ``(lo, hi)``, either end None (open); lo < hi when both are given."""
-    # Two items in order, each a scalar. The items are checked one by one: numpy makes no array of a ragged
-    # sequence such as (1, (2, 3)), and older numpy makes an object array of it, with a warning.
+    # Two items in order, each a scalar, in a collection with a length (not an iterator). The items are checked
+    # one by one: numpy makes no array of a ragged sequence such as (1, (2, 3)), and older numpy makes an object
+    # array of it, with a warning.
     try:
-        items = None if isinstance(value, (str, bytes, Mapping, AbstractSet)) else list(value)
-    except TypeError:  # not iterable, such as a number
+        ordered = isinstance(value, Sized) and not isinstance(value, (str, bytes, Mapping, AbstractSet))
+        items = list(value) if ordered else None
+    except TypeError:  # a 0-d array has a length method but no length
         items = None
     if items is None or len(items) != 2 or any(np.ndim(v) != 0 for v in items):
         raise ValueError(f"{what} must be a pair (lo, hi), got {value!r}")
@@ -726,7 +729,10 @@ class _Levels:
         """
         Exact prefix sums of the finite samples, ``(P, e0)``: the sum over
         ``[p, q)`` is ``(P[q] - P[p]) * 2**e0``, with ``P`` Python integers.
-        Built on the first close comparison.
+        Built on the first close comparison. ``e0`` is the smallest exponent
+        of any nonzero sample, so the integers grow with the record's range
+        of exponents: one subnormal sample among values near 1 makes them
+        about 1100 bits wide.
         """
         if self._exact is None:
             m, e = _as_integers(np.where(self.ok, self.y, 0.0))
@@ -1554,7 +1560,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         Bounds on segment duration per state or subtype. A subtype's and its
         state's both bind. A state whose minimum exceeds its maximum, with
         or without subtypes, is refused (``ValueError``), as is a subtype
-        whose bounds and its state's leave no duration.
+        whose minimum or its state's exceeds its maximum or its state's.
     penalty : "bic", float, or mapping
         Added per segment (per state or subtype with a mapping; a state
         missing from it gets 0). A subtype's penalty replaces its state's;
