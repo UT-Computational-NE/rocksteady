@@ -59,6 +59,7 @@ def test_detector_checks_references_and_names():
         _det(disturbances=[rs.StepChange("z", 1.0)])
     with pytest.raises(ValueError, match="override 'floor_latch' refers to unknown signal 'y'"):
         _det(overrides=[rs.FloorLatch("y", 1.0)])
+
     class Nameless(rs.Criterion):  # a custom criterion that forgot its name
         name, signal = "", "x"
 

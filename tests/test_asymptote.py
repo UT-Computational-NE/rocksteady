@@ -266,7 +266,6 @@ def test_criteria_receive_the_times_their_block_means_were_measured_at():
     np.testing.assert_allclose(seen[-1], [-4.0 + 1.5, 0.0, 4.0 - 1.0 / 6.0])
 
 
-
 @pytest.mark.parametrize("noise_sd", [0.0, 1e-7, 1e-6])
 def test_block_masks_that_vary_between_blocks(noise_sd):
     """A centroid time is exact for a line, not for an exponential: the basis must average the valid samples."""
