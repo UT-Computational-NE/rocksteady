@@ -1,4 +1,4 @@
-"""tools/lint.sh fails on the mechanical misses it enforces: two blank lines around top-level definitions (#111)."""
+"""tools/lint.sh fails on the blank lines PEP 8 asks for around definitions (#111)."""
 
 import importlib.util
 import os
@@ -17,6 +17,8 @@ pytestmark = pytest.mark.skipif(
     reason="tools/lint.sh is not in the sdist, needs bash, and needs the lint extra")
 
 CLEAN = '"""A module."""\n\n\ndef f():\n    return 1\n\n\ndef g():\n    return 2\n'
+METHODS = 'class C:\n    def a(self):\n        return 1\n\n    def b(self):\n        return 2\n'
+NESTED = 'def h():\n    x = 1\n\n    def inner():\n        return x\n    return inner\n'
 
 
 def _lint(tmp_path, source):
@@ -32,7 +34,7 @@ def _lint(tmp_path, source):
 
 
 def test_a_clean_module_passes(tmp_path):
-    run = _lint(tmp_path, CLEAN)
+    run = _lint(tmp_path, CLEAN + "\n\n" + METHODS + "\n\n" + NESTED)
     assert run.returncode == 0, run.stdout + run.stderr
 
 
@@ -40,8 +42,10 @@ def test_a_clean_module_passes(tmp_path):
     (CLEAN.replace("\n\n\ndef g", "\n\ndef g"), "E302"),  # one blank line before a top-level def
     (CLEAN + "\nX = 1\n", "E305"),  # one blank line after the last one
     (CLEAN.replace("\n\n\ndef g", "\n\n\n\ndef g"), "E303"),  # three
-], ids=["one blank line before", "one blank line after", "three blank lines"])
-def test_a_top_level_definition_needs_two_blank_lines_around_it(tmp_path, source, code):
+    (METHODS.replace("\n\n    def b", "\n    def b"), "E301"),  # no blank line before a method
+    (NESTED.replace("\n\n    def inner", "\n    def inner"), "E306"),  # nor before a nested definition
+], ids=["one blank line before", "one blank line after", "three blank lines", "a method", "a nested definition"])
+def test_definitions_need_their_blank_lines(tmp_path, source, code):
     run = _lint(tmp_path, source)
     assert run.returncode != 0
     assert code in run.stdout + run.stderr
