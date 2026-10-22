@@ -86,8 +86,12 @@ earlier-declared subtype that accepts it, at the same penalty, without
 breaking a cap, a transition, or ``initial`` or ``final``.
 That sum also decides exact ties between different states or boundaries,
 so declaring subtypes can change which of two equally good segmentations
-is returned. ``refine`` keeps every segment's subtype and rejects a move
-after which a segment fails its subtype's conditions.
+is returned. ``refine`` keeps every segment's subtype while it moves
+boundaries, and rejects a move after which a segment fails its subtype's
+conditions. A moved segment can then meet an earlier-declared subtype's
+conditions, so ``refine`` types its final segments again with the same
+program, their breakpoints and states fixed and every constraint in force:
+the tie rule holds for every method.
 
 ``classify_segments`` gives subtypes to segments the analyst already has
 (the detector's, say) by the same definitions: the same program with the
@@ -139,8 +143,8 @@ a longer segment never costs less, whichever subtype could take it.
 import math
 from dataclasses import dataclass, field, replace
 from numbers import Real
-from typing import (Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple,
-                    Union, cast)
+from typing import (Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol, Sequence,
+                    Tuple, Union, cast)
 
 import numpy as np
 
@@ -410,18 +414,30 @@ class _Costs:
         return not self.reduced.get((st, p, q), False)
 
 
-class _NoCosts(_Costs):
+class _SegmentCosts(Protocol):
+    """What the program asks of segment costs: ``_Costs``, or ``_NoCosts`` for a fixed segmentation."""
+
+    n_fits: int
+
+    def is_fast(self, st: str) -> bool: ...
+
+    def vector(self, st: str, ps: np.ndarray, q: int) -> np.ndarray: ...
+
+    def cost(self, st: str, p: int, q: int) -> float: ...
+
+    def full_model(self, st: str, p: int, q: int) -> bool: ...
+
+
+class _NoCosts:
     """
-    The costs of a fixed segmentation (``classify_segments``): every segment
-    costs 0. With the breakpoints and states fixed, a segment's model cost is
-    the same whichever of its state's subtypes it takes, so only the
-    subtypes' ranks decide, as they do between equal objectives in the
-    optimiser.
+    The costs of a fixed segmentation (``classify_segments``, and ``refine``'s
+    result typed again): every segment costs 0. With the breakpoints and
+    states fixed, a segment's model cost is the same whichever of its
+    state's subtypes it takes, so only the penalties and then the subtypes'
+    ranks decide, as they do between equal objectives in the optimiser.
     """
 
-    def __init__(self):  # pylint: disable=super-init-not-called  # nothing to fit
-        self.n_fits = 0
-        self.n_direct = 0
+    n_fits = 0  # nothing to fit
 
     def is_fast(self, st: str) -> bool:
         return True
@@ -915,18 +931,18 @@ def _fixed_to(segments: Sequence[Segment], opt: _Option) -> Callable[[np.ndarray
     ``opt``'s test restricted to the given segments: ``[p, q)`` must be one
     of them, in ``opt``'s state, and meet ``opt``'s condition.
     """
-    start = {s.stop: (s.start, State(s.state).value) for s in segments}  # each segment, by where it stops
+    by_stop = {s.stop: (s.start, State(s.state).value) for s in segments}
 
-    def fixed_to(ps: np.ndarray, q: int) -> np.ndarray:
+    def accepts(ps: np.ndarray, q: int) -> np.ndarray:
         ps = np.asarray(ps, dtype=np.int64)
-        p, st = start.get(q, (-1, None))
+        p, st = by_stop.get(q, (-1, None))
         out = (ps == p) & (st == opt.state)
         keep = np.flatnonzero(out)
         if len(keep) and opt.accepts is not _accept_all:
             out[keep] = opt.accepts(ps[keep], q)
         return out
 
-    return fixed_to
+    return accepts
 
 
 @dataclass(frozen=True)
@@ -954,12 +970,12 @@ class _Problem:
                  max_counts: Optional[Mapping[str, int]] = None,
                  transitions: Optional[Mapping[str, Sequence[str]]] = None,
                  initial_final: Optional[Mapping[str, Sequence[str]]] = None,
-                 fixed: Optional[Sequence[Segment]] = None):
+                 fixed_segments: Optional[Sequence[Segment]] = None):
         self.ts, self.y, self.idx = ts, y, idx
-        # ``fixed``: segments covering the record, whose breakpoints and states the program keeps; it only types them.
-        self.fixed = fixed is not None
-        if fixed is not None:
-            options = [replace(opt, accepts=_fixed_to(fixed, opt)) for opt in options]
+        # Segments covering the record, whose breakpoints and states the program keeps: it only types them.
+        self.fixed_segments = fixed_segments
+        if fixed_segments is not None:
+            options = [replace(opt, accepts=_fixed_to(fixed_segments, opt)) for opt in options]
         # The caller's caps and transitions, as given: the infeasibility error names them.
         self.given_caps, self.given_transitions = max_counts, transitions
         self.given_initial_final = dict(initial_final or {})  # when given
@@ -975,7 +991,7 @@ class _Problem:
         self.by_state: Dict[str, List[int]] = {}
         for o, opt in enumerate(self.options):
             self.by_state.setdefault(opt.state, []).append(o)
-        self.costs = _NoCosts() if self.fixed else _Costs(ts, y, models, list(self.by_state))
+        self.costs: _SegmentCosts = _NoCosts() if fixed_segments is not None else _Costs(ts, y, models, list(self.by_state))
         # Over a state's options: the longest duration allowed (where the cost scan stops), and the smallest
         # penalty (so the pruning bound holds for every option).
         self.state_max_d = {st: max(options[o].max_d for o in members) for st, members in self.by_state.items()}
@@ -1067,7 +1083,8 @@ class _Problem:
         if self.costs.is_fast(st):
             return np.where(okd, self.costs.vector(st, starts[:k], q), math.inf)
         if surrogate:  # cheap constant-fit costs, only to find a feasible solution
-            return np.where(okd, _poly0(self.costs, starts[:k], q), math.inf)
+            # Only a model that is not fast has a surrogate, and only _Costs has such models.
+            return np.where(okd, _poly0(cast(_Costs, self.costs), starts[:k], q), math.inf)
         C = np.full(k, math.inf)
         max_d, min_pen = self.state_max_d[st], self.state_min_pen[st]
         for j in range(k - 1, -1, -1):  # growing segments: costs never decrease, so stop at the bound
@@ -1197,7 +1214,7 @@ class _Problem:
         given = self.given_transitions
         trans = "any" if given is None else {a: sorted(set(b)) for a, b in given.items()}
         initial_final = "".join(f", {what}={names}" for what, names in self.given_initial_final.items())
-        if self.fixed:  # classify_segments: no counts or durations, and the segments are the caller's
+        if self.fixed_segments is not None:  # classify_segments: no counts or durations; the caller's segments
             return (f"these segments cannot be typed: no choice of subtypes satisfies the transitions, first and "
                     f"last segments and the subtypes' conditions: none can continue from {at}{unit} (sample "
                     f"{stuck}), in {where}. In force: transitions={trans}{initial_final}.")
@@ -1221,15 +1238,20 @@ class _Problem:
         if np.isfinite(C[0]) and self.tgtB[o] >= 0 and self.may_start[o]:
             t_ = self.tgtB[o]
             best_v[t_], best_r[t_], best[t_] = C[0], r_o, (0, -1, -1)
-        # From a previous segment ending at B[j], j >= 1.
-        if k > 1:
-            V = F[1:k] + C[1:k, None, None]  # (k - 1, O, L)
+        # From a previous segment ending at B[j], j >= 1. Only a start with a finite cost can win, so when some are
+        # infinite only the others are scanned, in order (one, for a fixed segmentation).
+        finite = np.isfinite(C[1:k])
+        js = np.arange(1, k) if finite.all() else np.flatnonzero(finite) + 1
+        rows = slice(1, k) if len(js) == k - 1 else js  # a slice is a view: no copy of F when every start can win
+        if len(js):
+            V = F[rows] + C[rows, None, None]  # (len(js), O, L)
             V[:, ~self.allowed[:, o], :] = math.inf
-            for case, mask in (("A", same[1:] & ~spans[1:]), ("B", ~same[1:]), ("C", same[1:] & spans[1:])):
+            sm, sp_ = same[rows], spans[rows]
+            for case, mask in (("A", sm & ~sp_), ("B", ~sm), ("C", sm & sp_)):
                 if not mask.any():
                     continue
-                arg, vmin, rmin = _lexargmin(V[mask], R[1:k][mask])  # over j, for each (option, layer)
-                jidx = np.flatnonzero(mask)[arg] + 1
+                arg, vmin, rmin = _lexargmin(V[mask], R[rows][mask])  # over j, for each (option, layer)
+                jidx = js[mask][arg]
                 for l in range(L):
                     if case == "A":
                         t_ = self.tgtA[o, l]
@@ -1598,6 +1620,13 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             gaps = np.diff(ts[np.minimum(B, n - 1)])
             refine_s = 0.5 * float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 0.0
         bounds = prob.refine(bounds, opts, float(refine_s))
+        if subtypes:
+            # A moved segment can meet an earlier-declared subtype's conditions: type the final segments again,
+            # by the same program with their breakpoints and states fixed, under every constraint.
+            fixed = [Segment(bounds[i], bounds[i + 1], State(options[o].state)) for i, o in enumerate(opts)]
+            retype = _Problem(ts, y, idx, models, options, counters, allowed, may_start, may_end, columns, per,
+                              period_origin, max_counts, transitions, initial_final, fixed_segments=fixed)
+            _, opts = retype.solve(np.asarray(bounds, dtype=np.int64), prune=False)
     objective, sse = prob.total(bounds, opts)
     segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state), subtype=options[o].subtype)
             for i, o in enumerate(opts)]
@@ -1632,10 +1661,10 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
     conditions is told apart from another by its neighbours, as in the
     optimiser. Count caps, durations and penalties constrain the
     optimiser's choice of segments, not what a subtype means, so there are
-    none here. On the segments of an ``"exact"`` or ``"subset"`` result it
-    returns the optimiser's subtypes when those constraints name states
-    only; a cap on a subtype, say, can make the optimiser put a segment in
-    a catch-all that this gives the capped subtype.
+    none here. On the optimiser's own segments, by any method, it returns
+    the optimiser's subtypes when those constraints name states only; a
+    cap on a subtype, say, can make the optimiser put a segment in a
+    catch-all that this gives the capped subtype.
 
     Parameters
     ----------
@@ -1681,7 +1710,7 @@ def classify_segments(t, y, segments: Sequence[Segment], *, subtypes: Mapping[st
         states, no_penalty, max_counts=None, transitions=transitions, min_duration_s=None, max_duration_s=None,
         subtypes=subs, conditions=_Conditions(ts, y, masks), initial=initial, final=final)
     prob = _Problem(ts, y, idx, {}, options, counters, allowed, may_start, may_end, columns, per=None,
-                    period_origin=None, transitions=transitions, initial_final=initial_final, fixed=segs)
+                    period_origin=None, transitions=transitions, initial_final=initial_final, fixed_segments=segs)
     _, opts = prob.solve(np.array([0] + [s.stop for s in segs], dtype=np.int64), prune=False)
     return [replace(s, subtype=options[o].subtype) for s, o in zip(segs, opts)]
 

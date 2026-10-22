@@ -98,7 +98,9 @@ def test_on_the_optimisers_own_segments_it_returns_the_optimisers_subtypes(seed)
     subtypes = _random_subtypes(rng)
     kw = _random_constraints(rng, ["steady", "transient", *subtypes])
     sequence = {k: kw[k] for k in ("transitions", "initial", "final") if k in kw}
-    method = dict(method="exact") if seed % 2 else dict(method="subset", candidates=sorted(rng.choice(n, 4)))
+    cands = sorted(rng.choice(n, 4))
+    method = [dict(method="exact"), dict(method="subset", candidates=cands),
+              dict(method="refine", candidates=cands, refine_s=2.0)][seed % 3]
     try:
         r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, subtypes=subtypes, events=events, **method, **kw)
     except ValueError as e:
@@ -192,3 +194,43 @@ def test_a_subtype_cap_binds_the_optimiser_but_not_classification():
     assert [s.subtype for s in r.segments if s.state == ST] == ["cold", "other", "cold", "hot"]
     got = rs.classify_segments(t, y, r.segments, subtypes=subtypes)
     assert [s.subtype for s in got if s.state == ST] == ["cold", "hot", "cold", "hot"]
+
+
+def _walk(seed, n=60):
+    rng = np.random.default_rng(seed)
+    t = np.arange(float(n))
+    return t, np.cumsum(rng.normal(0, 0.4, n)), sorted(rng.choice(np.arange(1, n), 5, replace=False).tolist())
+
+
+WALK_SUBTYPES = {"cold": rs.Subtype("steady", level=(None, 2.5)), "hot": rs.Subtype("steady", level=(2.0, None)),
+                 "up": rs.Subtype("transient", peak=(2.5, None)), "other": rs.Subtype("transient")}
+
+
+def test_refine_retypes_a_moved_segment_that_an_earlier_subtype_now_accepts():
+    """Decided on #66: moved to [34, 53), the middle transient reaches 2.5, so it takes up, declared first."""
+    t, y, cands = _walk(16)
+    r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, method="refine", candidates=cands, refine_s=6,
+                            penalty=1.0, subtypes=WALK_SUBTYPES)
+    assert [(s.start, s.stop, s.subtype) for s in r.segments] == [(0, 34, "other"), (34, 53, "up"), (53, 60, "up")]
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_on_refines_own_segments_it_returns_refines_subtypes(seed):
+    t, y, cands = _walk(seed)
+    r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, method="refine", candidates=cands, refine_s=6,
+                            penalty=1.0, subtypes=WALK_SUBTYPES)
+    got = rs.classify_segments(t, y, r.segments, subtypes=WALK_SUBTYPES)
+    assert [s.subtype for s in got] == [s.subtype for s in r.segments]
+
+
+@pytest.mark.parametrize("constraint, want", [
+    (dict(max_counts={"up": 1}), [(0, 34, "other"), (34, 53, "other"), (53, 60, "up")]),
+    (dict(transitions={"steady": ["transient"], "other": ["steady", "up"], "up": ["steady"]}),
+     [(0, 18, "other"), (18, 34, "cold"), (34, 53, "other"), (53, 60, "up")]),
+])
+def test_refine_retypes_its_segments_under_every_constraint(constraint, want):
+    """[34, 53) reaches 2.5, but up is capped at one, or may not be followed by up: it stays other."""
+    t, y, cands = _walk(16)
+    r = rs.optimal_segments(t, y, {"steady": 0, "transient": 1}, method="refine", candidates=cands, refine_s=6,
+                            penalty=1.0, subtypes=WALK_SUBTYPES, **constraint)
+    assert [(s.start, s.stop, s.subtype) for s in r.segments] == want
