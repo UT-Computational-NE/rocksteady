@@ -320,11 +320,16 @@ def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatc
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
-def test_a_nested_run_in_a_timed_out_mutant_restores_its_own_file(tmp_path):
-    """The group gets SIGTERM before SIGKILL, so a run of the tool that a mutant's test started restores its file."""
+@pytest.mark.parametrize("stubborn", [False, True], ids=["plain", "a child ignoring SIGTERM"])
+def test_a_nested_run_in_a_timed_out_mutant_restores_its_own_file(tmp_path, stubborn):
+    """
+    The group gets SIGTERM before SIGKILL, so a run of the tool that a mutant's test started restores its file.
+    Sent SIGTERM, that run kills its own group at once, so a child that ignores SIGTERM cannot hold it up.
+    """
     inner = tmp_path / "inner"
     inner.mkdir()
-    inner_spec = _project(inner, [SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
+    tests = CHILD_TEST.format("time.sleep(60)") if stubborn else SLOW_TEST.format(False)
+    inner_spec = _project(inner, [SLOW], calc=SLOW_CALC, tests=tests)
     nested = ("import subprocess\nimport sys\nimport time\n\nimport calc\n\n\ndef test_nested():\n"
               "    if calc.MUTATED:\n"
               f"        subprocess.Popen([sys.executable, {MUTATE!r}, {str(inner_spec)!r}], cwd={str(inner)!r})\n"
@@ -336,3 +341,5 @@ def test_a_nested_run_in_a_timed_out_mutant_restores_its_own_file(tmp_path):
     while (inner / "calc.py").read_text() != SLOW_CALC and time.monotonic() < deadline:
         time.sleep(0.1)
     assert (inner / "calc.py").read_text() == SLOW_CALC
+    if stubborn:
+        assert _gone(int((inner / "child.pid").read_text()))

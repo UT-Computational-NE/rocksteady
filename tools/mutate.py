@@ -15,12 +15,17 @@ Mutation probe: break a file one mutant at a time and check that the tests notic
 
 For each mutant in turn, the tool replaces ``old`` with ``new``, runs ``python -m pytest *SELECT`` with this
 interpreter, and writes the file back byte for byte, with its modification time, also when pytest cannot collect
-or the run is interrupted (a second Ctrl-C waits for the restore). pytest runs in its own process group, which
-is ended after each run, so no process a test started outlives it. The file's cached bytecode is deleted first
-and the runs write none, so no mutant can run as a cached original. A mutant is red when pytest exits non-zero or times out (a hanging suite fails in CI
-too), and survived when it passes. The report, on stdout, has one line per mutant: red (with the first failing
-test), survived, or survived and marked equivalent; errors go to stderr. A second run on the same file is
-refused while one is running; run no other tests in the same checkout meanwhile, or they test the mutant.
+or the run is interrupted (a second Ctrl-C waits for the restore). The file's cached bytecode is deleted first
+and the runs write none, so no mutant can run as a cached original. A mutant is red when pytest exits non-zero
+or times out (a hanging suite fails in CI too), and survived when it passes. The report, on stdout, has one
+line per mutant: red (with the first failing test), survived, or survived and marked equivalent; errors go to
+stderr. A second run on the same file is refused while one is running; run no other tests in the same checkout
+meanwhile, or they test the mutant.
+
+pytest runs in its own process group, which the tool ends after each run, so no process a test started outlives
+the run. After a timeout or Ctrl-C the group gets SIGTERM and 5 s to end (a run of this tool inside it restores
+its own file) before SIGKILL. When the tool is itself sent SIGTERM (by such an outer run, say), it kills its
+group at once, so that it restores its file well inside the outer run's 5 s.
 
 Exit status: 0 when every mutant is red or marked equivalent; 1 when one survived unmarked; 2 when the spec is
 refused (malformed, or a mutant that cannot run: an ``old`` matching zero times or more than once, a repeated
@@ -151,10 +156,19 @@ def _drop_bytecode(path):
             os.remove(pyc)
 
 
-def _end(proc):
+class _Ended(KeyboardInterrupt):
+    """SIGTERM: this run is being ended (by an outer run, say), and has only that run's grace to restore."""
+
+
+def _ended(signum, frame):
+    raise _Ended
+
+
+def _end(proc, grace=5.0):
     """
-    End pytest, if it is still running, and every process its tests started (its own process group): SIGTERM
-    first, so that a nested tools/mutate.py run restores its file, then SIGKILL for whatever is left.
+    End pytest, if it is still running, and every process its tests started (its own process group): SIGTERM,
+    so that a nested tools/mutate.py run restores its file, then after ``grace`` seconds (at once, for 0) SIGKILL
+    for whatever is left.
     """
     if not hasattr(os, "killpg"):  # Windows: no process groups
         proc.kill()
@@ -167,7 +181,7 @@ def _end(proc):
     except ended:
         proc.wait()
         return
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + grace
     while time.monotonic() < deadline:  # the whole group, not only pytest: a nested run may still be restoring
         proc.poll()  # reap pytest, so that it does not linger in the group
         try:
@@ -197,7 +211,10 @@ def _run(select, limit):
         except subprocess.TimeoutExpired:
             _end(proc)
             return None, ""
-        except BaseException:  # Ctrl-C or SIGTERM: end the group, then let it unwind
+        except _Ended:  # SIGTERM: kill the group at once, to restore the file within an outer run's grace
+            _end(proc, grace=0.0)
+            raise
+        except BaseException:  # Ctrl-C: end the group, then let it unwind
             _end(proc)
             raise
         _end(proc)  # pytest has ended; a process one of its tests left running has not
@@ -230,7 +247,7 @@ def _verdict(code, output, limit):
 
 def main(argv):
     # SIGTERM, like Ctrl-C, unwinds through the finally below, so the file is restored.
-    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, _ended)
     if len(argv) != 1:
         _refuse("usage: python tools/mutate.py SPEC.py")
     path, select, mutants, given = _load(argv[0])
