@@ -143,18 +143,21 @@ def test_golden(case):
         np.testing.assert_allclose(got[col].to_numpy(float), want[col].to_numpy(float), rtol=1e-9, equal_nan=True)
 
 
-@pytest.mark.parametrize("empty, other", [("limiting", "forced_by"), ("forced_by", "limiting")])
-def test_a_golden_column_without_text_equals_missing_text_and_fails_on_text_in_any_row(empty, other):
+@pytest.mark.parametrize("textless, other", [("limiting", "forced_by"), ("forced_by", "limiting")])
+def test_a_golden_column_without_text_equals_missing_text_and_any_text_against_it_fails(textless, other):
     """A golden column with no text reads as float64 NaN: a column of missing text equals it, and text in any one row
-    of it fails the comparison."""
-    want = _read_golden(io.StringIO(f"label,{empty},{other}\nsteady,,a\nsteady,,\n"))
-    assert want[empty].dtype == np.float64
-    _assert_same_text(pd.DataFrame({empty: [None, None], other: ["a", None]}), want)
-    for row in range(2):
-        text = [None, None]
+    of it fails the comparison. Beside it, a golden column with text fails on other text."""
+    want = _read_golden(io.StringIO(f"label,{textless},{other}\nsteady,,a\nsteady,,\n"))
+    assert want[textless].dtype == np.float64
+    other_text = ["a", None]
+    _assert_same_text(pd.DataFrame({textless: [None] * len(want), other: other_text}), want)
+    for row in range(len(want)):
+        text = [None] * len(want)
         text[row] = "floor"
-        with pytest.raises(AssertionError, match=empty):
-            _assert_same_text(pd.DataFrame({empty: text, other: ["a", None]}), want)
+        with pytest.raises(AssertionError, match=textless):
+            _assert_same_text(pd.DataFrame({textless: text, other: other_text}), want)
+    with pytest.raises(AssertionError, match=other):
+        _assert_same_text(pd.DataFrame({textless: [None] * len(want), other: ["b", None]}), want)
 
 
 def test_golden_cases_exercise_every_label():
