@@ -178,6 +178,12 @@
   `git ls-files tests` (#75).
 - A `FutureWarning` fails the test that raises it (`filterwarnings` in
   `pyproject.toml`) (#75).
+- A pandas `Pandas4Warning`, which subclasses `DeprecationWarning` and so
+  escapes the `FutureWarning` filter, fails the test that raises it too,
+  where pandas defines it (3.0 and later; `tests/conftest.py` adds the
+  filter). The golden comparison in `tests/test_regression.py` casts its
+  text columns to object before filling a missing entry with `""`, as
+  pandas 3.1 asks of a column without text, which reads as float64 (#109).
 - pytest imports the checkout's own `src/` (`pythonpath` in
   `pyproject.toml`; the `test` extra needs `pytest>=7`), even where the
   environment's editable install points at another checkout, and so do
