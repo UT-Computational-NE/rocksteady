@@ -42,7 +42,7 @@ def test_a_process_a_test_starts_imports_the_same_rocksteady():
     assert run.stdout.strip() == rocksteady.__file__
 
 
-def _pytest(*args, env):
+def _run_pytest(*args, env):
     """pytest run in a child process with this checkout's config and ``env``."""
     env = dict(env)
     env.pop("PYTEST_ADDOPTS", None)  # this run's own pytest options, not the outer run's
@@ -59,7 +59,7 @@ def _pytest_with_a_decoy_first(tmp_path, target):
     decoy = tmp_path / "decoy" / "rocksteady"
     decoy.mkdir(parents=True)
     (decoy / "__init__.py").write_text("")
-    return _pytest(str(target), env=dict(os.environ, PYTHONPATH=str(tmp_path / "decoy")))
+    return _run_pytest(str(target), env=dict(os.environ, PYTHONPATH=str(tmp_path / "decoy")))
 
 
 @checkout_only
@@ -86,16 +86,22 @@ def test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_instal
 
 def test_the_checkout_only_tests_run_in_a_checkout_and_are_skipped_in_an_sdist(tmp_path):
     """
-    Every test marked ``checkout_only`` runs in a checkout and is skipped in an sdist, and the sdist's own test
-    the other way round. Only the checkout-only tests check the conftest's PYTHONPATH under another install, so a
-    checkout must run each of them. ``--setup-only`` applies each test's skip without running it.
+    The three checkout-only tests, and no others, are marked ``checkout_only``; each runs in a checkout and is
+    skipped in an sdist, and the sdist's own test the other way round. Only the checkout-only tests check the
+    conftest's PYTHONPATH under another install, so a checkout must run each of them. ``--setup-only`` applies
+    each test's skip without running it.
     """
+    want = ["test_the_tests_import_the_checkouts_own_src",
+            "test_pytest_imports_the_checkouts_own_src_over_another_install",
+            "test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_install"]
+    marked = sorted(name for name, f in globals().items()
+                    if name.startswith("test_") and checkout_only.mark in getattr(f, "pytestmark", []))
+    assert marked == sorted(want)
     report = tmp_path / "report.xml"
-    run = _pytest("--setup-only", f"--junitxml={report}", __file__, env=os.environ)
+    # The skips depend only on PKG-INFO, and the child runs no test, so it needs none of the outer run's options
+    # (an sdist's `-o pythonpath=`).
+    run = _run_pytest("--setup-only", f"--junitxml={report}", __file__, env=os.environ)
     assert run.returncode == 0, run.stdout + run.stderr
     skipped = {case.get("name"): case.find("skipped") is not None for case in ET.parse(report).iter("testcase")}
-    marked = ["test_the_tests_import_the_checkouts_own_src",
-              "test_pytest_imports_the_checkouts_own_src_over_another_install",
-              "test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_install"]
-    assert {name: skipped[name] for name in marked} == {name: IN_SDIST for name in marked}
-    assert skipped["test_an_sdists_tests_import_the_installed_package"] is not IN_SDIST
+    assert {name: skipped.get(name) for name in want} == {name: IN_SDIST for name in want}
+    assert skipped.get("test_an_sdists_tests_import_the_installed_package") is (not IN_SDIST)
