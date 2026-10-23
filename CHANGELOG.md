@@ -211,6 +211,17 @@
   equal and hashes alike through `dataclasses.replace`, its constructor
   given every field, and pickle. A public frozen dataclass without a case
   fails it (#111).
+- `tools/mutate.py SPEC.py` runs a mutation probe (#101). A Python spec
+  names the file, the pytest selection and the mutants (literal `old` →
+  `new`, each `old` matching exactly once, or the spec is refused before
+  any test runs). The tool runs the selection once per mutant and restores
+  the file byte for byte after each, also on Ctrl-C. It reports each mutant
+  red or survived, and exits non-zero when an unmarked mutant survives.
+  A mutant whose tests hang is stopped after a timeout (`TIMEOUT`, or ten
+  times the unmutated run, at least 60 s) and counts as red. The file's
+  cached bytecode is deleted first, so a same-length mutant cannot run as
+  the cached original, and a second run on the same file is refused.
+  `docs/agents/review.md` points the mutant probe at it.
 
 ## 0.5.0
 
