@@ -1,8 +1,9 @@
 """
-The tests import the rocksteady they should, whatever else the environment points at (#99): in a checkout,
-pytest imports the checkout's own src/, and so do the processes the tests start (``python -c``, a script, a
-pytest run), through the conftest's PYTHONPATH; an unpacked sdist's tests, run with ``-o pythonpath=``, import
-the installed package.
+The tests import the rocksteady they should, whatever else the environment points at (#99). In a checkout,
+pytest imports the checkout's own src/ through the ini's ``pythonpath``, and so do the processes the tests
+start: ``python -c`` and scripts through the conftest's PYTHONPATH, and pytest runs given this tree's config
+through its ``pythonpath``. An unpacked sdist's tests, run with ``-o pythonpath=``, import the installed
+package.
 """
 
 import os
@@ -43,7 +44,7 @@ def test_a_process_a_test_starts_imports_the_same_rocksteady():
 
 
 def _run_pytest(*args, env):
-    """pytest run in a child process with this checkout's config and ``env``."""
+    """pytest run in a child process with this tree's config (ROOT's pyproject.toml) and ``env``."""
     env = dict(env)
     env.pop("PYTEST_ADDOPTS", None)  # this run's own pytest options, not the outer run's
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c",
@@ -86,10 +87,10 @@ def test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_instal
 
 def test_the_checkout_only_tests_run_in_a_checkout_and_are_skipped_in_an_sdist(tmp_path):
     """
-    The three checkout-only tests, and no others, are marked ``checkout_only``; each runs in a checkout and is
-    skipped in an sdist, and the sdist's own test the other way round. Only the checkout-only tests check the
-    conftest's PYTHONPATH under another install, so a checkout must run each of them. ``--setup-only`` applies
-    each test's skip without running it.
+    The checkout-only tests, and no others, are marked ``checkout_only``; each runs in a checkout and is skipped
+    in an sdist, and the sdist's own test the other way round. They check that a checkout's tests, and the
+    processes they start, import its own src/, so a checkout must run each of them. ``--setup-only`` applies each
+    test's skip without running it.
     """
     want = ["test_the_tests_import_the_checkouts_own_src",
             "test_pytest_imports_the_checkouts_own_src_over_another_install",
