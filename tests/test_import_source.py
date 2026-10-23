@@ -1,9 +1,15 @@
-"""pytest imports the checkout's own src/, whatever else the environment points at (#99)."""
+"""
+The tests import the rocksteady they should, whatever else the environment points at (#99): in a checkout,
+pytest imports the checkout's own src/, and so do the processes the tests start (``python -c``, a script, a
+pytest run), through the conftest's PYTHONPATH; an unpacked sdist's tests, run with ``-o pythonpath=``, import
+the installed package.
+"""
 
 import os
 import pathlib
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -13,9 +19,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src") + os.sep
 # An unpacked sdist has PKG-INFO at its root, a checkout does not. Its tests run against an installed package.
 IN_SDIST = os.path.exists(os.path.join(ROOT, "PKG-INFO"))
+# The one skip of the tests that check a checkout's own src/;
+# test_the_checkout_only_tests_run_in_a_checkout_and_are_skipped_in_an_sdist checks where it applies.
+checkout_only = pytest.mark.skipif(IN_SDIST, reason="an sdist's tests run against an installed package")
 
 
-@pytest.mark.skipif(IN_SDIST, reason="an sdist's tests run against an installed package")
+@checkout_only
 def test_the_tests_import_the_checkouts_own_src():
     assert rocksteady.__file__.startswith(SRC), rocksteady.__file__
 
@@ -33,6 +42,15 @@ def test_a_process_a_test_starts_imports_the_same_rocksteady():
     assert run.stdout.strip() == rocksteady.__file__
 
 
+def _pytest(*args, env):
+    """pytest run in a child process with this checkout's config and ``env``."""
+    env = dict(env)
+    env.pop("PYTEST_ADDOPTS", None)  # this run's own pytest options, not the outer run's
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c",
+                           os.path.join(ROOT, "pyproject.toml"), "--rootdir", ROOT, *args],
+                          env=env, capture_output=True, text=True, check=False, timeout=120)
+
+
 def _pytest_with_a_decoy_first(tmp_path, target):
     """
     pytest run on ``target`` with this checkout's config, and a decoy rocksteady first on PYTHONPATH that stands
@@ -41,14 +59,10 @@ def _pytest_with_a_decoy_first(tmp_path, target):
     decoy = tmp_path / "decoy" / "rocksteady"
     decoy.mkdir(parents=True)
     (decoy / "__init__.py").write_text("")
-    env = dict(os.environ, PYTHONPATH=str(tmp_path / "decoy"))
-    env.pop("PYTEST_ADDOPTS", None)  # this run's own pytest options, not the outer run's
-    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c",
-                           os.path.join(ROOT, "pyproject.toml"), "--rootdir", ROOT, str(target)],
-                          env=env, capture_output=True, text=True, check=False, timeout=120)
+    return _pytest(str(target), env=dict(os.environ, PYTHONPATH=str(tmp_path / "decoy")))
 
 
-@pytest.mark.skipif(IN_SDIST, reason="an sdist's tests run against an installed package")
+@checkout_only
 def test_pytest_imports_the_checkouts_own_src_over_another_install(tmp_path):
     imported_from = tmp_path / "imported_from.txt"
     probe = tmp_path / "test_probe.py"
@@ -59,9 +73,29 @@ def test_pytest_imports_the_checkouts_own_src_over_another_install(tmp_path):
     assert pathlib.Path(imported_from).read_text() == os.path.join(SRC, "rocksteady", "__init__.py")
 
 
-@pytest.mark.skipif(IN_SDIST, reason="an sdist's tests run against an installed package")
+@checkout_only
 def test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_install(tmp_path):
-    """The child-process test above, under a decoy: the conftest must put the tests' rocksteady before it."""
-    child_test = f"{__file__}::{test_a_process_a_test_starts_imports_the_same_rocksteady.__name__}"
-    run = _pytest_with_a_decoy_first(tmp_path, child_test)
+    """
+    test_a_process_a_test_starts_imports_the_same_rocksteady, under a decoy: the conftest must put the tests'
+    rocksteady before it.
+    """
+    node_id = f"{__file__}::{test_a_process_a_test_starts_imports_the_same_rocksteady.__name__}"
+    run = _pytest_with_a_decoy_first(tmp_path, node_id)
     assert run.returncode == 0 and "1 passed" in run.stdout, run.stdout + run.stderr
+
+
+def test_the_checkout_only_tests_run_in_a_checkout_and_are_skipped_in_an_sdist(tmp_path):
+    """
+    Every test marked ``checkout_only`` runs in a checkout and is skipped in an sdist, and the sdist's own test
+    the other way round. Only the checkout-only tests check the conftest's PYTHONPATH under another install, so a
+    checkout must run each of them. ``--setup-only`` applies each test's skip without running it.
+    """
+    report = tmp_path / "report.xml"
+    run = _pytest("--setup-only", f"--junitxml={report}", __file__, env=os.environ)
+    assert run.returncode == 0, run.stdout + run.stderr
+    skipped = {case.get("name"): case.find("skipped") is not None for case in ET.parse(report).iter("testcase")}
+    marked = ["test_the_tests_import_the_checkouts_own_src",
+              "test_pytest_imports_the_checkouts_own_src_over_another_install",
+              "test_a_process_a_test_starts_imports_the_same_rocksteady_over_another_install"]
+    assert {name: skipped[name] for name in marked} == {name: IN_SDIST for name in marked}
+    assert skipped["test_an_sdists_tests_import_the_installed_package"] is not IN_SDIST
