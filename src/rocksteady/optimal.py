@@ -173,11 +173,12 @@ def _times(t) -> Tuple[np.ndarray, Any]:
     return np.asarray(t, dtype=float), None
 
 
-def _timedelta(per):
+def _period_step(per):
     """
-    ``per`` as a Timedelta. pandas 2.x parses a single string into a numpy
-    timedelta without a unit, which numpy deprecates; a list of one string
-    takes the parse that keeps the unit and gives the same value.
+    The period length ``per`` as a Timedelta. pandas 2.x parses a single
+    string into a numpy timedelta without a unit, which numpy deprecates; a
+    list of one string takes the parse that keeps the unit and gives the
+    same value.
     """
     import pandas as pd
 
@@ -195,7 +196,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin)
         if origin.tzinfo is not None:
             origin = origin.tz_localize(None)
-        step = _timedelta(per)
+        step = _period_step(per)
         if step <= pd.Timedelta(0):
             raise ValueError(f"per must be positive, got {per!r}")
         ids = ((wall - origin) // step).to_numpy().astype(np.int64)
@@ -260,7 +261,7 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
         return pd.Index(["all"] * len(ids))
     if idx is not None:
         origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
-        return pd.Index(origin + ids * _timedelta(per))
+        return pd.Index(origin + ids * _period_step(per))
     return pd.Index((0.0 if period_origin is None else float(period_origin)) + ids * float(per))
 
 

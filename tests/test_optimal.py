@@ -221,6 +221,12 @@ def test_each_form_of_a_period_names_the_same_periods(per):
                                   pd.Timestamp("2026-03-04 04:00")]
 
 
+def test_a_period_string_pandas_cannot_read_is_refused_by_name():
+    idx = pd.date_range("2026-03-02", periods=24, freq="1h")
+    with pytest.raises(ValueError, match="'bogus'"):
+        count_by_period([Segment(0, 24, ST)], idx, "bogus")
+
+
 def test_count_tables_without_segments_or_columns_are_empty():
     idx = pd.date_range("2026-03-02", periods=48, freq="1h")
     no_segments = count_by_period([], idx, "1D", states=["steady"])
