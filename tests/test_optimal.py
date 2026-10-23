@@ -209,6 +209,18 @@ def test_spanning_segments_count_against_every_period_they_touch():
     assert count_by_period(split, idx, "1D")["steady"].tolist() == [1, 1, 1, 1]
 
 
+@pytest.mark.parametrize("per", ["26h", "1560min", "1 days 02:00:00", "1 day 2 hours", "1D2h", "P1DT2H",
+                                 pd.Timedelta(26, "h")])
+def test_each_form_of_a_period_names_the_same_periods(per):
+    # 26-hour periods from midnight: twelve-hour segments touch three, three and two of them.
+    idx = pd.date_range("2026-03-02", periods=72, freq="1h")
+    segs = [Segment(i, i + 12, ST) for i in range(0, 72, 12)]
+    counts = count_by_period(segs, idx, per, period_origin="2026-03-02")
+    assert counts["steady"].tolist() == [3, 3, 2]
+    assert list(counts.index) == [pd.Timestamp("2026-03-02 00:00"), pd.Timestamp("2026-03-03 02:00"),
+                                  pd.Timestamp("2026-03-04 04:00")]
+
+
 def test_count_tables_without_segments_or_columns_are_empty():
     idx = pd.date_range("2026-03-02", periods=48, freq="1h")
     no_segments = count_by_period([], idx, "1D", states=["steady"])
@@ -570,7 +582,7 @@ def test_the_constraints_in_force_read_as_plain_values():
     # NumPy caps, a Timedelta period and set-valued transitions print as the values they hold.
     t = pd.date_range("2026-01-01", periods=48, freq="1h")
     msg = _infeasible_message(t, np.zeros(48), {"steady": 0, "transient": 1}, method="exact",
-                              per=pd.Timedelta("1D"), max_counts={"steady": np.int64(1), "transient": np.int64(0)},
+                              per=pd.Timedelta(1, "D"), max_counts={"steady": np.int64(1), "transient": np.int64(0)},
                               transitions={"steady": {"transient", "steady"}, "transient": ("steady",)},
                               max_duration_s={"steady": 3600.0 * 20}, penalty=0.0)
     assert ("In force: max_counts={'steady': 1, 'transient': 0} per period (1 days 00:00:00), "

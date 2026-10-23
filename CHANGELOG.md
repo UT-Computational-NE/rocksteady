@@ -103,6 +103,13 @@
   `fillna`; the tables are unchanged. On pandas 1.5, a table with no
   segments and a `DatetimeIndex` no longer fails, and an empty one with
   numeric periods has a float index (it was object), as on later pandas (#75).
+- On pandas 2.x, a string `per` (`"1D"`, `"12h"`) and the clock times in
+  reports no longer make numpy warn that a timedelta without a unit is
+  deprecated, which a later numpy will make an error. Periods,
+  counts and clock times are unchanged on pandas 1.5, 2.3 and 3.1; a string
+  that pandas cannot read as a period still raises `ValueError`, with
+  pandas' array message ("Could not convert 'bogus' to NumPy timedelta")
+  (#121).
 
 ### Documentation
 
@@ -148,6 +155,8 @@
 
 ### Tests and CI
 
+- numpy's DeprecationWarning for a timedelta without a unit fails the test
+  that raises it, as a FutureWarning does (#121).
 - A `docs` extra (`pip install -e ".[docs]"`, included in `dev`) replaces
   `docs/requirements.txt` for CI and Read the Docs (#73).
 - `tools/check.sh` runs CI's fast checks locally: the tests without `slow`,

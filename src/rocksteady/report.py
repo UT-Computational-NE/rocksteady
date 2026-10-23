@@ -371,7 +371,8 @@ def _clock(seconds: float, origin, multi_day: bool = False) -> str:
         return f"{seconds:,.0f} s"
     import pandas as pd
 
-    ts = origin + pd.Timedelta(seconds=float(seconds))
+    # Whole nanoseconds, truncated, as pd.Timedelta(seconds=...) gives; that form warns on pandas 2.x.
+    ts = origin + pd.Timedelta(int(float(seconds) * 1_000_000_000), "ns")
     return ts.strftime("%m-%d %H:%M:%S" if multi_day else "%H:%M:%S")
 
 
