@@ -19,3 +19,6 @@ Add a rule here when reviews raise the same call twice, or when the user admits 
 - **A widened input brings its degenerate cases.** When a change makes an argument accept a new form, test that form's degenerate cases in the same change: a repeated item, an empty collection, a different order.
 
   In PR #104, accepting `(name, bool)` pairs as well as a mapping let one mask be named twice. Which pair won then depended on the order a set iterated in.
+- **A test claims no more than it checks.** A test's name, docstring and comments say only what its assertions pin down. "Every", "only", "and nothing else", or a mechanism the test never exercises, is a claim its assertions must check; otherwise narrow the words, or add the check.
+
+  In PR #126, a guard's docstring said "every test marked `checkout_only`" while the guard checked a fixed list, and that all three marked tests check the conftest's PYTHONPATH, which only one does. In PR #120, a test named "…matches missing text and nothing else" checked three differing cases (#122).
