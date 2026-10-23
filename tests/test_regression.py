@@ -143,15 +143,18 @@ def test_golden(case):
         np.testing.assert_allclose(got[col].to_numpy(float), want[col].to_numpy(float), rtol=1e-9, equal_nan=True)
 
 
-def test_the_text_comparison_matches_missing_text_and_nothing_else():
-    """A golden column with no text reads as float64 NaN; it equals a column of missing text, and nothing else."""
-    want = _read_golden(io.StringIO("label,limiting,forced_by\nsteady,a,\nsteady,,\n"))
-    assert want["forced_by"].dtype == float
-    _assert_same_text(pd.DataFrame({"limiting": ["a", None], "forced_by": [None, None]}), want)
-    differing = ((["a", "b"], [None, None]), (["a", None], ["floor", None]), (["a", None], [None, "floor"]))
-    for limiting, forced_by in differing:
-        with pytest.raises(AssertionError):
-            _assert_same_text(pd.DataFrame({"limiting": limiting, "forced_by": forced_by}), want)
+@pytest.mark.parametrize("empty, other", [("limiting", "forced_by"), ("forced_by", "limiting")])
+def test_a_golden_column_without_text_equals_missing_text_and_fails_on_text_in_any_row(empty, other):
+    """A golden column with no text reads as float64 NaN: a column of missing text equals it, and text in any one row
+    of it fails the comparison."""
+    want = _read_golden(io.StringIO(f"label,{empty},{other}\nsteady,,a\nsteady,,\n"))
+    assert want[empty].dtype == np.float64
+    _assert_same_text(pd.DataFrame({empty: [None, None], other: ["a", None]}), want)
+    for row in range(2):
+        text = [None, None]
+        text[row] = "floor"
+        with pytest.raises(AssertionError, match=empty):
+            _assert_same_text(pd.DataFrame({empty: text, other: ["a", None]}), want)
 
 
 def test_golden_cases_exercise_every_label():
