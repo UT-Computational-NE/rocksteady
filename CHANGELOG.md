@@ -145,6 +145,9 @@
   rules; `docs/agents/review.md` points at it. It starts with two rules from
   PR #104: a test pins the exact value a conversion produces, and a widened
   input brings its degenerate cases (#92).
+- `docs/agents/coding-standards.md`: a test claims no more than it checks;
+  its name, docstring and comments say only what its assertions pin down
+  (#128).
 
 ### Tests and CI
 
