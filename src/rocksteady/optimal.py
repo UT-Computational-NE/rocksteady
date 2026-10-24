@@ -178,17 +178,33 @@ def _is_number(x) -> bool:
     return isinstance(x, (Real, np.bool_)) and not isinstance(x, np.timedelta64)
 
 
-def _has_no_unit(per) -> bool:
-    """Whether ``per`` is a string holding only a number, or a numpy timedelta without a unit."""
+def _refuse_unitless(per) -> None:
+    """
+    Refuse a period of a DatetimeIndex without a unit: a number, a string
+    holding only one (``"7200"``, ``"nan"``) or a numpy timedelta without a
+    unit, each of which pandas would read as nanoseconds.
+    """
+    if _is_number(per):
+        raise ValueError(f"per as a number needs numeric times (seconds); with a DatetimeIndex give a string "
+                         f"(e.g. '2h') or a Timedelta, got {per!r}")
     if isinstance(per, np.timedelta64):
-        return np.datetime_data(per.dtype)[0] == "generic"
-    if isinstance(per, str):
+        unitless = np.datetime_data(per.dtype)[0] == "generic"
+    elif isinstance(per, str):
         try:
             float(per)
+            unitless = True
         except ValueError:
-            return False
-        return True
-    return False
+            unitless = False
+    else:
+        unitless = False
+    if unitless:
+        raise ValueError(f"per {per!r} has no unit; with a DatetimeIndex give a string with one (e.g. '2h') "
+                         "or a Timedelta")
+
+
+def _origin_seconds(period_origin) -> float:
+    """The start ``period_origin`` of periods of numeric times, in seconds (default: 0)."""
+    return 0.0 if period_origin is None else float(period_origin)
 
 
 def _period_step(per):
@@ -201,12 +217,7 @@ def _period_step(per):
     """
     import pandas as pd
 
-    if _is_number(per):
-        raise ValueError(f"per as a number needs numeric times (seconds); with a DatetimeIndex give a string "
-                         f"(e.g. '2h') or a Timedelta, got {per!r}")
-    if _has_no_unit(per):
-        raise ValueError(f"per {per!r} has no unit; with a DatetimeIndex give a string with one (e.g. '2h') "
-                         "or a Timedelta")
+    _refuse_unitless(per)
     return pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
 
 
@@ -245,7 +256,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
     step = float(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
-    origin = 0.0 if period_origin is None else float(period_origin)
+    origin = _origin_seconds(period_origin)
     return np.floor((ts - origin) / step).astype(np.int64)
 
 
@@ -301,7 +312,7 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
         return pd.Index(["all"] * len(ids))
     if idx is not None:
         return pd.Index(_origin_stamp(period_origin) + ids * _period_step(per))
-    return pd.Index((0.0 if period_origin is None else float(period_origin)) + ids * float(per))
+    return pd.Index(_origin_seconds(period_origin) + ids * float(per))
 
 
 # ---------------------------------------------------------------------------

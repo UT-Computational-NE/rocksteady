@@ -246,13 +246,16 @@ def test_a_number_as_the_period_of_datetimes_is_refused(per):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
 
 
-@pytest.mark.parametrize("per", ["7200", " 7200 ", "7200.0", "1e3", "generic np.timedelta64"])
+def _timedelta_without_a_unit(n):
+    with warnings.catch_warnings():  # numpy 2.5 deprecates making one
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return np.timedelta64(n)
+
+
+@pytest.mark.parametrize("per", ["7200", " 7200 ", "7200.0", "1e3",
+                                 pytest.param(_timedelta_without_a_unit(7200), id="generic np.timedelta64")])
 def test_a_period_without_a_unit_is_refused(per):
     # pandas reads a bare number in a string, or a numpy timedelta without a unit, as nanoseconds.
-    if per == "generic np.timedelta64":
-        with warnings.catch_warnings():  # numpy 2.5 deprecates making one
-            warnings.simplefilter("ignore", DeprecationWarning)
-            per = np.timedelta64(7200)
     idx = pd.date_range("2026-03-02", periods=6, freq="1h")
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     with pytest.raises(ValueError, match=r"has no unit; .*a string with one \(e\.g\. '2h'\) or a Timedelta"):
@@ -263,8 +266,8 @@ def test_a_period_without_a_unit_is_refused(per):
 
 @pytest.mark.parametrize("per", _NUMBERS)
 def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
-    # Samples half a period apart: one-sample segments touch two per period, from 0 s.
-    step = 0.5 if isinstance(per, (bool, np.bool_)) else 3600.0
+    # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
+    step = float(per) / 2
     t = np.arange(6) * step
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     counts = count_by_period(segs, t, per)
@@ -275,12 +278,13 @@ def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
 @pytest.mark.parametrize("origin", ["2026-03-02 01:00", pd.Timestamp("2026-03-02 01:00", tz="America/Chicago")],
                          ids=["naive", "aware"])
 def test_a_period_origin_is_read_on_the_wall_clock(origin):
-    # Two-hour periods from 01:00 local, whether or not the origin carries the zone.
+    # Four-hour periods from 01:00 local, whether or not the origin carries the zone. Chicago is UTC-6, which is
+    # not a whole number of periods: read in UTC, the origin would start them at 23:00 and give [3, 3].
     idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
-    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "2h", period_origin=origin)
-    assert counts["steady"].tolist() == [1, 2, 2, 1]
-    assert list(counts.index) == [pd.Timestamp("2026-03-01 23:00"), pd.Timestamp("2026-03-02 01:00"),
-                                  pd.Timestamp("2026-03-02 03:00"), pd.Timestamp("2026-03-02 05:00")]
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h", period_origin=origin)
+    assert counts["steady"].tolist() == [1, 4, 1]
+    assert list(counts.index) == [pd.Timestamp("2026-03-01 21:00"), pd.Timestamp("2026-03-02 01:00"),
+                                  pd.Timestamp("2026-03-02 05:00")]
 
 
 @pytest.mark.parametrize("origin", _NUMBERS)
