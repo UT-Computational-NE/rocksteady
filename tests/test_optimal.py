@@ -1,6 +1,7 @@
 """Constrained optimal segmentation: best-fit segments under constraints (#45)."""
 
 import dataclasses
+import datetime
 import math
 import pickle
 import re
@@ -210,7 +211,7 @@ def test_spanning_segments_count_against_every_period_they_touch():
 
 
 @pytest.mark.parametrize("per", ["26h", "1560min", "1 days 02:00:00", "1 day 2 hours", "1D2h", "P1DT2H",
-                                 pd.Timedelta(26, "h")])
+                                 pd.Timedelta(26, "h"), np.timedelta64(26, "h"), datetime.timedelta(hours=26)])
 def test_each_form_of_a_period_names_the_same_periods(per):
     # 26-hour periods from midnight: twelve-hour segments touch three, three and two of them.
     idx = pd.date_range("2026-03-02", periods=72, freq="1h")
@@ -225,6 +226,30 @@ def test_a_period_string_pandas_cannot_read_is_refused_by_name():
     idx = pd.date_range("2026-03-02", periods=24, freq="1h")
     with pytest.raises(ValueError, match="'bogus'"):
         count_by_period([Segment(0, 24, ST)], idx, "bogus")
+
+
+@pytest.mark.parametrize("per", [7200, 7200.0, np.int64(7200), np.float64(7200.0), True, np.True_],
+                         ids=["int", "float", "np.int64", "np.float64", "bool", "np.bool_"])
+def test_a_number_as_the_period_of_datetimes_is_refused(per):
+    # A number has no unit beside a DatetimeIndex; the error names the forms that have one.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=r"a string \(e\.g\. '2h'\) or a Timedelta"):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match=r"a string \(e\.g\. '2h'\) or a Timedelta"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+@pytest.mark.parametrize("per, step", [(7200, 3600.0), (7200.0, 3600.0), (np.int64(7200), 3600.0),
+                                       (np.float64(7200.0), 3600.0), (True, 0.5), (np.True_, 0.5)],
+                         ids=["int", "float", "np.int64", "np.float64", "bool", "np.bool_"])
+def test_a_number_as_the_period_of_numeric_times_is_seconds(per, step):
+    # Samples half a period apart: one-sample segments touch two per period, from 0 s.
+    t = np.arange(6) * step
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    counts = count_by_period(segs, t, per)
+    assert counts["steady"].tolist() == [2, 2, 2]
+    assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
 
 
 def test_count_tables_without_segments_or_columns_are_empty():
