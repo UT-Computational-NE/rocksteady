@@ -444,6 +444,12 @@ reaches. It gives that time, the period containing it (its start, as
 {py:func}`~rocksteady.optimal.count_by_period` indexes periods, or "the whole
 record"), and the caps and transitions in force. In a long batch run, that
 points to the unusual day. It does not search for the constraint to blame.
+Naming the time has a cost. With a nonlinear model, an infeasible call
+still fits models up to where every segmentation gets stuck, about as an
+unpruned search up to that time would. For example, an `"exact"` call on
+300 samples with an `"exp"` transient capped at 1, which gets stuck at
+180 s, takes about 4 s, where 0.5.0's error, which named no time, took
+0.02 s.
 
 **Segment costs.** Constant and linear costs come from range sums of
 $y$, $y^2$, $x$, $x^2$ and $xy$. These are kept in blocks with compensated

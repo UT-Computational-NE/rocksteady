@@ -4,76 +4,72 @@
 
 ### Added
 
-- Subtypes for best-fit segments (#61, part of #55): `rs.Subtype(state,
-  level=(lo, hi))` names a refinement of a state whose segments' mean lies
-  in `[lo, hi)` (`None` for an open end), and `optimal_segments(...,
-  subtypes={name: Subtype})` gives every segment of that state one of its
-  subtypes (ADR 0001; a subtype with no conditions is a catch-all).
-  `max_counts` caps subtypes per period as well as states, and both caps
-  bind. Subtypes of one state may overlap; an exact tie goes to the one
-  declared first (among segmentations of equal objective, the least sum of
-  the subtypes' positions, which can also decide an exact tie between
-  states). `refine` keeps each segment's subtype while it moves
-  boundaries, then types its final segments again by the same rule (#66),
-  and pruning stays exact. A mean is held to `[lo, hi)` exactly, and a
-  mean at an end costs no more than any other (#117); a `level` that is
-  not two numbers in order is refused as "must be a pair".
-  Segments carry `Segment.subtype` (None for a state without subtypes),
-  `OptimalSegmentation.subtypes` holds the subtypes, `counts` has a column
-  per subtype, and `summary()` lists counts by subtype. With no subtypes,
-  results are unchanged.
-- Peak and rise-time conditions for subtypes (#64, part of #55):
-  `Subtype(..., peak=(lo, hi))` needs the segment's maximum in `[lo, hi)`
-  (either end open), and `max_rise_s` with `rise_fraction` (default 0.95)
-  needs the segment to reach `y0 + rise_fraction * (top - y0)` within
-  `max_rise_s` of its first sample, `y0` being its first finite sample and
-  `top` its maximum, so rise time works for a non-zero baseline. A
-  segment with no finite sample meets neither, and a segment must meet all
-  of its subtype's conditions.
-- Event conditions for subtypes (#65, part of #55): `optimal_segments(...,
-  events={name: boolean mask})` takes named masks with one value per
-  sample, and `Subtype(..., events={name: True or False})` needs the
-  segment to contain, or not to contain, a flagged sample of that mask in
-  `[start, stop)`, so that a driven transient is told apart from an
-  undriven one, by actuator. There is no tolerance; widen a mask to accept
-  an event just outside a segment. Every mask a condition names must be
-  given, every mask must be boolean and as long as `t`, and a subtype
-  names each mask once.
-  `info["events"]` holds the masks.
-- Every constraint of `optimal_segments` can name subtypes, and the
-  record's first and last segments can be restricted (#63, part of #55).
-  `transitions` names states or subtypes; a state's name stands for all of
-  its subtypes, and the allowed pairs are the union over all entries, so
-  the operating sequence (cold → heat-up → hot → cool-down → cold) tells
-  apart transient subtypes with the same conditions by their neighbours.
-  New `initial=` and `final=` sets of state or subtype names restrict the
-  first and last segments (default: any; a one-segment record must satisfy
-  both), so a transient cut off by the record's edge need not be called a
-  startup. `min_duration_s` / `max_duration_s` take subtypes, and a
-  subtype's and its state's bounds both bind; a subtype whose minimum or
-  its state's exceeds its maximum or its state's is refused up front.
-  `penalty` takes subtypes: a subtype's value replaces its state's, and
-  with `"bic"` (or when the mapping does not name it) a subtype takes its
-  state's.
-  `OptimalSegmentation.penalty` lists every state's and then every
-  subtype's penalty. The infeasibility error names `initial` and `final`
-  when they are given.
-- `rs.classify_segments(t, y, segments, subtypes=..., events=...,
-  transitions=..., initial=..., final=...)` gives subtypes to segments the
-  analyst already has, such as the detector's, by the same definitions as
-  `optimal_segments` (#66, part of #55). It runs the optimiser's dynamic
-  program with the breakpoints and states fixed and no count caps,
-  durations or penalties, so ties go to the least sum of the subtypes'
-  positions among their states' (with no transitions, `initial` or
-  `final`, each segment's first declared subtype it meets) and a transient
-  with no conditions is typed from its neighbours, as in the optimiser.
-  On the optimiser's own segments, by any method, it returns the
-  optimiser's subtypes when those constraints name states only. It
-  returns the segments with `subtype` set (None for a state without
-  subtypes), and when they cannot be typed it raises a `ValueError` that
-  names where, as the optimiser's infeasibility error does.
-- The error for an infeasible `optimal_segments` also names the subtypes'
-  conditions (#61).
+- Subtypes for best-fit segments (#55; #61, #63, #64, #65, #66, #117):
+  segments of `optimal_segments` can take caller-named subtypes, every
+  constraint can name them, and `classify_segments` gives the same
+  subtypes to segments from elsewhere. The best-fit segments guide page
+  explains them, with a flow-loop example and a sketch of a reactor's
+  scheme (#67).
+  - `rs.Subtype(state, ...)` names a refinement of one state, with
+    optional conditions on the segment alone. `level=(lo, hi)`: its mean
+    lies in `[lo, hi)`, held exactly, with `None` for an open end.
+    `peak=(lo, hi)`: its maximum lies in `[lo, hi)`. `max_rise_s` with
+    `rise_fraction` (default 0.95): it reaches
+    `y0 + rise_fraction * (top - y0)` within `max_rise_s` of its first
+    sample, `y0` being its first finite sample and `top` its maximum, so
+    rise time works for a non-zero baseline. `events={mask: True or
+    False}`: it contains, or does not contain, a flagged sample of that
+    event mask in `[start, stop)`. A segment must meet all of its
+    subtype's conditions; one with no finite sample meets no level, peak
+    or rise condition. A subtype is fitted with its state's model.
+  - `optimal_segments(..., subtypes={name: Subtype}, events={name:
+    boolean mask})`. Once a state has subtypes, every segment of it takes
+    one of them (ADR 0001); a subtype with no conditions is a catch-all.
+    An event mask has one value per sample and no tolerance; widen it to
+    accept an event just outside a segment.
+  - Every constraint can name subtypes. `max_counts`: a state's cap
+    counts all of its segments, and a state's and a subtype's caps both
+    bind. `transitions`: a state's name stands for all of its subtypes,
+    and the allowed pairs are the union over all entries, so the
+    operating sequence (cold → heat-up → hot → cool-down → cold) tells
+    apart transients with the same conditions. New `initial=` and
+    `final=` restrict the record's first and last segments (default: any;
+    a one-segment record must satisfy both). `min_duration_s` /
+    `max_duration_s`: a subtype's and its state's bounds both bind.
+    `penalty`: a subtype's replaces its state's, which it takes otherwise
+    and with `"bic"`.
+  - Subtypes of one state may overlap. Among segmentations of equal
+    objective the optimiser takes the least sum of the subtypes'
+    positions among their state's, so an exact tie goes to the subtype
+    declared first; that sum can also decide an exact tie between states.
+    `refine` keeps each segment's subtype while it moves boundaries, then
+    types its final segments again by the same program. Pruning stays
+    exact.
+  - Results: `Segment.subtype` (None for a state without subtypes;
+    `Segment.state` stays the state, so reports and statistics by state
+    are unchanged), `OptimalSegmentation.subtypes`, a `counts` column per
+    subtype, counts by subtype in `summary()`, `info["events"]`, and
+    `penalty` listing every state's and then every subtype's. The
+    infeasibility error also names the subtypes' conditions, and
+    `initial` and `final` when given.
+  - `rs.classify_segments(t, y, segments, subtypes=..., events=...,
+    transitions=..., initial=..., final=...)` runs the same program with
+    the breakpoints and states fixed and no count caps, durations or
+    penalties, so ties go as in the optimiser, and a transient with no
+    conditions is typed from its neighbours. On the optimiser's own
+    segments it returns the optimiser's subtypes when the optimiser's
+    caps, durations and penalties name states only. When
+    the segments cannot be typed, its `ValueError` names where.
+  - Refused up front: a subtype of an unknown state or of a state with no
+    model, a subtype named like a state, an unknown name in a constraint,
+    a condition naming a mask that `events` does not include, a mask that
+    is not boolean or not as long as `t`, a mask named twice in one
+    subtype, a range that is not two numbers in order, a negative
+    `max_rise_s`, a `rise_fraction` outside (0, 1] or without
+    `max_rise_s`, and a subtype whose duration bounds, with its state's,
+    leave no duration.
+  - With no `subtypes`, `events`, `initial` or `final`, results are
+    unchanged.
 - `optimal_segments` names the argument and the valid states when `models`
   names an unknown state (#61).
 
@@ -106,6 +102,14 @@
 
 ### Documentation
 
+- The best-fit segments guide page has a section on subtypes: conditions,
+  why every segment of a subdivided state takes a subtype (ADR 0001, now
+  shown on the page), how constraints combine on a state and its
+  subtypes, `initial` and `final`, and `classify_segments`, with a
+  flow-loop example (`docs/source/examples/subtypes.py`, which the test
+  suite runs) and a sketch of a reactor's scheme. `GLOSSARY.md` defines an
+  *event mask*. The methods page says what an infeasible call costs with a
+  nonlinear model (#67).
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
   published as a glossary page with ADR 0001 (subtypes) and the
   contributor-agent notes (`AGENTS.md`, `docs/agents/`) (#56). Wording only;
