@@ -94,6 +94,17 @@
   segments per period, which can never be used, so `n_fits` can be lower;
   the results are unchanged. With pruning, an infeasible call fits models
   only up to where every segmentation gets stuck (#62).
+- With times as a `DatetimeIndex`, a number as `per` (an int, a float, a
+  bool or a numpy number) is refused with a `ValueError` that names the
+  forms to use, a string (`"2h"`) or a Timedelta. pandas read the number as
+  nanoseconds, so `per=7200` gave 7200 ns periods, though the docstring
+  said seconds. A `per` without a unit, a string holding only a number
+  (`"7200"`) or an `np.timedelta64` without one, is refused for the same
+  reason, and so is a number as `period_origin` (it was nanoseconds after
+  the epoch, though the docstring said seconds); give a timestamp. This
+  applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts`; with numeric times a number is still
+  seconds for both (#127).
 
 ### Fixed
 
