@@ -176,7 +176,7 @@ def _times(t) -> Tuple[np.ndarray, Any]:
 def _period_step(per):
     """
     The period length ``per`` as a Timedelta. pandas 2.x parses a single
-    string into a numpy timedelta without a unit, which numpy deprecates; a
+    string into a numpy timedelta without a unit, which numpy 2.5 deprecates; a
     list of one string takes the parse that keeps the unit and gives the
     same value. A number is refused: pandas would read it as nanoseconds.
     """
