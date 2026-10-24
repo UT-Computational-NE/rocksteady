@@ -58,7 +58,7 @@ transitions = {
 
 # [events]
 # The log gives the minute the heater switched, and the loop answers about half an hour later.
-# A mask has no tolerance, so widen it: flag the 45 minutes after each switch as well.
+# A mask has no tolerance, so widen it: flag each switch and the 44 minutes after it.
 heater = pd.Series(switched.astype(float), index=t).rolling("45min").max().to_numpy() > 0
 # [events]
 
@@ -121,24 +121,26 @@ reactor_transitions = {
 
 def reactor_record():
     """One second per sample: a startup, a maneuver, a perturbation, a shutdown and a pulse, by hand."""
-    ts = np.arange(3300.0)
-    p = np.full(len(ts), 0.01)
-    p[300:600] = 50.0 * (1 - np.exp(-(ts[300:600] - 300) / 60))
-    p[600:1200] = 50.0
-    p[1200:1300] = 50.0 + 30.0 * (ts[1200:1300] - 1200) / 100
-    p[1300:2400] = 80.0
-    p[1800:1830] -= 5.0 * np.sin(np.pi * (ts[1800:1830] - 1800) / 30)
-    p[2400:2700] = 80.0 * np.exp(-(ts[2400:2700] - 2400) / 40)
-    p[3001:3060] = 2000.0 * np.exp(-(ts[3001:3060] - 3001) / 5)
+    seconds = np.arange(3300.0)
+    power = np.full(len(seconds), 0.01)
+    power[300:600] = 50.0 * (1 - np.exp(-(seconds[300:600] - 300) / 60))
+    power[600:1200] = 50.0
+    power[1200:1300] = 50.0 + 30.0 * (seconds[1200:1300] - 1200) / 100
+    power[1300:2400] = 80.0
+    power[1800:1830] -= 5.0 * np.sin(np.pi * (seconds[1800:1830] - 1800) / 30)
+    power[2400:2700] = 80.0 * np.exp(-(seconds[2400:2700] - 2400) / 40)
+    power[3001:3060] = 2000.0 * np.exp(-(seconds[3001:3060] - 3001) / 5)
     cuts = [0, 300, 600, 1200, 1300, 1800, 1830, 2400, 2700, 3000, 3060, 3300]
     states = ["steady", "transient"] * 5 + ["steady"]
     segs = [rs.Segment(a, b, rs.State(st)) for a, b, st in zip(cuts, cuts[1:], states)]
-    masks = {"control_rods": np.isin(np.arange(len(ts)), [300, 1200, 2400]),
-             "perturbing_rod": np.isin(np.arange(len(ts)), [1800])}
-    return ts, p, segs, masks
+    masks = {"control_rods": np.isin(np.arange(len(seconds)), [300, 1200, 2400]),
+             "perturbing_rod": np.isin(np.arange(len(seconds)), [1800])}
+    return seconds, power, segs, masks
 
 
-ts, p, segs, masks = reactor_record()
-reactor_typed = rs.classify_segments(ts, p, segs, subtypes=reactor, events=masks, transitions=reactor_transitions)
-assert [s.subtype for s in reactor_typed] == ["zero-power", "startup", "at-power", "maneuver", "at-power", "perturbation",
-                                              "at-power", "shutdown", "zero-power", "pulse", "zero-power"]
+reactor_t, power, segs, masks = reactor_record()
+reactor_typed = rs.classify_segments(reactor_t, power, segs, subtypes=reactor, events=masks,
+                                     transitions=reactor_transitions)
+assert [s.subtype for s in reactor_typed] == [
+    "zero-power", "startup", "at-power", "maneuver", "at-power", "perturbation",
+    "at-power", "shutdown", "zero-power", "pulse", "zero-power"]

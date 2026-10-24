@@ -8,7 +8,7 @@
 ## Subtypes
 
 A cap on states, such as `{"steady": 3, "transient": 2}`, says how many
-segments a day may have, but not which kinds. An analyst thinks of a flow
+segments a day may have, but not which subtypes. An analyst thinks of a flow
 loop's day as two cold plateaus, one hot plateau, a heat-up and a cool-down.
 For a reactor it is zero-power and at-power plateaus, a startup and a
 shutdown. A cap on states alone lets the optimiser spend both transients on
@@ -70,7 +70,7 @@ any other subtype.
 States for which you declare no subtypes behave as before, and their
 segments have `subtype=None`. A call with no `subtypes`, `events`,
 `initial` or `final` returns the segments, objective and counts that 0.5.0
-returned.
+returned, for any call that 0.5.0 also accepted.
 
 ### How constraints combine on a state and its subtypes
 
@@ -87,7 +87,10 @@ The optimiser chooses by total cost. Two subtypes that accept a segment and
 carry the same penalty cost exactly the same, and the tie goes to the one
 declared first. A catch-all declared last, with the same penalty as the
 others, therefore takes only the segments that no earlier subtype can take
-within the constraints.
+within the constraints. Precisely, among segmentations of equal objective
+the optimiser takes the least sum of the subtypes' positions. That sum can
+also decide an exact tie between states or boundaries, so declaring
+subtypes can change which of two equally good segmentations comes back.
 
 Overlap is how a transient's subtype can follow from its neighbours. A
 heat-up and a cool-down can have the same conditions (the heater switched)
@@ -184,14 +187,14 @@ period
 2026-01-06       4          3     3    1        1          1      1
 ```
 
-`print(res)` lists the counts by subtype, `res.subtypes` holds the subtypes
-used, and `res.info["events"]` holds the masks.
+`print(res)` lists the counts by subtype, `res.subtypes` holds the declared
+subtypes, and `res.info["events"]` holds the masks.
 
 ### Subtypes for segments you already have
 
 `rs.classify_segments` gives subtypes to segments from anywhere else (the
-detector's, a log's, another run's) by the same definitions. Your labels
-and your constraints then share one definition.
+detector's, a log's, another run's) by the same definitions. Your
+subtypes and your constraints then share one definition.
 
 ```{literalinclude} ../examples/subtypes.py
 :language: python
@@ -235,8 +238,8 @@ its subtype's conditions or the constraints fail. It then types its final
 segments again by the same program, so ties go the same way for every
 method.
 Pruning stays exact: it is decided on a segment's model cost before any
-condition, and a longer segment never costs less, whatever subtype could
-take it.
+condition, and once its model is fitted in full a longer segment never
+costs less, whatever subtype could take it.
 
 Constraints stay hard. When the conditions and constraints leave no
 segmentation, the `ValueError` names the earliest time after which none can

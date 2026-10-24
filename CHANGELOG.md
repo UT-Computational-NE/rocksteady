@@ -12,7 +12,8 @@
   scheme (#67).
   - `rs.Subtype(state, ...)` names a refinement of one state, with
     optional conditions on the segment alone. `level=(lo, hi)`: its mean
-    lies in `[lo, hi)`, held exactly, with `None` for an open end.
+    lies in `[lo, hi)`, held exactly (a mean at an end costs no more than
+    any other), with `None` for an open end.
     `peak=(lo, hi)`: its maximum lies in `[lo, hi)`. `max_rise_s` with
     `rise_fraction` (default 0.95): it reaches
     `y0 + rise_fraction * (top - y0)` within `max_rise_s` of its first
@@ -102,14 +103,8 @@
 
 ### Documentation
 
-- The best-fit segments guide page has a section on subtypes: conditions,
-  why every segment of a subdivided state takes a subtype (ADR 0001, now
-  shown on the page), how constraints combine on a state and its
-  subtypes, `initial` and `final`, and `classify_segments`, with a
-  flow-loop example (`docs/source/examples/subtypes.py`, which the test
-  suite runs) and a sketch of a reactor's scheme. `GLOSSARY.md` defines an
-  *event mask*. The methods page says what an infeasible call costs with a
-  nonlinear model (#67).
+- `GLOSSARY.md` defines an *event mask*, and the methods page says what an
+  infeasible call costs with a nonlinear model (#67).
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
   published as a glossary page with ADR 0001 (subtypes) and the
   contributor-agent notes (`AGENTS.md`, `docs/agents/`) (#56). Wording only;
