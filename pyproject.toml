@@ -52,8 +52,12 @@ pythonpath = ["src"]
 markers = ["slow: Monte Carlo calibration checks (deselect with -m 'not slow')"]
 # Unit tests use short windows on purpose; tests of the warning itself use pytest.warns, which still sees it.
 # A FutureWarning (a deprecation in numpy or pandas) fails the test that raises it. tests/conftest.py adds
-# error::pandas.errors.Pandas4Warning, a DeprecationWarning, where pandas defines it.
-filterwarnings = ["error::FutureWarning", "ignore::rocksteady.core.CalibrationWarning"]
+# error::pandas.errors.Pandas4Warning, a DeprecationWarning, where pandas defines it. numpy's DeprecationWarning
+# for a timedelta without a unit fails it too: numpy 2.5 and later raise it when pandas 2.x parses a string or
+# keywords (CI's pandas2-numpy25 job). The filter matches the message, which every numpy accepts, so it needs no
+# version guard.
+filterwarnings = ["error::FutureWarning", "error:The 'generic' unit:DeprecationWarning",
+                  "ignore::rocksteady.core.CalibrationWarning"]
 
 # tools/check.sh and CI's typecheck job run `mypy` (no arguments: `files` below).
 [tool.mypy]
