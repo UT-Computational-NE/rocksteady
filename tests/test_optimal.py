@@ -275,6 +275,15 @@ def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
 
 
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600)], ids=["int", "float", "np.int64"])
+def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
+    # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
+    t = np.arange(6) * 3600.0
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=origin)
+    assert counts["steady"].tolist() == [1, 2, 2, 1]
+    assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
+
+
 @pytest.mark.parametrize("origin", ["2026-03-02 01:00", pd.Timestamp("2026-03-02 01:00", tz="America/Chicago")],
                          ids=["naive", "aware"])
 def test_a_period_origin_is_read_on_the_wall_clock(origin):
