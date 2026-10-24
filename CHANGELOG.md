@@ -99,9 +99,13 @@
   bool or a numpy number) is refused with a `ValueError` that names the
   forms to use, a string (`"2h"`) or a Timedelta. pandas read the number as
   nanoseconds, so `per=7200` gave 7200 ns periods, though the docstring
-  said seconds. This applies to `count_by_period`, `optimal_segments` and
+  said seconds. A `per` without a unit, a string holding only a number
+  (`"7200"`) or an `np.timedelta64` without one, is refused for the same
+  reason, and so is a number as `period_origin` (it was nanoseconds after
+  the epoch, though the docstring said seconds); give a timestamp. This
+  applies to `count_by_period`, `optimal_segments` and
   `OptimalSegmentation.counts`; with numeric times a number is still
-  seconds (#127).
+  seconds for both (#127).
 
 ### Fixed
 
