@@ -632,8 +632,8 @@ class Subtype:
     example a cold or a hot steady segment.
 
     ``state`` is the state it refines (``"steady"``, ``"transient"`` or
-    ``"indeterminate"``). Its conditions, all on the segment's finite
-    samples:
+    ``"indeterminate"``). Its conditions, on the segment's finite samples
+    except for ``events``:
 
     - ``level=(lo, hi)``: the mean lies in ``[lo, hi)``. ``None`` leaves an
       end open, so ``(None, 40)`` and ``(40, None)`` split every level at 40
