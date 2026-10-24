@@ -41,8 +41,10 @@
     and with `"bic"`.
   - Subtypes of one state may overlap. Among segmentations of equal
     objective the optimiser takes the least sum of the subtypes'
-    positions among their state's, so an exact tie goes to the subtype
-    declared first; that sum can also decide an exact tie between states.
+    positions among their state's, so no segment could, on its own, take
+    an earlier-declared subtype that accepts it at the same penalty without
+    breaking a constraint; that sum can also decide an exact tie between
+    states.
     `refine` keeps each segment's subtype while it moves boundaries, then
     types its final segments again by the same program. Pruning stays
     exact.
@@ -51,8 +53,8 @@
     are unchanged), `OptimalSegmentation.subtypes`, a `counts` column per
     subtype, counts by subtype in `summary()`, `info["events"]`, and
     `penalty` listing every state's and then every subtype's. The
-    infeasibility error also names the subtypes' conditions, and
-    `initial` and `final` when given.
+    infeasibility error mentions the subtypes' conditions among what no
+    segmentation satisfies, and names `initial` and `final` when given.
   - `rs.classify_segments(t, y, segments, subtypes=..., events=...,
     transitions=..., initial=..., final=...)` runs the same program with
     the breakpoints and states fixed and no count caps, durations or

@@ -70,7 +70,8 @@ any other subtype.
 States for which you declare no subtypes behave as before, and their
 segments have `subtype=None`. A call with no `subtypes`, `events`,
 `initial` or `final` returns the segments, objective and counts that 0.5.0
-returned, for any call that 0.5.0 also accepted.
+returned, for any call that both accept (*Changed* in the CHANGELOG lists
+the calls that 0.5.0 accepted and that are now refused).
 
 ### How constraints combine on a state and its subtypes
 
@@ -84,12 +85,15 @@ returned, for any call that 0.5.0 also accepted.
 
 Subtypes of one state may overlap: two of them can accept the same segment.
 The optimiser chooses by total cost. Two subtypes that accept a segment and
-carry the same penalty cost exactly the same, and the tie goes to the one
-declared first. A catch-all declared last, with the same penalty as the
-others, therefore takes only the segments that no earlier subtype can take
-within the constraints. Precisely, among segmentations of equal objective
-the optimiser takes the least sum of the subtypes' positions. That sum can
-also decide an exact tie between states or boundaries, so declaring
+carry the same penalty cost exactly the same, so declaration order breaks
+the tie. Precisely, among segmentations of equal objective the optimiser
+takes the least sum, over segments, of each subtype's position among its
+state's subtypes. So no segment could, on its own, take an earlier-declared
+subtype that accepts it, at the same penalty, without breaking a
+constraint. A catch-all declared last, at the same penalty, takes no segment
+that could switch alone to an earlier subtype; it can still take one when
+that lets a neighbour take an earlier subtype instead. That sum can also
+decide an exact tie between states or boundaries, so declaring
 subtypes can change which of two equally good segmentations comes back.
 
 Overlap is how a transient's subtype can follow from its neighbours. A
@@ -206,8 +210,8 @@ It runs the optimiser's dynamic program with the breakpoints and states
 fixed and no count caps, durations or penalties: those constrain the
 optimiser's choice of segments, not what a subtype means. It respects
 `transitions`, `initial` and `final`, so a transient between cold and hot is
-typed a heat-up here too, and ties go to the subtype declared first, as in
-the optimiser. On the optimiser's own segments, given the same
+typed a heat-up here too, and ties go by the same least sum of positions as
+in the optimiser. On the optimiser's own segments, given the same
 `transitions`, `initial` and `final`, it returns the optimiser's subtypes
 when the call's caps, durations and penalties name states only. A cap on a
 subtype can make the optimiser put a segment in a catch-all that `classify_segments`,
@@ -237,14 +241,17 @@ while it moves boundaries, and rejects any move after which a segment fails
 its subtype's conditions or the constraints fail. It then types its final
 segments again by the same program, so ties go the same way for every
 method.
-Pruning stays exact: it is decided on a segment's model cost before any
-condition, and once its model is fitted in full a longer segment never
-costs less, whatever subtype could take it.
+Pruning is as exact with subtypes as without: it is decided on a
+segment's model cost before any condition, so whatever subtype could take a
+segment changes nothing about it. Without subtypes, it is exact for least
+squares once a model is fitted in full, except that the exponential models'
+default time-constant bounds scale with the span; give explicit bounds, or
+`prune=False`, for a strict guarantee (*Segment costs* in {doc}`methods`).
 
 Constraints stay hard. When the conditions and constraints leave no
 segmentation, the `ValueError` names the earliest time after which none can
-continue, the period containing it, and the caps and transitions in force.
-In a long batch run, that points to the unusual day. See *Infeasible
+continue, the period containing it, and the caps and transitions in force
+(and `initial` and `final`, when given). In a long batch run, that points to the unusual day. See *Infeasible
 constraints* in {doc}`methods`, which also says what such a call costs.
 When `classify_segments` finds no choice of subtypes, its `ValueError`
 names the earliest segment boundary after which none can continue, and the
@@ -278,5 +285,7 @@ Durations can be set per subtype too: `max_duration_s={"pulse": 60}` caps
 a pulse's length without changing other transients.
 
 The example file checks this scheme with `classify_segments` on a record
-segmented by hand, including a run to low power (no startup, so `other`)
-and a slow excursion to a pulse's height (no pulse, so `other`).
+segmented by hand. Four of its transients are `other`: a rise to low power
+(no startup), an excursion at power that no rod drove (neither a maneuver
+nor a perturbation), a slow excursion to a pulse's height and a fast, low
+bump (neither of them a pulse).

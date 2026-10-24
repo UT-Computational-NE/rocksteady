@@ -442,7 +442,8 @@ the `ValueError` names the earliest candidate time after which none can
 continue: the latest candidate breakpoint $B_k$ that some segmentation
 reaches. It gives that time, the period containing it (its start, as
 {py:func}`~rocksteady.optimal.count_by_period` indexes periods, or "the whole
-record"), and the caps and transitions in force. In a long batch run, that
+record"), and the caps and transitions in force (and `initial` and `final`,
+when given). In a long batch run, that
 points to the unusual day. It does not search for the constraint to blame.
 Naming the time has a cost. With a nonlinear model, an infeasible call
 still fits models up to where every segmentation gets stuck, about as an
