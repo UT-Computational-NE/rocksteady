@@ -239,8 +239,8 @@ def test_a_second_run_on_the_same_file_is_refused(tmp_path, name):
     It would read the first run's mutant as the original, and write it back at the end. The second run starts
     after the first run's first restore: the lock must hold on the file that mutants and restores write.
     """
-    quick = ("quick", "MUTATED = False", "MUTATED = False  # unchanged")
-    spec = _project(tmp_path, [quick, SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
+    restored_first = ("restored first", "MUTATED = False", "MUTATED = False  # unchanged")
+    spec = _project(tmp_path, [restored_first, SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
     (tmp_path / "link.py").symlink_to("calc.py")
     second_spec = tmp_path / "second.py"
     second_spec.write_text(spec.read_text().replace("FILE = 'calc.py'", f"FILE = {name!r}"))

@@ -20,8 +20,7 @@ and the runs write none, so no mutant can run as a cached original. A mutant is 
 or times out (a hanging suite fails in CI too), and survived when it passes. The report, on stdout, has one
 line per mutant: red (with the first failing test), survived, or survived and marked equivalent; errors go to
 stderr. A second run on the same file, by whatever path it names the file, is refused while one is running (the
-lock is on the file itself, so a run leaves nothing in the temp directory); run no other tests in the same
-checkout meanwhile, or they test the mutant.
+lock is on the file itself); run no other tests in the same checkout meanwhile, or they test the mutant.
 
 pytest runs in its own process group, which the tool ends after each run, so no process a test started outlives
 the run. After a timeout or Ctrl-C the group gets SIGTERM and 5 s to end (a run of this tool inside it restores
@@ -129,8 +128,7 @@ def _lock(path):
     """
     Hold a lock on the file itself for this run (an open file the caller keeps), or refuse when another run holds
     it: the second run would read the first one's mutant as the original. The lock is on the inode, so it also
-    holds against a run that names the file by another path (a symlink), and it leaves no file behind. Without
-    fcntl (Windows), no lock.
+    holds against a run that names the file by another path (a symlink). Without fcntl (Windows), no lock.
     """
     try:
         import fcntl  # POSIX only
