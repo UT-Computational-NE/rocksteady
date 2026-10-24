@@ -2,36 +2,43 @@
 
 ## 0.5.1
 
-Caller-defined subtypes for best-fit segments (#55): conditions on a
-segment's level, peak, rise time and events, every constraint naming
-subtypes, `initial` and `final`, and `classify_segments`, with a guide
-section and a worked example (#67). An infeasible `optimal_segments` now
-names where it gets stuck (#62). The docs follow `GLOSSARY.md` (#56), and
-string periods no longer make numpy 2.5 warn (#121).
+Caller-defined subtypes for best-fit segments, with `classify_segments`
+(#55, #67); an infeasibility error that names where it gets stuck (#62);
+docs in the glossary's terms (#56); no numpy 2.5 warnings on pandas 2.x
+(#121).
 
 Upgrading from 0.5.0. Behaviour changes to check:
-- `optimal_segments` refuses two calls that 0.5.0 accepted: a state whose
-  `min_duration_s` exceeds its `max_duration_s` (#117), and a `penalty`
-  mapping that names something other than a state with a model or a
-  subtype (#63).
-- The `ValueError` for an infeasible `optimal_segments` reads differently.
-  It says *constraints*, not limits, and names the time where it gets
+- **Breaking:** `optimal_segments` refuses two calls that 0.5.0 accepted:
+  a state whose `min_duration_s` exceeds its `max_duration_s` (#117), and
+  a `penalty` mapping that names something other than a state with a model
+  or a subtype (#63).
+- Some error messages read differently; code that matches their text needs
+  updating. The `ValueError` for an infeasible `optimal_segments` says
+  *constraints* (0.5.0 said "limits") and names the time where it gets
   stuck, its period, and the caps and transitions in force (#56, #62).
-  Code that matches the message text needs updating.
-- With pruning and a nonlinear model, an infeasible call takes longer: it
-  fits models up to where every segmentation gets stuck. The methods page's
-  example takes about 4 s, where 0.5.0 took 0.02 s (#62). `n_fits` can be
-  lower, as a state capped at 0 is never fitted.
-- Error messages say "sample spacing" for `Timing.sample_period_s`, and
-  `Report.provenance["parameter_reference"]` says "segment centre" for
+  `models` naming an unknown state says which argument and which states
+  are valid (#61). Messages say "sample spacing" for
+  `Timing.sample_period_s` (#56).
+- With pruning and a nonlinear model, an infeasible call takes seconds
+  where 0.5.0 took hundredths: it fits models up to where every
+  segmentation gets stuck (about 4 s against 0.02 s for the methods page's
+  example) (#62).
+- `n_fits` can be lower: a state capped at 0 segments per period is never
+  fitted (#62).
+- `Segment` has a new `subtype` field (None without subtypes), which shows
+  in its `repr` and in `dataclasses.asdict`; `OptimalSegmentation` has
+  `subtypes`, and its `info` holds `"subtypes"` and `"events"` (#61, #65).
+- `Report.provenance["parameter_reference"]` says "segment centre" for
   `poly`, so exported JSON reads differently (#56).
 - On pandas 1.5, an empty `count_by_period` table with numeric periods has
-  a float index, as on later pandas (#75). Past pandas' nanosecond limits,
+  a float index, as on later pandas (#75). Past pandas' nanosecond range,
   clock times raise `OutOfBoundsDatetime` or `OutOfBoundsTimedelta` the
   same way on every supported pandas, and a period string that pandas
-  cannot read raises a `ValueError` that names it (#121).
-- Otherwise, a call with no `subtypes`, `events`, `initial` or `final`
-  returns the segments, objective and counts that 0.5.0 returned.
+  cannot read still raises `ValueError`, now with a message that names it
+  (#121).
+- Otherwise, an `optimal_segments` call with no `subtypes`, `events`,
+  `initial` or `final` returns the segments, objective and counts that
+  0.5.0 returned.
 
 ### Added
 
