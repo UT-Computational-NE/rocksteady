@@ -276,3 +276,7 @@ thresholds and the masks (one per actuator) are the adapter's to choose:
 
 Durations can be set per subtype too: `max_duration_s={"pulse": 60}` caps
 a pulse's length without changing other transients.
+
+The example file checks this scheme with `classify_segments` on a record
+segmented by hand, including a run to low power (no startup, so `other`)
+and a slow excursion to a pulse's height (no pulse, so `other`).

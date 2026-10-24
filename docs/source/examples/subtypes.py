@@ -120,8 +120,11 @@ reactor_transitions = {
 
 
 def reactor_record():
-    """One second per sample: a startup, a maneuver, a perturbation, a shutdown and a pulse, by hand."""
-    seconds = np.arange(3300.0)
+    """
+    One second per sample, segmented by hand: a startup, a maneuver, a perturbation, a shutdown and a pulse;
+    then a run to low power, which is no startup, and a slow excursion to a pulse's height, which is no pulse.
+    """
+    seconds = np.arange(4500.0)
     power = np.full(len(seconds), 0.01)
     power[300:600] = 50.0 * (1 - np.exp(-(seconds[300:600] - 300) / 60))
     power[600:1200] = 50.0
@@ -130,10 +133,14 @@ def reactor_record():
     power[1800:1830] -= 5.0 * np.sin(np.pi * (seconds[1800:1830] - 1800) / 30)
     power[2400:2700] = 80.0 * np.exp(-(seconds[2400:2700] - 2400) / 40)
     power[3001:3060] = 2000.0 * np.exp(-(seconds[3001:3060] - 3001) / 5)
-    cuts = [0, 300, 600, 1200, 1300, 1800, 1830, 2400, 2700, 3000, 3060, 3300]
-    states = ["steady", "transient"] * 5 + ["steady"]
+    power[3300:3400] = 5.0 * (1 - np.exp(-(seconds[3300:3400] - 3300) / 20))
+    power[3400:3600] = 5.0
+    power[3600:3700] = 5.0 * np.exp(-(seconds[3600:3700] - 3600) / 20)
+    power[4000:4100] = 600.0 * np.sin(np.pi * (seconds[4000:4100] - 4000) / 100)
+    cuts = [0, 300, 600, 1200, 1300, 1800, 1830, 2400, 2700, 3000, 3060, 3300, 3400, 3600, 3700, 4000, 4100, 4500]
+    states = ["steady", "transient"] * 8 + ["steady"]
     segs = [rs.Segment(a, b, rs.State(st)) for a, b, st in zip(cuts, cuts[1:], states)]
-    masks = {"control_rods": np.isin(np.arange(len(seconds)), [300, 1200, 2400]),
+    masks = {"control_rods": np.isin(np.arange(len(seconds)), [300, 1200, 2400, 3300, 3600]),
              "perturbing_rod": np.isin(np.arange(len(seconds)), [1800])}
     return seconds, power, segs, masks
 
@@ -143,4 +150,5 @@ reactor_typed = rs.classify_segments(reactor_t, power, segs, subtypes=reactor, e
                                      transitions=reactor_transitions)
 assert [s.subtype for s in reactor_typed] == [
     "zero-power", "startup", "at-power", "maneuver", "at-power", "perturbation",
-    "at-power", "shutdown", "zero-power", "pulse", "zero-power"]
+    "at-power", "shutdown", "zero-power", "pulse", "zero-power",
+    "other", "at-power", "shutdown", "zero-power", "other", "zero-power"]
