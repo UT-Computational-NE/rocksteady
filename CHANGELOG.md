@@ -103,12 +103,15 @@
   `fillna`; the tables are unchanged. On pandas 1.5, a table with no
   segments and a `DatetimeIndex` no longer fails, and an empty one with
   numeric periods has a float index (it was object), as on later pandas (#75).
-- On pandas 2.x, a string `per` (`"1D"`, `"12h"`) and the clock times in
-  reports no longer make numpy warn that a timedelta without a unit is
-  deprecated, which a later numpy will make an error. Periods,
-  counts and clock times are unchanged on pandas 1.5, 2.3 and 3.1, except
-  that on pandas 3 a clock time more than 292 years after the record's
-  start now raises `OutOfBoundsTimedelta`, as on earlier pandas. A string
+- On pandas 2.x with numpy 2.5 or later, a string `per` (`"1D"`, `"12h"`)
+  and the clock times in reports no longer make numpy warn that a timedelta
+  without a unit is deprecated, which a later numpy will make an error.
+  Periods, counts and clock times are unchanged on pandas 1.5, 2.3 and 3.1,
+  except past pandas' nanosecond limits: on pandas 3, a clock time after
+  2262-04-11 now raises `OutOfBoundsDatetime` (`OutOfBoundsTimedelta` 292
+  years or more after the record's start), as on pandas 1.5 and 2.3; on
+  pandas 1.5, one 292 years or more after the start raises
+  `OutOfBoundsTimedelta` where it raised `OverflowError`. A string
   that pandas cannot read as a period still raises `ValueError`, now with
   a message that names it ("Could not convert 'bogus' to NumPy timedelta")
   (#121).
@@ -193,8 +196,10 @@
   filter). The golden comparison in `tests/test_regression.py` casts its
   text columns to object before filling a missing entry with `""`, as
   pandas 3.1 asks of a column without text, which reads as float64 (#109).
-- numpy's DeprecationWarning for a timedelta without a unit fails the test
-  that raises it, as a FutureWarning does (#121).
+- numpy's `DeprecationWarning` for a timedelta without a unit fails the
+  test that raises it, as a `FutureWarning` does. A new CI job,
+  `pandas2-numpy25` (Python 3.13, pandas 2.3, numpy 2.5), is where numpy
+  raises it; the test jobs never do (#121).
 - pytest imports the checkout's own `src/` (`pythonpath` in
   `pyproject.toml`; the `test` extra needs `pytest>=7`), even where the
   environment's editable install points at another checkout, and so do
