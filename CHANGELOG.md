@@ -237,7 +237,11 @@
   A mutant whose tests hang is stopped after a timeout (`TIMEOUT`, or ten
   times the unmutated run, at least 60 s) and counts as red. The file's
   cached bytecode is deleted first, so a same-length mutant cannot run as
-  the cached original, and a second run on the same file is refused.
+  the cached original, and a second run on the same file is refused, by
+  whatever path it names the file (a symlink or a hard link). That lock is
+  on the file itself, opened for writing (an exclusive flock over NFS needs
+  it), so the tool leaves nothing in the temp directory; a file it cannot
+  write or lock is refused as such (#124).
   `docs/agents/review.md` points the mutant probe at it.
 
 ## 0.5.0
