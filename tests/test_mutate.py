@@ -233,13 +233,29 @@ def test_an_interrupt_before_any_mutant_says_the_file_is_unchanged(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file locks")
-def test_a_second_run_on_the_same_file_is_refused(tmp_path):
-    """It would read the first run's mutant as the original, and write it back at the end."""
-    spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
-    with _running(tmp_path, spec, lambda: (tmp_path / "calc.py").read_text() != SLOW_CALC):
-        second = _mutate(tmp_path, spec)
+@pytest.mark.parametrize("name", ["calc.py", "./calc.py", "link.py"], ids=["same path", "another path", "a symlink"])
+def test_a_second_run_on_the_same_file_is_refused(tmp_path, name):
+    """
+    It would read the first run's mutant as the original, and write it back at the end. The second run starts
+    after the first run's first restore: the lock must hold on the file that mutants and restores write.
+    """
+    restored_first = ("restored first", "MUTATED = False", "MUTATED = False  # unchanged")
+    spec = _project(tmp_path, [restored_first, SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
+    (tmp_path / "link.py").symlink_to("calc.py")
+    second_spec = tmp_path / "second.py"
+    second_spec.write_text(spec.read_text().replace("FILE = 'calc.py'", f"FILE = {name!r}"))
+    with _running(tmp_path, spec, lambda: (tmp_path / "calc.py").read_text() == "MUTATED = True\n"):
+        second = _mutate(tmp_path, second_spec)
     assert (second.returncode, second.stdout) == (2, "")
-    assert second.stderr == "mutate.py: another mutate.py run is mutating calc.py; wait for it to end\n"
+    assert second.stderr == f"mutate.py: another mutate.py run is mutating {name}; wait for it to end\n"
+
+
+def test_a_run_leaves_nothing_in_the_temp_directory(tmp_path):
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    run = _mutate(tmp_path, _project(tmp_path, [GUARD]), _env(TMPDIR=str(temp)))
+    assert (run.returncode, run.stdout) == (0, CAUGHT + "\n"), run.stderr
+    assert not list(temp.iterdir())
 
 
 def test_a_selection_that_fails_without_mutants_is_refused(tmp_path):

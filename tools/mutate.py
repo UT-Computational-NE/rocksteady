@@ -19,8 +19,8 @@ or the run is interrupted (a second Ctrl-C waits for the restore). The file's ca
 and the runs write none, so no mutant can run as a cached original. A mutant is red when pytest exits non-zero
 or times out (a hanging suite fails in CI too), and survived when it passes. The report, on stdout, has one
 line per mutant: red (with the first failing test), survived, or survived and marked equivalent; errors go to
-stderr. A second run on the same file is refused while one is running; run no other tests in the same checkout
-meanwhile, or they test the mutant.
+stderr. A second run on the same file, by whatever path it names the file, is refused while one is running (the
+lock is on the file itself); run no other tests in the same checkout meanwhile, or they test the mutant.
 
 pytest runs in its own process group, which the tool ends after each run, so no process a test started outlives
 the run. After a timeout or Ctrl-C the group gets SIGTERM and 5 s to end (a run of this tool inside it restores
@@ -35,14 +35,12 @@ name) or the selection fails before any mutant, all checked before a mutant is w
 
 import collections
 import glob
-import hashlib
 import importlib.util
 import os
 import runpy
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from numbers import Real
 from typing import NamedTuple, Optional
@@ -128,15 +126,15 @@ def timeout(baseline_s, given):
 
 def _lock(path):
     """
-    Hold a lock on the file for this run (an open file the caller keeps), or refuse when another run holds it:
-    the second run would read the first one's mutant as the original. Without fcntl (Windows), no lock.
+    Hold a lock on the file itself for this run (an open file the caller keeps), or refuse when another run holds
+    it: the second run would read the first one's mutant as the original. The lock is on the inode, so it also
+    holds against a run that names the file by another path (a symlink). Without fcntl (Windows), no lock.
     """
     try:
         import fcntl  # POSIX only
     except ImportError:
         return None
-    key = hashlib.sha256(os.path.realpath(path).encode()).hexdigest()[:16]
-    handle = open(os.path.join(tempfile.gettempdir(), f"mutate-{key}.lock"), "w", encoding="utf-8")
+    handle = open(path, "rb")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -222,7 +220,11 @@ def _run(select, limit):
 
 
 def _restore(path, original, stat):
-    """Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done."""
+    """
+    Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done. It writes in
+    place, to the same inode, as the mutants do: ``_lock`` holds that inode, so a write to a new file swapped in
+    (``os.replace``) would let a second run take the lock.
+    """
     mask = getattr(signal, "pthread_sigmask", None)  # POSIX
     if mask:
         mask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
