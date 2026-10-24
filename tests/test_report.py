@@ -151,6 +151,17 @@ def test_empty_records_keep_their_schema(index):  # #21
     assert {"bias", "t_start_s", "t_end_s"} <= set(comp["a"].by_interval.columns)
 
 
+def test_a_clock_time_keeps_the_whole_nanoseconds_below_it():
+    # 59.9999999996 s is 0.4 ns short of a minute: the clock truncates to 59.999999999 s, not rounds to 60 s.
+    from rocksteady.report import _clock
+
+    origin = pd.Timestamp("2026-01-12 06:00")
+    assert _clock(59.9999999996, origin) == "06:00:59"
+    assert _clock(59.9999999996, origin, multi_day=True) == "01-12 06:00:59"
+    assert _clock(60.0, origin) == "06:01:00"
+    assert _clock(59.9999999996, None) == "60 s"
+
+
 def test_formatter_snapshot():
     _, _, fits, comp = build()
     text = fits.to_string() + "\n\n" + comp.to_string() + "\n"
