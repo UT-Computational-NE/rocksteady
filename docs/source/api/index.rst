@@ -2,7 +2,8 @@ API reference
 =============
 
 The names most code needs are re-exported from the package, e.g. ``rs.Detector``,
-``rs.DriftCriterion``, ``rs.segments_from``, ``rs.optimal_segments``.
+``rs.DriftCriterion``, ``rs.segments_from``, ``rs.optimal_segments``, ``rs.Subtype``,
+``rs.classify_segments``.
 
 .. automodule:: rocksteady
    :no-members:

@@ -46,6 +46,10 @@ _Avoid_: kind, class, category, label, regime, mode
 A test on a segment alone (its level, peak, rise time, or whether it contains an event) that it must meet to take a subtype.
 _Avoid_: rule, criterion, filter
 
+**Event mask**:
+A named boolean series with one value per sample, flagging the samples at which an event occurred; a subtype's event condition reads it.
+_Avoid_: event (for the mask), flags, trigger
+
 **Best-fit segment**:
 A segment chosen by the optimiser to describe a finished record as well as possible within its constraints; it is not certified steady by the detector.
 _Avoid_: optimal state, detected segment
