@@ -1,6 +1,7 @@
 """tools/mutate.py: each mutant applied alone, the selection run, the file restored byte for byte (#101)."""
 
 import contextlib
+import errno
 import importlib.util
 import os
 import signal
@@ -26,13 +27,17 @@ SLOW_TEST = ("import time\n\nimport calc\n\nSLOW = {}\n\n\ndef test_slow():\n"
 SLOW = ("slow", "False", "True")
 
 
+def _spec(spec, file, mutants, extra=""):
+    """A spec at ``spec`` that mutates ``file`` (``extra`` appended); returns its path."""
+    spec.write_text(f"FILE = {file!r}\nSELECT = {SELECT!r}\nMUTANTS = {mutants!r}\n{extra}")
+    return spec
+
+
 def _project(tmp_path, mutants, calc=CALC, tests=TEST_CALC, extra=""):
     """A module, its tests and a spec (``extra`` appended) in ``tmp_path``; returns the spec's path."""
     (tmp_path / "calc.py").write_bytes(calc.encode() if isinstance(calc, str) else calc)
     (tmp_path / "test_calc.py").write_text(tests)
-    spec = tmp_path / "mutants.py"
-    spec.write_text(f"FILE = 'calc.py'\nSELECT = {SELECT!r}\nMUTANTS = {mutants!r}\n{extra}")
-    return spec
+    return _spec(tmp_path / "mutants.py", "calc.py", mutants, extra)
 
 
 def _env(**extra):
@@ -233,7 +238,8 @@ def test_an_interrupt_before_any_mutant_says_the_file_is_unchanged(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file locks")
-@pytest.mark.parametrize("name", ["calc.py", "./calc.py", "link.py"], ids=["same path", "another path", "a symlink"])
+@pytest.mark.parametrize("name", ["calc.py", "./calc.py", "link.py", "hard.py"],
+                         ids=["same path", "a ./ path", "a symlink", "a hard link"])
 def test_a_second_run_on_the_same_file_is_refused(tmp_path, name):
     """
     It would read the first run's mutant as the original, and write it back at the end. The second run starts
@@ -242,12 +248,43 @@ def test_a_second_run_on_the_same_file_is_refused(tmp_path, name):
     restored_first = ("restored first", "MUTATED = False", "MUTATED = False  # unchanged")
     spec = _project(tmp_path, [restored_first, SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
     (tmp_path / "link.py").symlink_to("calc.py")
-    second_spec = tmp_path / "second.py"
-    second_spec.write_text(spec.read_text().replace("FILE = 'calc.py'", f"FILE = {name!r}"))
+    os.link(tmp_path / "calc.py", tmp_path / "hard.py")  # the same inode: realpath leads from neither name to the other
+    second_spec = _spec(tmp_path / "second.py", name, [restored_first, SLOW])
     with _running(tmp_path, spec, lambda: (tmp_path / "calc.py").read_text() == "MUTATED = True\n"):
         second = _mutate(tmp_path, second_spec)
     assert (second.returncode, second.stdout) == (2, "")
     assert second.stderr == f"mutate.py: another mutate.py run is mutating {name}; wait for it to end\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX file locks; root writes anyway")
+def test_a_file_the_tool_cannot_write_is_refused_before_any_test_runs(tmp_path):
+    """The lock opens the file for writing: over NFS an exclusive flock needs that, and every mutant writes it."""
+    spec = _project(tmp_path, [GUARD])
+    (tmp_path / "conftest.py").write_text("open('ran', 'w').close()\n")
+    (tmp_path / "calc.py").chmod(0o444)
+    run = _mutate(tmp_path, spec)
+    assert (run.returncode, run.stdout) == (2, "")
+    assert run.stderr == "mutate.py: cannot lock calc.py: [Errno 13] Permission denied: 'calc.py'\n"
+    assert not (tmp_path / "ran").exists() and (tmp_path / "calc.py").read_text() == CALC
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file locks")
+def test_a_lock_that_fails_for_another_reason_is_not_called_another_run(tmp_path, monkeypatch, capsys):
+    """Only a lock another process holds is contention; NFS, say, can fail the flock itself."""
+    import fcntl  # POSIX only
+
+    def unsupported(fd, operation):
+        raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+
+    tool = _load_tool()
+    spec = _project(tmp_path, [GUARD])
+    monkeypatch.setattr(fcntl, "flock", unsupported)
+    monkeypatch.setattr(tool.signal, "signal", lambda *args: None)  # leave this process's handlers alone
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        tool.main([str(spec)])
+    assert stop.value.code == 2
+    assert capsys.readouterr().err == f"mutate.py: cannot lock calc.py: [Errno 9] {os.strerror(errno.EBADF)}\n"
 
 
 def test_a_run_leaves_nothing_in_the_temp_directory(tmp_path):
