@@ -40,17 +40,16 @@ Upgrading from 0.5.1. Behaviour changes to check:
   error opened "these segments cannot be typed: no choice of subtypes
   satisfies the transitions, first and last segments and the subtypes'
   conditions"; it now opens "these segments cannot be typed: they do not
-  satisfy the transitions". A call that uses only some of subtypes,
-  `initial` and `final` changes its opening too: it keeps only the clauses
-  it uses (see Changed). With `initial` or `final` but no subtypes,
-  `optimal_segments` drops " and the subtypes' conditions", and
-  `classify_segments`' error opens "these segments cannot be typed: they do
-  not satisfy the transitions, first and last segments"; with subtypes but
-  neither `initial` nor `final`, both drop ", first and last segments".
-  Only a call with subtypes and also `initial` or `final` keeps 0.5.1's
-  opening; an empty `subtypes` counts as none. Matching "no
-  segmentation satisfies the constraints" or "these segments cannot be
-  typed" still works.
+  satisfy the transitions". A call with subtypes but neither `initial` nor
+  `final`, or with `initial` or `final` but no subtypes (an empty
+  `subtypes` counts as none), changes its opening too: it keeps only the
+  clauses it uses (see Changed). In the first case, both openings drop ",
+  first and last segments". In the second, `optimal_segments` drops " and
+  the subtypes' conditions", and `classify_segments`' error opens "these
+  segments cannot be typed: they do not satisfy the transitions, first and
+  last segments". Only a call with subtypes and also `initial` or `final`
+  keeps 0.5.1's opening. Matching "no segmentation satisfies the
+  constraints" or "these segments cannot be typed" still works.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
 
