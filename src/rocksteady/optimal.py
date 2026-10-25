@@ -203,10 +203,14 @@ def _refuse_unitless(per) -> None:
 
 
 def _is_missing(x) -> bool:
-    """Whether ``x`` is a missing scalar (``pd.NA``, ``pd.NaT``, a numpy NaT), which pandas 1.5 cannot always convert."""
+    """
+    Whether ``x`` is ``pd.NA`` or a numpy timedelta NaT, which pandas reads
+    as NaT but pandas 1.5 cannot convert (``pd.Timedelta(np.timedelta64("NaT",
+    "h"))`` raises).
+    """
     import pandas as pd
 
-    return bool(pd.api.types.is_scalar(x) and pd.isna(x))
+    return x is pd.NA or (isinstance(x, np.timedelta64) and bool(np.isnat(x)))
 
 
 def _origin_seconds(period_origin) -> float:
