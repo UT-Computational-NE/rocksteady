@@ -23,6 +23,12 @@
   positive number of seconds". This applies to `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` (#144).
 
+### Documentation
+
+- `docs/agents/coding-standards.md`: a restatement keeps the code's
+  qualifiers; prose that restates what the code does carries over each
+  qualifier its source states, such as "on its own" (#133).
+
 ### Tests and CI
 
 - The wall-clock test of `period_origin` pins each accepted form beside a
