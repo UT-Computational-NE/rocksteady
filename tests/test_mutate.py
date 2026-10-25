@@ -23,7 +23,7 @@ CAUGHT = "guard: red (test_calc.py::test_negative_is_clamped)"
 # A test that sleeps once calc.MUTATED is True, or always (SLOW = True): a run to interrupt.
 SLOW_CALC = "MUTATED = False\n"
 SLOW_TEST = ("import time\n\nimport calc\n\nSLOW = {}\n\n\ndef test_slow():\n"
-             "    if calc.MUTATED or SLOW:\n        time.sleep(60)\n")
+             "    if calc.MUTATED or SLOW:\n        time.sleep(120)\n")
 SLOW = ("slow", "False", "True")
 
 
@@ -185,7 +185,7 @@ def test_a_mutant_whose_tests_hang_times_out_red_and_the_rest_still_run(tmp_path
     (tmp_path / "conftest.py").write_text("import time\n\ntime.sleep(3)\n")
     started = time.monotonic()
     run = _mutate(tmp_path, spec)
-    assert time.monotonic() - started < 50  # well under the slow test's 60 s sleep: the hang was stopped
+    assert time.monotonic() - started < 60  # half the slow test's 120 s sleep: the hang was stopped
     assert run.stdout.splitlines() == ["slow: red (timed out after 20 s)", "quick: survived"], run.stderr
     assert run.returncode == 1 and (tmp_path / "calc.py").read_text() == SLOW_CALC
 
@@ -337,10 +337,13 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
     """Decided on #101: a timed-out mutant's run is killed, all of it; an interrupted or finished one too."""
     wait = "while not os.path.exists('child.pid'): time.sleep(0.05)" if how == "left behind" else "time.sleep(60)"
     spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=CHILD_TEST.format(wait),
-                    extra="TIMEOUT = 4\n" if how == "timeout" else "")
+                    extra="TIMEOUT = 20\n" if how == "timeout" else "")
     if how == "timeout":
+        # Every pytest start-up takes 3 s longer, as on a loaded machine; the unmutated run still ends, and the
+        # child still starts, within TIMEOUT.
+        (tmp_path / "conftest.py").write_text("import time\n\ntime.sleep(3)\n")
         run = _mutate(tmp_path, spec)
-        assert run.stdout == "slow: red (timed out after 4 s)\n", run.stderr
+        assert run.stdout == "slow: red (timed out after 20 s)\n", run.stderr
     elif how == "left behind":  # the test passes and leaves its child running
         run = _mutate(tmp_path, spec)
         assert run.stdout == "slow: survived\n", run.stderr

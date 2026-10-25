@@ -8,7 +8,13 @@
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
   the test's project slows every pytest start-up by 3 s, so the test
-  itself shows the headroom. It takes about 27 s (#134).
+  itself shows the headroom. It takes about 27 s (#134). Its bound on the
+  whole run is now 60 s and its slow test sleeps 120 s: at 50 s against a
+  60 s sleep, the bound gave out under load before `TIMEOUT` did (#148).
+- The `[timeout]` case of `test_a_process_a_test_started_ends_with_the_run`
+  gets the same headroom. Its `TIMEOUT` of 4 s also bound the unmutated
+  run, and the mutant's run until it started its child; it is now 20 s,
+  with every pytest start-up in its project 3 s slower (#147).
 
 ## 0.5.1
 
