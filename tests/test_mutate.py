@@ -22,9 +22,13 @@ GUARD = ("guard", "    if x < 0:", "    if False:")  # the tests catch it: clamp
 CAUGHT = "guard: red (test_calc.py::test_negative_is_clamped)"
 # A test that sleeps once calc.MUTATED is True, or always (SLOW = True): a run to interrupt.
 SLOW_CALC = "MUTATED = False\n"
-SLOW_TEST = ("import time\n\nimport calc\n\nSLOW = {}\n\n\ndef test_slow():\n"
-             "    if calc.MUTATED or SLOW:\n        time.sleep(120)\n")
+_SLEEPING_TEST = ("import time\n\nimport calc\n\nSLOW = {{}}\n\n\ndef test_slow():\n"
+                  "    if calc.MUTATED or SLOW:\n        time.sleep({})\n")
+SLOW_TEST = _SLEEPING_TEST.format(60)
+HANG_TEST = _SLEEPING_TEST.format(120)  # sleeps twice as long as the hang test's bound on the whole run
 SLOW = ("slow", "False", "True")
+# A conftest.py that makes every pytest start-up in its project 3 s slower, as on a loaded machine.
+SLOW_START = "import time\n\ntime.sleep(3)\n"
 
 
 def _spec(spec, file, mutants, extra=""):
@@ -180,12 +184,11 @@ def test_cached_bytecode_cannot_hide_a_mutant(tmp_path, prefix):
 def test_a_mutant_whose_tests_hang_times_out_red_and_the_rest_still_run(tmp_path):
     """Decided on #101: a hang fails in CI too."""
     spec = _project(tmp_path, [SLOW, ("quick", "MUTATED = False", "MUTATED = False  # unchanged")],
-                    calc=SLOW_CALC, tests=SLOW_TEST.format(False), extra="TIMEOUT = 20\n")
-    # Every pytest start-up takes 3 s longer, as on a loaded machine; the quick mutant still finishes in TIMEOUT.
-    (tmp_path / "conftest.py").write_text("import time\n\ntime.sleep(3)\n")
+                    calc=SLOW_CALC, tests=HANG_TEST.format(False), extra="TIMEOUT = 20\n")
+    (tmp_path / "conftest.py").write_text(SLOW_START)  # the unmutated run and quick still end within TIMEOUT
     started = time.monotonic()
     run = _mutate(tmp_path, spec)
-    assert time.monotonic() - started < 60  # half the slow test's 120 s sleep: the hang was stopped
+    assert time.monotonic() - started < 60  # a hang not stopped would take over 120 s
     assert run.stdout.splitlines() == ["slow: red (timed out after 20 s)", "quick: survived"], run.stderr
     assert run.returncode == 1 and (tmp_path / "calc.py").read_text() == SLOW_CALC
 
@@ -339,9 +342,8 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
     spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=CHILD_TEST.format(wait),
                     extra="TIMEOUT = 20\n" if how == "timeout" else "")
     if how == "timeout":
-        # Every pytest start-up takes 3 s longer, as on a loaded machine; the unmutated run still ends, and the
-        # child still starts, within TIMEOUT.
-        (tmp_path / "conftest.py").write_text("import time\n\ntime.sleep(3)\n")
+        # The unmutated run still ends, and the child still starts, within TIMEOUT.
+        (tmp_path / "conftest.py").write_text(SLOW_START)
         run = _mutate(tmp_path, spec)
         assert run.stdout == "slow: red (timed out after 20 s)\n", run.stderr
     elif how == "left behind":  # the test passes and leaves its child running
