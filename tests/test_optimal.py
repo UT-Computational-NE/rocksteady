@@ -612,13 +612,14 @@ def test_an_infeasible_record_without_periods_is_named_whole():
 
 @pytest.mark.parametrize("kw, opening", [
     ({}, "(counts, durations, transitions) on"),
+    ({"subtypes": {}}, "(counts, durations, transitions) on"),
     ({"subtypes": {"cold": rs.Subtype("steady")}}, "(counts, durations, transitions) and the subtypes' conditions on"),
     ({"initial": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
     ({"final": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
     ({"subtypes": {"cold": rs.Subtype("steady")}, "final": ["cold"]},
      "(counts, durations, transitions, first and last segments) and the subtypes' conditions on"),
 ])
-def test_an_infeasible_call_names_only_the_constraints_it_uses(kw, opening):
+def test_an_infeasible_call_names_only_what_it_uses(kw, opening):
     # One segment of at most 4 s cannot cover 10 s. The message names the first and last segments only when
     # initial or final is given, and the subtypes' conditions only when there are subtypes.
     t = np.arange(10.0)

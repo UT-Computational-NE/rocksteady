@@ -4,13 +4,13 @@
 
 ### Changed
 
-- The `ValueError` for an infeasible `optimal_segments` names only the
-  constraints the call uses: "first and last segments" only when `initial`
-  or `final` is given, and "the subtypes' conditions" only with
-  `subtypes`. Without them it opens "no segmentation satisfies the
-  constraints (counts, durations, transitions) on these candidate
-  breakpoints". `classify_segments`' error names "first and last segments"
-  only when `initial` or `final` is given (#137).
+- The `ValueError` for an infeasible `optimal_segments` names only what
+  the call uses: "first and last segments" only when `initial` or `final`
+  is given, and "the subtypes' conditions" only with subtypes. Without
+  them it opens "no segmentation satisfies the constraints (counts,
+  durations, transitions) on these candidate breakpoints".
+  `classify_segments`' error names "first and last segments" only when
+  `initial` or `final` is given (#137).
 
 ## 0.5.1
 
