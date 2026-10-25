@@ -6,6 +6,7 @@ import math
 import pickle
 import re
 import warnings
+import zoneinfo
 
 import numpy as np
 import pandas as pd
@@ -284,16 +285,73 @@ def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
 
 
-@pytest.mark.parametrize("origin", ["2026-03-02 01:00", pd.Timestamp("2026-03-02 01:00", tz="America/Chicago")],
-                         ids=["naive", "aware"])
+@pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA],
+                         ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"])
+def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused_by_name(origin):
+    # An origin that is not a finite number of seconds would put every sample in one period; the error names it.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"period_origin must be a finite number of seconds, got {re.escape(repr(origin))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, 7200, period_origin=origin)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
+
+
+@pytest.mark.parametrize("per", [pd.NaT, pd.NA], ids=["pd.NaT", "pd.NA"])
+def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"per must be a positive number of seconds, got {re.escape(repr(per))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, per)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=per)
+
+
+_CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
+
+
+@pytest.mark.parametrize("origin", [
+    pytest.param("2026-03-02 01:00", id="naive str"),
+    pytest.param(pd.Timestamp("2026-03-02 01:00"), id="naive Timestamp"),
+    pytest.param(datetime.datetime(2026, 3, 2, 1), id="naive datetime"),
+    pytest.param(np.datetime64("2026-03-02T01:00", "ns"), id="np.datetime64 ns"),
+    pytest.param(np.datetime64("2026-03-02T01:00", "m"), id="np.datetime64 m"),
+    pytest.param(pd.Timestamp("2026-03-02 01:00", tz="America/Chicago"), id="aware Timestamp"),
+    pytest.param(datetime.datetime(2026, 3, 2, 1, tzinfo=_CHICAGO), id="aware datetime"),
+    # The same instant in other zones: 07:00 UTC, 02:00 New York. Read on their own clocks, they would start
+    # periods at 23:00 and give [3, 3], or at 02:00 and give [2, 4].
+    pytest.param(pd.Timestamp("2026-03-02 07:00", tz="UTC"), id="aware Timestamp, UTC"),
+    pytest.param(datetime.datetime(2026, 3, 2, 7, tzinfo=datetime.timezone.utc), id="aware datetime, UTC"),
+    pytest.param(pd.Timestamp("2026-03-02 02:00", tz="America/New_York"), id="aware Timestamp, New York"),
+])
 def test_a_period_origin_is_read_on_the_wall_clock(origin):
-    # Four-hour periods from 01:00 local, whether or not the origin carries the zone. Chicago is UTC-6, which is
-    # not a whole number of periods: read in UTC, the origin would start them at 23:00 and give [3, 3].
+    # Four-hour periods from 01:00 local, whether the origin is naive or an aware time in any zone. Chicago is
+    # UTC-6, which is not a whole number of periods: read in UTC, the origin would start them at 23:00 and give
+    # [3, 3].
     idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
-    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h", period_origin=origin)
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    starts = [pd.Timestamp("2026-03-01 21:00"), pd.Timestamp("2026-03-02 01:00"), pd.Timestamp("2026-03-02 05:00")]
+    counts = count_by_period(segs, idx, "4h", period_origin=origin)
     assert counts["steady"].tolist() == [1, 4, 1]
-    assert list(counts.index) == [pd.Timestamp("2026-03-01 21:00"), pd.Timestamp("2026-03-02 01:00"),
-                                  pd.Timestamp("2026-03-02 05:00")]
+    assert list(counts.index) == starts
+    # The cap binds per period: one segment in each of the three periods.
+    result = optimal_segments(idx, np.arange(6.0), {"steady": 0}, per="4h", period_origin=origin,
+                              max_counts={"steady": 1}, method="exact")
+    assert [(s.start, s.stop) for s in result.segments] == [(0, 1), (1, 5), (5, 6)]
+    assert list(result.counts.index) == starts
+
+
+def test_an_aware_period_origin_beside_a_naive_index_keeps_its_own_clock():
+    # A naive index has no zone to convert to: 02:00 in New York starts periods at 02:00 on the index's clock, so
+    # four-hour periods start at 22:00 and 02:00 and hourly samples from midnight fall [2, 4]. Read in UTC (07:00),
+    # they would start at 23:00 and give [3, 3].
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h",
+                             period_origin=pd.Timestamp("2026-03-02 02:00", tz="America/New_York"))
+    assert counts["steady"].tolist() == [2, 4]
+    assert list(counts.index) == [pd.Timestamp("2026-03-01 22:00"), pd.Timestamp("2026-03-02 02:00")]
 
 
 @pytest.mark.parametrize("origin", _NUMBERS)
