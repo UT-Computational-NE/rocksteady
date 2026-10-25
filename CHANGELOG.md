@@ -69,9 +69,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   them it opens "no segmentation satisfies the constraints (counts,
   durations, transitions) on these candidate breakpoints".
   `classify_segments`' error does the same, and without subtypes it says
-  the segments "do not satisfy the transitions" instead of "no choice of
-  subtypes satisfies the transitions and the subtypes' conditions"
-  (#137).
+  the segments "do not satisfy the transitions" instead of naming a choice
+  of subtypes and their conditions (#137).
 
 ### Fixed
 
