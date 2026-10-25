@@ -14,8 +14,8 @@ py="${PYTHON:-python}"
 # Agent shells can inherit another environment's python first on PATH: say which one runs, and stop early
 # when it lacks the extra the run needs: dev (mypy, the `lint` extra's pylint and pycodestyle, and the modules of
 # the `test` and `docs` extras in pyproject.toml), or only test for a selection.
-selection=$([ $# -gt 0 ] && echo yes || echo no)
-if [ "$selection" = yes ]; then
+selection=$#  # the number of pytest arguments; 0 for the full run
+if [ "$selection" -gt 0 ]; then
   extra=test; needs=(pytest)
 else
   extra=dev; needs=(pytest mypy pylint pycodestyle sphinx sphinx_rtd_theme myst_parser)
@@ -45,7 +45,7 @@ for dist in sys.argv[1:]:
   exit 1
 fi
 "$py" -m pytest -m "not slow" -q "$@"  # with arguments, only that selection; a later -m overrides "not slow"
-if [ "$selection" = yes ]; then
+if [ "$selection" -gt 0 ]; then
   echo "check.sh: the selected tests passed; no mypy, lint or docs build"
   exit 0
 fi
