@@ -444,7 +444,7 @@ class Timing:
         _v.finite(self.grid_tolerance, "Timing.grid_tolerance")
         if not 0 < self.grid_tolerance <= 0.5:
             raise ValueError(f"grid_tolerance must be in (0, 0.5] sample spacings, got {self.grid_tolerance!r}")
-        if self.block_s < self.sample_period_s * (1 - 1e-9):
+        if cast(float, self.block_s) < self.sample_period_s * (1 - 1e-9):  # None was rejected above
             raise ValueError(f"block_s ({self.block_s}) must be at least one sample spacing ({self.sample_period_s})")
 
     # block_s and window_s are None only until __post_init__ rejects them, so they are floats from here on.

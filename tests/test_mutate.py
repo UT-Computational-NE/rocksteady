@@ -1,6 +1,7 @@
 """tools/mutate.py: each mutant applied alone, the selection run, the file restored byte for byte (#101)."""
 
 import contextlib
+import errno
 import importlib.util
 import os
 import signal
@@ -21,18 +22,26 @@ GUARD = ("guard", "    if x < 0:", "    if False:")  # the tests catch it: clamp
 CAUGHT = "guard: red (test_calc.py::test_negative_is_clamped)"
 # A test that sleeps once calc.MUTATED is True, or always (SLOW = True): a run to interrupt.
 SLOW_CALC = "MUTATED = False\n"
-SLOW_TEST = ("import time\n\nimport calc\n\nSLOW = {}\n\n\ndef test_slow():\n"
-             "    if calc.MUTATED or SLOW:\n        time.sleep(60)\n")
+_SLEEPING_TEST = ("import time\n\nimport calc\n\nSLOW = {{}}\n\n\ndef test_slow():\n"
+                  "    if calc.MUTATED or SLOW:\n        time.sleep({})\n")
+SLOW_TEST = _SLEEPING_TEST.format(60)
+HANG_TEST = _SLEEPING_TEST.format(120)  # sleeps twice as long as the hang test's bound on the whole run
 SLOW = ("slow", "False", "True")
+# A conftest.py that makes every pytest start-up in its project 3 s slower, as on a loaded machine.
+SLOW_START = "import time\n\ntime.sleep(3)\n"
+
+
+def _spec(spec, file, mutants, extra=""):
+    """A spec at ``spec`` that mutates ``file`` (``extra`` appended); returns its path."""
+    spec.write_text(f"FILE = {file!r}\nSELECT = {SELECT!r}\nMUTANTS = {mutants!r}\n{extra}")
+    return spec
 
 
 def _project(tmp_path, mutants, calc=CALC, tests=TEST_CALC, extra=""):
     """A module, its tests and a spec (``extra`` appended) in ``tmp_path``; returns the spec's path."""
     (tmp_path / "calc.py").write_bytes(calc.encode() if isinstance(calc, str) else calc)
     (tmp_path / "test_calc.py").write_text(tests)
-    spec = tmp_path / "mutants.py"
-    spec.write_text(f"FILE = 'calc.py'\nSELECT = {SELECT!r}\nMUTANTS = {mutants!r}\n{extra}")
-    return spec
+    return _spec(tmp_path / "mutants.py", "calc.py", mutants, extra)
 
 
 def _env(**extra):
@@ -175,11 +184,12 @@ def test_cached_bytecode_cannot_hide_a_mutant(tmp_path, prefix):
 def test_a_mutant_whose_tests_hang_times_out_red_and_the_rest_still_run(tmp_path):
     """Decided on #101: a hang fails in CI too."""
     spec = _project(tmp_path, [SLOW, ("quick", "MUTATED = False", "MUTATED = False  # unchanged")],
-                    calc=SLOW_CALC, tests=SLOW_TEST.format(False), extra="TIMEOUT = 3\n")
+                    calc=SLOW_CALC, tests=HANG_TEST.format(False), extra="TIMEOUT = 20\n")
+    (tmp_path / "conftest.py").write_text(SLOW_START)  # the unmutated run and quick still end within TIMEOUT
     started = time.monotonic()
     run = _mutate(tmp_path, spec)
-    assert time.monotonic() - started < 50
-    assert run.stdout.splitlines() == ["slow: red (timed out after 3 s)", "quick: survived"], run.stderr
+    assert time.monotonic() - started < 60  # a hang not stopped would take over 120 s
+    assert run.stdout.splitlines() == ["slow: red (timed out after 20 s)", "quick: survived"], run.stderr
     assert run.returncode == 1 and (tmp_path / "calc.py").read_text() == SLOW_CALC
 
 
@@ -233,13 +243,61 @@ def test_an_interrupt_before_any_mutant_says_the_file_is_unchanged(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file locks")
-def test_a_second_run_on_the_same_file_is_refused(tmp_path):
-    """It would read the first run's mutant as the original, and write it back at the end."""
-    spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
-    with _running(tmp_path, spec, lambda: (tmp_path / "calc.py").read_text() != SLOW_CALC):
-        second = _mutate(tmp_path, spec)
+@pytest.mark.parametrize("name", ["calc.py", "./calc.py", "link.py", "hard.py"],
+                         ids=["same path", "a ./ path", "a symlink", "a hard link"])
+def test_a_second_run_on_the_same_file_is_refused(tmp_path, name):
+    """
+    It would read the first run's mutant as the original, and write it back at the end. The second run starts
+    after the first run's first restore: the lock must hold on the file that mutants and restores write.
+    """
+    restored_first = ("restored first", "MUTATED = False", "MUTATED = False  # unchanged")
+    spec = _project(tmp_path, [restored_first, SLOW], calc=SLOW_CALC, tests=SLOW_TEST.format(False))
+    (tmp_path / "link.py").symlink_to("calc.py")
+    os.link(tmp_path / "calc.py", tmp_path / "hard.py")  # the same inode: realpath leads from neither name to the other
+    second_spec = _spec(tmp_path / "second.py", name, [restored_first, SLOW])
+    with _running(tmp_path, spec, lambda: (tmp_path / "calc.py").read_text() == "MUTATED = True\n"):
+        second = _mutate(tmp_path, second_spec)
     assert (second.returncode, second.stdout) == (2, "")
-    assert second.stderr == "mutate.py: another mutate.py run is mutating calc.py; wait for it to end\n"
+    assert second.stderr == f"mutate.py: another mutate.py run is mutating {name}; wait for it to end\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX file locks; root writes anyway")
+def test_a_file_the_tool_cannot_write_is_refused_before_any_test_runs(tmp_path):
+    """The lock opens the file for writing: over NFS an exclusive flock needs that, and every mutant writes it."""
+    spec = _project(tmp_path, [GUARD])
+    (tmp_path / "conftest.py").write_text("open('ran', 'w').close()\n")
+    (tmp_path / "calc.py").chmod(0o444)
+    run = _mutate(tmp_path, spec)
+    assert (run.returncode, run.stdout) == (2, "")
+    assert run.stderr == "mutate.py: cannot lock calc.py: [Errno 13] Permission denied: 'calc.py'\n"
+    assert not (tmp_path / "ran").exists() and (tmp_path / "calc.py").read_text() == CALC
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file locks")
+def test_a_lock_that_fails_for_another_reason_is_not_called_another_run(tmp_path, monkeypatch, capsys):
+    """Only a lock another process holds is contention; NFS, say, can fail the flock itself."""
+    import fcntl  # POSIX only
+
+    def unsupported(fd, operation):
+        raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+
+    tool = _load_tool()
+    spec = _project(tmp_path, [GUARD])
+    monkeypatch.setattr(fcntl, "flock", unsupported)
+    monkeypatch.setattr(tool.signal, "signal", lambda *args: None)  # leave this process's handlers alone
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        tool.main([str(spec)])
+    assert stop.value.code == 2
+    assert capsys.readouterr().err == f"mutate.py: cannot lock calc.py: [Errno 9] {os.strerror(errno.EBADF)}\n"
+
+
+def test_a_run_leaves_nothing_in_the_temp_directory(tmp_path):
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    run = _mutate(tmp_path, _project(tmp_path, [GUARD]), _env(TMPDIR=str(temp)))
+    assert (run.returncode, run.stdout) == (0, CAUGHT + "\n"), run.stderr
+    assert not list(temp.iterdir())
 
 
 def test_a_selection_that_fails_without_mutants_is_refused(tmp_path):
@@ -282,10 +340,12 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
     """Decided on #101: a timed-out mutant's run is killed, all of it; an interrupted or finished one too."""
     wait = "while not os.path.exists('child.pid'): time.sleep(0.05)" if how == "left behind" else "time.sleep(60)"
     spec = _project(tmp_path, [SLOW], calc=SLOW_CALC, tests=CHILD_TEST.format(wait),
-                    extra="TIMEOUT = 4\n" if how == "timeout" else "")
+                    extra="TIMEOUT = 20\n" if how == "timeout" else "")
     if how == "timeout":
+        # The unmutated run still ends, and the child still starts, within TIMEOUT.
+        (tmp_path / "conftest.py").write_text(SLOW_START)
         run = _mutate(tmp_path, spec)
-        assert run.stdout == "slow: red (timed out after 4 s)\n", run.stderr
+        assert run.stdout == "slow: red (timed out after 20 s)\n", run.stderr
     elif how == "left behind":  # the test passes and leaves its child running
         run = _mutate(tmp_path, spec)
         assert run.stdout == "slow: survived\n", run.stderr

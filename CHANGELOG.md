@@ -2,78 +2,268 @@
 
 ## Unreleased
 
+Upgrading from 0.5.1. Behaviour changes to check:
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse a
+  `period_origin` that pandas reads as NaT (`pd.NaT`, `"NaT"`, `""`,
+  `np.datetime64("NaT")`, `pd.NA`) with a `ValueError` that names it
+  (#138). 0.5.1 accepted it and put every sample in one period indexed
+  `NaT`, so a `max_counts` cap bound the whole record as one period (on
+  pandas 1.5, `pd.NA` raised `TypeError`). A `per` that pandas reads as NaT
+  (`pd.NaT`, `"NaT"`, `""`, `pd.NA`, `np.timedelta64("NaT", "h")`) raised
+  pandas' `TypeError` (`unsupported operand type(s) for //`; on pandas 1.5,
+  `OutOfBoundsTimedelta` or `ValueError` for some forms); it now raises
+  `ValueError`.
+- **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
+  and `OptimalSegmentation.counts` refuse a `period_origin` that is not a
+  finite number of seconds (#144). 0.5.1 accepted `np.nan`, `np.inf` and
+  `-np.inf` and put every sample in one period (indexed by that value), so a
+  `max_counts` cap bound the whole record as one period. `pd.NaT` and
+  `pd.NA`, as `period_origin` or as `per`, raised `float()`'s `TypeError`;
+  they now raise `ValueError`.
+- With an aware `DatetimeIndex`, an aware `period_origin` in another zone
+  starts different periods: it is converted to the index's zone first
+  (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
+  started four-hour periods at 19:00, 23:00, 03:00, ...; it now starts them
+  at 21:00, 01:00, 05:00, ..., as `"2026-03-02 01:00-06:00"` (01:00 in
+  Chicago) does. An origin in the index's own zone, or a naive one, gives
+  the same periods as in 0.5.1; beside a naive index, an aware origin still
+  keeps its own clock.
+- Two error messages read differently; code that matches their text needs
+  updating (#137; the rule is under Changed). Without `subtypes`, `initial`
+  or `final`, the infeasibility `ValueError` of `optimal_segments` opened
+  "no segmentation satisfies the constraints (counts, durations,
+  transitions, first and last segments) and the subtypes' conditions on
+  these candidate breakpoints"; it now opens "no segmentation satisfies
+  the constraints (counts, durations, transitions) on these candidate
+  breakpoints". Without subtypes, `initial` or `final`, `classify_segments`'
+  error opened "these segments cannot be typed: no choice of subtypes
+  satisfies the transitions, first and last segments and the subtypes'
+  conditions"; it now opens "these segments cannot be typed: they do not
+  satisfy the transitions". Matching "no segmentation satisfies the
+  constraints" or "these segments cannot be typed" still works.
+- Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
+  raised.
+
+### Changed
+
+- With an aware `DatetimeIndex`, an aware `period_origin` in another zone
+  is converted to the index's zone before periods start on its wall clock,
+  so the same instant in any zone starts the same periods. It was read on
+  its own clock: beside a Chicago index, `07:00 UTC` (01:00 in Chicago)
+  started four-hour periods on 07:00's grid (23:00, 03:00, ...), not
+  01:00's. An origin in the index's own zone, or a naive one, gives the
+  same periods as before; beside a naive index, an aware origin still
+  keeps its own clock (#144).
+- The `ValueError` for an infeasible `optimal_segments` names only what
+  the call uses: "first and last segments" only when `initial` or `final`
+  is given, and "the subtypes' conditions" only with subtypes. Without
+  them it opens "no segmentation satisfies the constraints (counts,
+  durations, transitions) on these candidate breakpoints".
+  `classify_segments`' error does the same, and without subtypes it says
+  the segments "do not satisfy the transitions" instead of "no choice of
+  subtypes satisfies the transitions and the subtypes' conditions"
+  (#137).
+
+### Fixed
+
+- With times as a `DatetimeIndex`, a `per` that pandas reads as NaT
+  (`pd.NaT`, `"NaT"`, `""`, `pd.NA`, `np.timedelta64("NaT", "h")`) is
+  refused with a `ValueError` that names it; it failed with pandas' bare
+  `TypeError` (`unsupported operand type(s) for //`). A `period_origin`
+  that pandas reads as NaT is refused the same way; it raised nothing and
+  put every sample in one period indexed `NaT`, so a `max_counts` cap
+  bound the whole record as one period. This applies to `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` (#138).
+- With numeric times, a `period_origin` that is not a finite number of
+  seconds (`np.nan`, `np.inf`, `pd.NaT`, `pd.NA`) is refused with a
+  `ValueError` that names it. A NaN or infinite origin raised nothing and
+  put every sample in one period (indexed `nan`, `inf` or `-inf`), so a
+  `max_counts` cap bound the whole record as one period; `pd.NaT` and
+  `pd.NA` failed with `float()`'s `TypeError`, as did a `per` of either,
+  which now gets "per must be a positive number of seconds". This applies
+  to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#144).
+
+### Documentation
+
+- `docs/agents/coding-standards.md`: a test claims no more than it checks;
+  its name, docstring and comments say only what its assertions pin down
+  (#128).
+- `docs/agents/coding-standards.md`: a restatement keeps the code's
+  qualifiers; prose that restates what the code does carries over each
+  qualifier its source states, such as "on its own" (#133).
+- `docs/agents/coding-standards.md`: a check whether any item, or every
+  item, of a collection matches is tested with the deciding item after the
+  first, beside items that decide the other way, so that neither the other
+  check (`all(...)` for `any(...)`) nor the first item can stand in for it
+  (#146).
+- `docs/agents/review.md`: the shape of `review.json` for a review posted
+  as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
+
+### Tests and CI
+
+- The wall-clock test of `period_origin` pins each accepted form beside a
+  Chicago `DatetimeIndex`: a naive string, `pd.Timestamp`,
+  `datetime.datetime` and `np.datetime64` (in ns and in minutes), and aware
+  ones in Chicago, UTC and New York, each through `count_by_period` and a
+  capped `optimal_segments` (#145).
+- The hang test in `tests/test_mutate.py` no longer fails on a loaded
+  machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
+  mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
+  the test's project slows every pytest start-up by 3 s, so the test
+  itself shows the headroom. It takes about 27 s (#134). Its bound on the
+  whole run is now 60 s and its slow test sleeps 120 s: at 50 s against a
+  60 s sleep, the bound gave out under load before the quick mutant's
+  `TIMEOUT` would (#148).
+- The `[timeout]` case of `test_a_process_a_test_started_ends_with_the_run`
+  gets the same headroom. Its `TIMEOUT` of 4 s also bound the unmutated
+  run, and the mutant's run until it started its child; it is now 20 s,
+  with every pytest start-up in its project 3 s slower. It takes about
+  30 s (#147).
+- `tools/check.sh` stops before pytest, naming the modules and the
+  install command, when its interpreter lacks one of the package's
+  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  interpreter that exits non-zero, which ended the script without a message
+  of its own, and a `PYTHON` that is not executable, which it called
+  missing (#90).
+- mypy also checks the bodies of functions without annotations
+  (`check_untyped_defs`); the one finding needed a `cast`, with no
+  behaviour change (#98).
+- `tests/test_lint_sh.py` lints a module in each of `src`, `tests`, `tools`
+  and `examples`, so dropping a directory from either linter's command in
+  `tools/lint.sh` fails a test (#115).
+
+## 0.5.1
+
+Caller-named subtypes for best-fit segments, with `classify_segments`
+(#55, #67); an infeasibility error that names where it gets stuck (#62);
+docs in the glossary's terms (#56); no numpy 2.5 warnings on pandas 2.x
+(#121); a period beside a `DatetimeIndex` must carry a unit (#127).
+
+Upgrading from 0.5.0. Behaviour changes to check:
+- **Breaking:** `optimal_segments` refuses two calls that 0.5.0 accepted:
+  a state whose `min_duration_s` exceeds its `max_duration_s` (#117), and
+  a `penalty` mapping that names something other than a state with a model
+  or a subtype (#63).
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse a number as
+  `per` or `period_origin`, and a `per` without a unit (`"7200"`, a
+  unitless `np.timedelta64`). 0.5.0 read such a number as nanoseconds, so
+  `per=7200` gave 7200 ns periods; give `"2h"`, a Timedelta, or a
+  timestamp for `period_origin` (#127). With numeric times, a number is
+  still seconds.
+- Some error messages read differently; code that matches their text needs
+  updating. The `ValueError` for an infeasible `optimal_segments` says
+  *constraints* (0.5.0 said "limits") and names the time where it gets
+  stuck, its period, and the caps and transitions in force (#56, #62).
+  `models` naming an unknown state says which argument and which states
+  are valid (#61). `max_counts`, `transitions` (keys and targets),
+  `min_duration_s` and `max_duration_s` naming an unknown name say "names
+  'bogus', which is not a state with a model or a subtype" (0.5.0: "names
+  state 'bogus', which has no model"); a state without a model keeps
+  0.5.0's text (#61, #63). Messages say "sample spacing" for
+  `Timing.sample_period_s` (#56).
+- With pruning and a nonlinear model, an infeasible call takes seconds
+  where 0.5.0 took hundredths of a second: it fits models up to where every
+  segmentation gets stuck (about 4 s against 0.02 s for the methods page's
+  example) (#62).
+- `n_fits` can be lower: the model of a state capped at 0 segments per
+  period is never fitted (#62).
+- `Segment` has a new fifth field, `subtype` (None without subtypes),
+  which shows in its `repr` and in `dataclasses.asdict`, and makes
+  `dataclasses.astuple` five items long, so `start, stop, state, forced =
+  astuple(seg)` now raises; `OptimalSegmentation` has
+  `subtypes`, and its `info` holds `"subtypes"` and `"events"` (#61, #65).
+- `Report.provenance["parameter_reference"]` says "segment centre" for
+  `poly`, so exported JSON reads differently (#56).
+- On pandas 1.5, an empty `count_by_period` table with numeric periods has
+  a float index, as on later pandas (#75). Past pandas' nanosecond range,
+  clock times raise `OutOfBoundsDatetime` or `OutOfBoundsTimedelta` the
+  same way on every supported pandas, and a period string that pandas
+  cannot read still raises `ValueError`, now with a message that names it
+  (#121).
+- For contributors: the `test` extra needs `pytest>=7`, `dev` installs the
+  `docs`, `typecheck` and `lint` extras (sphinx, mypy, pylint,
+  pycodestyle), and `docs/requirements.txt` is gone; use
+  `pip install -e ".[docs]"` (#73, #93, #99, #106). `rocksteady.report` no
+  longer imports `State` as a side effect; import it from `rocksteady`
+  (#106).
+- Otherwise, an `optimal_segments` call with no `subtypes`, `events`,
+  `initial` or `final` returns the segments, objective and counts that
+  0.5.0 returned.
+
 ### Added
 
-- Subtypes for best-fit segments (#61, part of #55): `rs.Subtype(state,
-  level=(lo, hi))` names a refinement of a state whose segments' mean lies
-  in `[lo, hi)` (`None` for an open end), and `optimal_segments(...,
-  subtypes={name: Subtype})` gives every segment of that state one of its
-  subtypes (ADR 0001; a subtype with no conditions is a catch-all).
-  `max_counts` caps subtypes per period as well as states, and both caps
-  bind. Subtypes of one state may overlap; an exact tie goes to the one
-  declared first (among segmentations of equal objective, the least sum of
-  the subtypes' positions, which can also decide an exact tie between
-  states). `refine` keeps each segment's subtype while it moves
-  boundaries, then types its final segments again by the same rule (#66),
-  and pruning stays exact. A mean is held to `[lo, hi)` exactly, and a
-  mean at an end costs no more than any other (#117); a `level` that is
-  not two numbers in order is refused as "must be a pair".
-  Segments carry `Segment.subtype` (None for a state without subtypes),
-  `OptimalSegmentation.subtypes` holds the subtypes, `counts` has a column
-  per subtype, and `summary()` lists counts by subtype. With no subtypes,
-  results are unchanged.
-- Peak and rise-time conditions for subtypes (#64, part of #55):
-  `Subtype(..., peak=(lo, hi))` needs the segment's maximum in `[lo, hi)`
-  (either end open), and `max_rise_s` with `rise_fraction` (default 0.95)
-  needs the segment to reach `y0 + rise_fraction * (top - y0)` within
-  `max_rise_s` of its first sample, `y0` being its first finite sample and
-  `top` its maximum, so rise time works for a non-zero baseline. A
-  segment with no finite sample meets neither, and a segment must meet all
-  of its subtype's conditions.
-- Event conditions for subtypes (#65, part of #55): `optimal_segments(...,
-  events={name: boolean mask})` takes named masks with one value per
-  sample, and `Subtype(..., events={name: True or False})` needs the
-  segment to contain, or not to contain, a flagged sample of that mask in
-  `[start, stop)`, so that a driven transient is told apart from an
-  undriven one, by actuator. There is no tolerance; widen a mask to accept
-  an event just outside a segment. Every mask a condition names must be
-  given, every mask must be boolean and as long as `t`, and a subtype
-  names each mask once.
-  `info["events"]` holds the masks.
-- Every constraint of `optimal_segments` can name subtypes, and the
-  record's first and last segments can be restricted (#63, part of #55).
-  `transitions` names states or subtypes; a state's name stands for all of
-  its subtypes, and the allowed pairs are the union over all entries, so
-  the operating sequence (cold → heat-up → hot → cool-down → cold) tells
-  apart transient subtypes with the same conditions by their neighbours.
-  New `initial=` and `final=` sets of state or subtype names restrict the
-  first and last segments (default: any; a one-segment record must satisfy
-  both), so a transient cut off by the record's edge need not be called a
-  startup. `min_duration_s` / `max_duration_s` take subtypes, and a
-  subtype's and its state's bounds both bind; a subtype whose minimum or
-  its state's exceeds its maximum or its state's is refused up front.
-  `penalty` takes subtypes: a subtype's value replaces its state's, and
-  with `"bic"` (or when the mapping does not name it) a subtype takes its
-  state's.
-  `OptimalSegmentation.penalty` lists every state's and then every
-  subtype's penalty. The infeasibility error names `initial` and `final`
-  when they are given.
-- `rs.classify_segments(t, y, segments, subtypes=..., events=...,
-  transitions=..., initial=..., final=...)` gives subtypes to segments the
-  analyst already has, such as the detector's, by the same definitions as
-  `optimal_segments` (#66, part of #55). It runs the optimiser's dynamic
-  program with the breakpoints and states fixed and no count caps,
-  durations or penalties, so ties go to the least sum of the subtypes'
-  positions among their states' (with no transitions, `initial` or
-  `final`, each segment's first declared subtype it meets) and a transient
-  with no conditions is typed from its neighbours, as in the optimiser.
-  On the optimiser's own segments, by any method, it returns the
-  optimiser's subtypes when those constraints name states only. It
-  returns the segments with `subtype` set (None for a state without
-  subtypes), and when they cannot be typed it raises a `ValueError` that
-  names where, as the optimiser's infeasibility error does.
-- The error for an infeasible `optimal_segments` also names the subtypes'
-  conditions (#61).
+- Subtypes for best-fit segments (#55; #61, #63, #64, #65, #66, #117):
+  segments of `optimal_segments` can take caller-named subtypes, every
+  constraint can name them, and `classify_segments` gives the same
+  subtypes to segments from elsewhere. The best-fit segments guide page
+  explains them, with a flow-loop example and a sketch of a reactor's
+  scheme (#67).
+  - `rs.Subtype(state, ...)` names a refinement of one state, with
+    optional conditions on the segment alone. `level=(lo, hi)`: its mean
+    lies in `[lo, hi)`, held exactly (a mean at an end costs no more than
+    any other), with `None` for an open end.
+    `peak=(lo, hi)`: its maximum lies in `[lo, hi)`. `max_rise_s` with
+    `rise_fraction` (default 0.95): it reaches
+    `y0 + rise_fraction * (top - y0)` within `max_rise_s` of its first
+    sample, `y0` being its first finite sample and `top` its maximum, so
+    rise time works for a non-zero baseline. `events={mask: True or
+    False}`: it contains, or does not contain, a flagged sample of that
+    event mask in `[start, stop)`. A segment must meet all of its
+    subtype's conditions; one with no finite sample meets no level, peak
+    or rise condition. A subtype is fitted with its state's model.
+  - `optimal_segments(..., subtypes={name: Subtype}, events={name:
+    boolean mask})`. Once a state has subtypes, every segment of it takes
+    one of them (ADR 0001); a subtype with no conditions is a catch-all.
+    An event mask has one value per sample and no tolerance; widen it to
+    accept an event just outside a segment.
+  - Every constraint can name subtypes. `max_counts`: a state's cap
+    counts all of its segments, and a state's and a subtype's caps both
+    bind. `transitions`: a state's name stands for all of its subtypes,
+    and the allowed pairs are the union over all entries, so the
+    operating sequence (cold → heat-up → hot → cool-down → cold) tells
+    apart transients with the same conditions. New `initial=` and
+    `final=` restrict the record's first and last segments (default: any;
+    a one-segment record must satisfy both). `min_duration_s` /
+    `max_duration_s`: a subtype's and its state's bounds both bind.
+    `penalty`: a subtype's replaces its state's, which it takes otherwise
+    and with `"bic"`.
+  - Subtypes of one state may overlap. Among segmentations of equal
+    objective the optimiser takes the least sum of the subtypes'
+    positions among their state's, so no segment could, on its own, take
+    an earlier-declared subtype that accepts it at the same penalty without
+    breaking a constraint; that sum can also decide an exact tie between
+    states.
+    `refine` keeps each segment's subtype while it moves boundaries, then
+    types its final segments again by the same program. Pruning stays
+    exact.
+  - Results: `Segment.subtype` (None for a state without subtypes;
+    `Segment.state` stays the state, so reports and statistics by state
+    are unchanged), `OptimalSegmentation.subtypes`, a `counts` column per
+    subtype, counts by subtype in `summary()`, `info["events"]`, and
+    `penalty` listing every state's and then every subtype's. The
+    infeasibility error mentions the subtypes' conditions among what no
+    segmentation satisfies, and names `initial` and `final` when given.
+  - `rs.classify_segments(t, y, segments, subtypes=..., events=...,
+    transitions=..., initial=..., final=...)` runs the same program with
+    the breakpoints and states fixed and no count caps, durations or
+    penalties, so ties go as in the optimiser, and a transient with no
+    conditions is typed from its neighbours. On the optimiser's own
+    segments it returns the optimiser's subtypes when the optimiser's
+    caps, durations and penalties name states only. When
+    the segments cannot be typed, its `ValueError` names where.
+  - Refused up front: a subtype of an unknown state or of a state with no
+    model, a subtype named like a state, an unknown name in a constraint,
+    a condition naming a mask that `events` does not include, a mask that
+    is not boolean or not as long as `t`, a mask named twice in one
+    subtype, a range that is not two numbers in order, a negative
+    `max_rise_s`, a `rise_fraction` outside (0, 1] or without
+    `max_rise_s`, and a subtype whose duration bounds, with its state's,
+    leave no duration.
+  - With no `subtypes`, `events`, `initial` or `final`, results are
+    unchanged.
 - `optimal_segments` names the argument and the valid states when `models`
   names an unknown state (#61).
 
@@ -94,7 +284,19 @@
 - `optimal_segments` no longer fits the model of a state capped at 0
   segments per period, which can never be used, so `n_fits` can be lower;
   the results are unchanged. With pruning, an infeasible call fits models
-  only up to where every segmentation gets stuck (#62).
+  up to where every segmentation gets stuck, which costs seconds where
+  0.5.0 raised at once (#62).
+- With times as a `DatetimeIndex`, a number as `per` (an int, a float, a
+  bool or a numpy number) is refused with a `ValueError` that names the
+  forms to use, a string (`"2h"`) or a Timedelta. pandas read the number as
+  nanoseconds, so `per=7200` gave 7200 ns periods, though the docstring
+  said seconds. A `per` without a unit, a string holding only a number
+  (`"7200"`) or an `np.timedelta64` without one, is refused for the same
+  reason, and so is a number as `period_origin` (it was nanoseconds after
+  the epoch, though the docstring said seconds); give a timestamp. This
+  applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts`; with numeric times a number is still
+  seconds for both (#127).
 
 ### Fixed
 
@@ -103,9 +305,23 @@
   `fillna`; the tables are unchanged. On pandas 1.5, a table with no
   segments and a `DatetimeIndex` no longer fails, and an empty one with
   numeric periods has a float index (it was object), as on later pandas (#75).
+- On pandas 2.x with numpy 2.5 or later, a string `per` (`"1D"`, `"12h"`)
+  and the clock times in reports no longer make numpy warn that a timedelta
+  without a unit is deprecated, which a later numpy will make an error.
+  Periods, counts and clock times are unchanged on pandas 1.5, 2.3 and 3.1,
+  except past pandas' nanosecond range: on pandas 3, a clock time after
+  2262-04-11 now raises `OutOfBoundsDatetime` (`OutOfBoundsTimedelta` 292
+  years or more after the record's start), as on pandas 1.5 and 2.3; on
+  pandas 1.5, one 292 years or more after the start raises
+  `OutOfBoundsTimedelta` where it raised `OverflowError`. A string
+  that pandas cannot read as a period still raises `ValueError`, now with
+  a message that names it ("Could not convert 'bogus' to NumPy timedelta")
+  (#121).
 
 ### Documentation
 
+- `GLOSSARY.md` defines an *event mask*, and the methods page says what an
+  infeasible call costs with a nonlinear model (#67).
 - The docs and docstrings follow the vocabulary in `GLOSSARY.md`, now
   published as a glossary page with ADR 0001 (subtypes) and the
   contributor-agent notes (`AGENTS.md`, `docs/agents/`) (#56). Wording only;
@@ -145,9 +361,6 @@
   rules; `docs/agents/review.md` points at it. It starts with two rules from
   PR #104: a test pins the exact value a conversion produces, and a widened
   input brings its degenerate cases (#92).
-- `docs/agents/coding-standards.md`: a test claims no more than it checks;
-  its name, docstring and comments say only what its assertions pin down
-  (#128).
 
 ### Tests and CI
 
@@ -187,6 +400,10 @@
   filter). The golden comparison in `tests/test_regression.py` casts its
   text columns to object before filling a missing entry with `""`, as
   pandas 3.1 asks of a column without text, which reads as float64 (#109).
+- numpy's `DeprecationWarning` for a timedelta without a unit fails the
+  test that raises it, as a `FutureWarning` does. A new CI job,
+  `pandas2-numpy25` (Python 3.13, pandas 2.3, numpy 2.5), is where numpy
+  raises it; the test jobs never do (#121).
 - pytest imports the checkout's own `src/` (`pythonpath` in
   `pyproject.toml`; the `test` extra needs `pytest>=7`), even where the
   environment's editable install points at another checkout, and so do
@@ -223,7 +440,11 @@
   A mutant whose tests hang is stopped after a timeout (`TIMEOUT`, or ten
   times the unmutated run, at least 60 s) and counts as red. The file's
   cached bytecode is deleted first, so a same-length mutant cannot run as
-  the cached original, and a second run on the same file is refused.
+  the cached original, and a second run on the same file is refused, by
+  whatever path it names the file (a symlink or a hard link). That lock is
+  on the file itself, opened for writing (an exclusive flock over NFS needs
+  it), so the tool leaves nothing in the temp directory; a file it cannot
+  write or lock is refused as such (#124).
   `docs/agents/review.md` points the mutant probe at it.
 
 ## 0.5.0

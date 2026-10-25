@@ -1,9 +1,12 @@
 """Constrained optimal segmentation: best-fit segments under constraints (#45)."""
 
 import dataclasses
+import datetime
 import math
 import pickle
 import re
+import warnings
+import zoneinfo
 
 import numpy as np
 import pandas as pd
@@ -207,6 +210,192 @@ def test_spanning_segments_count_against_every_period_they_touch():
     tue_end = at("2026-03-03 23:50") + 1
     split = [Segment(0, tue_end, ST), Segment(tue_end, len(idx), ST)]
     assert count_by_period(split, idx, "1D")["steady"].tolist() == [1, 1, 1, 1]
+
+
+@pytest.mark.parametrize("per", ["26h", "1560min", "1 days 02:00:00", "1 day 2 hours", "1D2h", "P1DT2H",
+                                 pd.Timedelta(26, "h"), np.timedelta64(26, "h"), datetime.timedelta(hours=26)])
+def test_each_form_of_a_period_names_the_same_periods(per):
+    # 26-hour periods from midnight: twelve-hour segments touch three, three and two of them.
+    idx = pd.date_range("2026-03-02", periods=72, freq="1h")
+    segs = [Segment(i, i + 12, ST) for i in range(0, 72, 12)]
+    counts = count_by_period(segs, idx, per, period_origin="2026-03-02")
+    assert counts["steady"].tolist() == [3, 3, 2]
+    assert list(counts.index) == [pd.Timestamp("2026-03-02 00:00"), pd.Timestamp("2026-03-03 02:00"),
+                                  pd.Timestamp("2026-03-04 04:00")]
+
+
+def test_a_period_string_pandas_cannot_read_is_refused_by_name():
+    idx = pd.date_range("2026-03-02", periods=24, freq="1h")
+    with pytest.raises(ValueError, match="'bogus'"):
+        count_by_period([Segment(0, 24, ST)], idx, "bogus")
+
+
+_NUMBERS = [pytest.param(7200, id="int"), pytest.param(7200.0, id="float"), pytest.param(np.int64(7200), id="np.int64"),
+            pytest.param(np.float64(7200.0), id="np.float64"), pytest.param(True, id="bool"),
+            pytest.param(np.True_, id="np.bool_")]
+_FORMS_OF_A_PERIOD = r"a string \(e\.g\. '2h'\) or a Timedelta"
+
+
+@pytest.mark.parametrize("per", _NUMBERS)
+def test_a_number_as_the_period_of_datetimes_is_refused(per):
+    # A number has no unit beside a DatetimeIndex; the error names the forms that have one.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=_FORMS_OF_A_PERIOD):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match=_FORMS_OF_A_PERIOD):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+def _without_a_unit(numpy_time, n):
+    with warnings.catch_warnings():  # numpy 2.5 deprecates making one
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return numpy_time(n)
+
+
+@pytest.mark.parametrize("per", ["7200", " 7200 ", "7200.0", "1e3",
+                                 pytest.param(_without_a_unit(np.timedelta64, 7200), id="generic np.timedelta64"),
+                                 pytest.param(_without_a_unit(np.timedelta64, "NaT"), id="generic np.timedelta64 NaT")])
+def test_a_period_without_a_unit_is_refused(per):
+    # pandas reads a bare number in a string, or a numpy timedelta without a unit, as nanoseconds.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=r"has no unit; .*a string with one \(e\.g\. '2h'\) or a Timedelta"):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match="has no unit"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+@pytest.mark.parametrize("per", [pd.NaT, "NaT", "nat", "", np.timedelta64("NaT", "h"), np.timedelta64("NaT", "ns"),
+                                 pd.NA],
+                         ids=["pd.NaT", "'NaT'", "'nat'", "''", "np.timedelta64 NaT h", "np.timedelta64 NaT ns",
+                              "pd.NA"])
+def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
+    # A period that is not a duration has no period number to give a sample; the error names the value given.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = (r"per must be a duration \(e\.g\. '2h' or a Timedelta\), "
+             rf"got {re.escape(repr(per))}, which pandas reads as NaT")
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+@pytest.mark.parametrize("per", _NUMBERS)
+def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
+    # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
+    step = float(per) / 2
+    t = np.arange(6) * step
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    counts = count_by_period(segs, t, per)
+    assert counts["steady"].tolist() == [2, 2, 2]
+    assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
+
+
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600)], ids=["int", "float", "np.int64"])
+def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
+    # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
+    t = np.arange(6) * 3600.0
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=origin)
+    assert counts["steady"].tolist() == [1, 2, 2, 1]
+    assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
+
+
+@pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA],
+                         ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"])
+def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused_by_name(origin):
+    # An origin that is not a finite number of seconds would put every sample in one period; the error names it.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"period_origin must be a finite number of seconds, got {re.escape(repr(origin))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, 7200, period_origin=origin)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
+
+
+@pytest.mark.parametrize("per", [pd.NaT, pd.NA], ids=["pd.NaT", "pd.NA"])
+def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"per must be a positive number of seconds, got {re.escape(repr(per))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, per)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=per)
+
+
+_CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
+
+
+@pytest.mark.parametrize("origin", [
+    pytest.param("2026-03-02 01:00", id="naive str"),
+    pytest.param(pd.Timestamp("2026-03-02 01:00"), id="naive Timestamp"),
+    pytest.param(datetime.datetime(2026, 3, 2, 1), id="naive datetime"),
+    pytest.param(np.datetime64("2026-03-02T01:00", "ns"), id="np.datetime64 ns"),
+    pytest.param(np.datetime64("2026-03-02T01:00", "m"), id="np.datetime64 m"),
+    pytest.param(pd.Timestamp("2026-03-02 01:00", tz="America/Chicago"), id="aware Timestamp"),
+    pytest.param(datetime.datetime(2026, 3, 2, 1, tzinfo=_CHICAGO), id="aware datetime"),
+    # The same instant in other zones: 07:00 UTC, 02:00 New York. Read on their own clocks, they would start
+    # periods at 23:00 and give [3, 3], or at 02:00 and give [2, 4].
+    pytest.param(pd.Timestamp("2026-03-02 07:00", tz="UTC"), id="aware Timestamp, UTC"),
+    pytest.param(datetime.datetime(2026, 3, 2, 7, tzinfo=datetime.timezone.utc), id="aware datetime, UTC"),
+    pytest.param(pd.Timestamp("2026-03-02 02:00", tz="America/New_York"), id="aware Timestamp, New York"),
+])
+def test_a_period_origin_is_read_on_the_wall_clock(origin):
+    # Four-hour periods from 01:00 local, whether the origin is naive or an aware time in any zone. Chicago is
+    # UTC-6, which is not a whole number of periods: read in UTC, the origin would start them at 23:00 and give
+    # [3, 3].
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    starts = [pd.Timestamp("2026-03-01 21:00"), pd.Timestamp("2026-03-02 01:00"), pd.Timestamp("2026-03-02 05:00")]
+    counts = count_by_period(segs, idx, "4h", period_origin=origin)
+    assert counts["steady"].tolist() == [1, 4, 1]
+    assert list(counts.index) == starts
+    # The cap binds per period: one segment in each of the three periods.
+    result = optimal_segments(idx, np.arange(6.0), {"steady": 0}, per="4h", period_origin=origin,
+                              max_counts={"steady": 1}, method="exact")
+    assert [(s.start, s.stop) for s in result.segments] == [(0, 1), (1, 5), (5, 6)]
+    assert list(result.counts.index) == starts
+
+
+def test_an_aware_period_origin_beside_a_naive_index_keeps_its_own_clock():
+    # A naive index has no zone to convert to: 02:00 in New York starts periods at 02:00 on the index's clock, so
+    # four-hour periods start at 22:00 and 02:00 and hourly samples from midnight fall [2, 4]. Read in UTC (07:00),
+    # they would start at 23:00 and give [3, 3].
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h",
+                             period_origin=pd.Timestamp("2026-03-02 02:00", tz="America/New_York"))
+    assert counts["steady"].tolist() == [2, 4]
+    assert list(counts.index) == [pd.Timestamp("2026-03-01 22:00"), pd.Timestamp("2026-03-02 02:00")]
+
+
+@pytest.mark.parametrize("origin", _NUMBERS)
+def test_a_number_as_the_period_origin_of_datetimes_is_refused(origin):
+    # A number has no unit or epoch beside a DatetimeIndex; the error names the timestamp form.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp \(e\.g\. '2026-03-02 06:00'\)"):
+        count_by_period(segs, idx, "2h", period_origin=origin)
+    with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per="2h", period_origin=origin)
+
+
+@pytest.mark.parametrize("origin", [pd.NaT, "NaT", "nat", "", np.datetime64("NaT", "ns"),
+                                    _without_a_unit(np.datetime64, "NaT"), pd.NA],
+                         ids=["pd.NaT", "'NaT'", "'nat'", "''", "np.datetime64 NaT ns", "generic np.datetime64 NaT",
+                              "pd.NA"])
+def test_a_period_origin_pandas_reads_as_nat_is_refused_by_name(origin):
+    # An origin that is not a time puts no sample in a period; the error names the value given.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = (r"period_origin must be a timestamp \(e\.g\. '2026-03-02 06:00'\), "
+             rf"got {re.escape(repr(origin))}, which pandas reads as NaT")
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, idx, "2h", period_origin=origin)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per="2h", period_origin=origin)
 
 
 def test_count_tables_without_segments_or_columns_are_empty():
@@ -512,6 +701,33 @@ def test_an_infeasible_record_without_periods_is_named_whole():
     assert "max_counts={'steady': 1}" in msg
 
 
+@pytest.mark.parametrize("kw, opening", [
+    ({}, "(counts, durations, transitions) on"),
+    ({"subtypes": {}}, "(counts, durations, transitions) on"),
+    ({"subtypes": {"cold": rs.Subtype("steady")}}, "(counts, durations, transitions) and the subtypes' conditions on"),
+    ({"initial": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
+    ({"final": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
+    ({"subtypes": {"cold": rs.Subtype("steady")}, "final": ["cold"]},
+     "(counts, durations, transitions, first and last segments) and the subtypes' conditions on"),
+    # Subtypes of one state, beside a state without subtypes (here one that can never be placed).
+    ({"subtypes": {"cold": rs.Subtype("steady")}, "models": {"steady": 0, "transient": 1},
+      "max_counts": {"steady": 1, "transient": 0}},
+     "(counts, durations, transitions) and the subtypes' conditions on"),
+    # Subtypes of a later state only.
+    ({"subtypes": {"tr": rs.Subtype("transient")}, "models": {"steady": 0, "transient": 1},
+      "max_counts": {"steady": 1, "transient": 0}},
+     "(counts, durations, transitions) and the subtypes' conditions on"),
+])
+def test_an_infeasible_call_names_only_what_it_uses(kw, opening):
+    # One segment of at most 4 s cannot cover 10 s. The message names the first and last segments only when
+    # initial or final is given, and the subtypes' conditions only when there are subtypes.
+    t = np.arange(10.0)
+    kw = {"models": {"steady": 0}, "max_counts": {"steady": 1}, **kw}
+    msg = _infeasible_message(t, np.zeros(10), method="exact", max_duration_s={"steady": 4.0}, penalty=0.0, **kw)
+    assert msg.startswith(f"no segmentation satisfies the constraints {opening} these candidate breakpoints: none "
+                          "can continue from 4.0 s (sample 4), in the whole record. In force: ")
+
+
 def test_a_duration_no_candidate_meets_is_named_the_same_way():
     # The candidate segments last 5 s or 10 s, none between 6 s and 8 s: nothing can start at the first sample.
     t = 3.0 + np.arange(10.0)
@@ -570,7 +786,7 @@ def test_the_constraints_in_force_read_as_plain_values():
     # NumPy caps, a Timedelta period and set-valued transitions print as the values they hold.
     t = pd.date_range("2026-01-01", periods=48, freq="1h")
     msg = _infeasible_message(t, np.zeros(48), {"steady": 0, "transient": 1}, method="exact",
-                              per=pd.Timedelta("1D"), max_counts={"steady": np.int64(1), "transient": np.int64(0)},
+                              per=pd.Timedelta(1, "D"), max_counts={"steady": np.int64(1), "transient": np.int64(0)},
                               transitions={"steady": {"transient", "steady"}, "transient": ("steady",)},
                               max_duration_s={"steady": 3600.0 * 20}, penalty=0.0)
     assert ("In force: max_counts={'steady': 1, 'transient': 0} per period (1 days 00:00:00), "

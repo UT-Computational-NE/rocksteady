@@ -21,7 +21,7 @@ Documentation: https://rocksteady.readthedocs.io
 ## Install
 
 ```
-pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.5.0"
+pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.5.1"
 ```
 
 Python 3.10 or later, with numpy and pandas; both are installed with the
@@ -448,6 +448,13 @@ On a synthetic week at 1 Hz (`PYTHONPATH=src python tools/benchmark.py optimal`)
 
 Constant and linear segment costs come from running sums. Other models are
 fitted exactly as `fit_report` fits them.
+
+Segments can also take caller-named **subtypes** (cold and hot plateaus, a
+heat-up when the heater switches), with conditions on a segment's level,
+peak, rise time and events, and every constraint above can name them.
+`rs.classify_segments` gives the same subtypes to segments you already
+have. The [subtypes guide](https://rocksteady.readthedocs.io/en/latest/guide/optimal.html#subtypes)
+works through an example.
 
 ## Extending rocksteady
 

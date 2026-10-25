@@ -19,8 +19,9 @@ or the run is interrupted (a second Ctrl-C waits for the restore). The file's ca
 and the runs write none, so no mutant can run as a cached original. A mutant is red when pytest exits non-zero
 or times out (a hanging suite fails in CI too), and survived when it passes. The report, on stdout, has one
 line per mutant: red (with the first failing test), survived, or survived and marked equivalent; errors go to
-stderr. A second run on the same file is refused while one is running; run no other tests in the same checkout
-meanwhile, or they test the mutant.
+stderr. A second run on the same file, by whatever path it names the file, is refused while one is running (the
+lock is on the file itself, opened for writing); run no other tests in the same checkout meanwhile, or they test
+the mutant.
 
 pytest runs in its own process group, which the tool ends after each run, so no process a test started outlives
 the run. After a timeout or Ctrl-C the group gets SIGTERM and 5 s to end (a run of this tool inside it restores
@@ -28,21 +29,19 @@ its own file) before SIGKILL. When the tool is itself sent SIGTERM (by such an o
 group at once, so that it restores its file well inside the outer run's 5 s.
 
 Exit status: 0 when every mutant is red or marked equivalent; 1 when one survived unmarked; 2 when the spec is
-refused (malformed, or a mutant that cannot run: an ``old`` matching zero times or more than once, a repeated
-name) or the selection fails before any mutant, all checked before a mutant is written; 130 when interrupted
-(Ctrl-C or SIGTERM).
+refused (malformed, a ``FILE`` the tool cannot write or lock, or a mutant that cannot run: an ``old`` matching
+zero times or more than once, a repeated name) or the selection fails before any mutant, all checked before a
+mutant is written; 130 when interrupted (Ctrl-C or SIGTERM).
 """
 
 import collections
 import glob
-import hashlib
 import importlib.util
 import os
 import runpy
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from numbers import Real
 from typing import NamedTuple, Optional
@@ -128,19 +127,23 @@ def timeout(baseline_s, given):
 
 def _lock(path):
     """
-    Hold a lock on the file for this run (an open file the caller keeps), or refuse when another run holds it:
-    the second run would read the first one's mutant as the original. Without fcntl (Windows), no lock.
+    Hold a lock on the file itself for this run (an open file the caller keeps), or refuse when another run holds
+    it: the second run would read the first one's mutant as the original. The lock is on the inode, so it also
+    holds against a run that names the file by another path (a symlink, a hard link). The file is opened for
+    writing, which an exclusive flock over NFS needs; a file the tool cannot write, or lock, is refused as such,
+    not as another run. Without fcntl (Windows), no lock.
     """
     try:
         import fcntl  # POSIX only
     except ImportError:
         return None
-    key = hashlib.sha256(os.path.realpath(path).encode()).hexdigest()[:16]
-    handle = open(os.path.join(tempfile.gettempdir(), f"mutate-{key}.lock"), "w", encoding="utf-8")
     try:
+        handle = open(path, "r+b")
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
         _refuse(f"another mutate.py run is mutating {path}; wait for it to end")
+    except OSError as e:
+        _refuse(f"cannot lock {path}: {e}")
     return handle
 
 
@@ -221,14 +224,22 @@ def _run(select, limit):
     return proc.returncode, output
 
 
+def _write_in_place(path, data):
+    """
+    Write ``data`` over the file, to the same inode, which ``_lock`` holds. Writing a new file and swapping it in
+    (``os.replace``) would let a second run take the lock while this run still mutates the file.
+    """
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 def _restore(path, original, stat):
     """Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done."""
     mask = getattr(signal, "pthread_sigmask", None)  # POSIX
     if mask:
         mask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
     try:
-        with open(path, "wb") as f:
-            f.write(original)
+        _write_in_place(path, original)
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     finally:
         if mask:
@@ -274,8 +285,7 @@ def main(argv):
     for name, old, new, reason in mutants:
         try:
             try:
-                with open(path, "wb") as f:
-                    f.write(original.replace(old.encode(), new.encode(), 1))
+                _write_in_place(path, original.replace(old.encode(), new.encode(), 1))
                 code, output = _run(select, limit)
             finally:
                 _restore(path, original, stat)
