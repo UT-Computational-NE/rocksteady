@@ -151,6 +151,20 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - `tests/test_lint_sh.py` lints a module in each of `src`, `tests`, `tools`
   and `examples`, so dropping a directory from either linter's command in
   `tools/lint.sh` fails a test (#115).
+- `tests/test_vocabulary.py` flags "passing state" after any of "a", "the",
+  "its", "their" and "each", not only "a passing state" (#81). "domain
+  rule" no longer counts after "time" or "frequency" (with a hyphen or a
+  space) or before "out", so "time-domain rules" and "the frequency domain
+  rules out …" pass, while "cross-domain rules" is still flagged. "all
+  statistics under limits" and "within a tolerance band of the sensor"
+  stay flagged by choice: syntax cannot tell them from the wrong uses, and
+  "under their limits" and "within the sensor's tolerance band" say them
+  without the phrase (#89).
+- Each near-miss in `tests/test_vocabulary.py` must share a word other than
+  an article with its phrase and sit on a boundary of the phrase's pattern
+  (relaxing that boundary alone flags it). An entry needs at least one, a
+  narrowing (`after`, `not_after`, `not_before`) needs one on it, and each
+  boundary needs one across the entries (#89).
 
 ## 0.5.1
 
