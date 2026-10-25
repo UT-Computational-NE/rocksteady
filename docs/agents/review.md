@@ -1,7 +1,7 @@
 # Reviews and merging
 
 - **Accounts.** PRs are opened as `npl436`, which cannot approve its own PRs. `npl436-bot` posts reviews. It has write access, so its approval satisfies the "Protect Main" ruleset, which requires one approving review and allows no bypass.
-  - **Posting as the bot.** Pass the bot's token to just that one command: `GH_TOKEN=$(gh auth token --user npl436-bot) gh api --method POST repos/{owner}/{repo}/pulls/<n>/reviews --input review.json`. Pass the token only this way, through `GH_TOKEN=$(…)` on the same command line. Never echo, log or store it, and never put it in a file, a message or a commit.
+  - **Posting as the bot.** Pass the bot's token to just that one command: `GH_TOKEN=$(gh auth token --user npl436-bot) gh api --method POST repos/{owner}/{repo}/pulls/<n>/reviews --input review.json`, where `review.json` holds `event` (`APPROVE`, `REQUEST_CHANGES` or `COMMENT`), `body` (the review text), `comments[]` (inline comments, each with `path`, `line` and `body`) and `commit_id` (the head SHA the review covers, which pins the review to that commit). Pass the token only this way, through `GH_TOKEN=$(…)` on the same command line. Never echo, log or store it, and never put it in a file, a message or a commit.
   - **Keep the active account.** Every session on this machine shares the active `gh` account, so `gh auth switch` would make all of them act as the bot.
   - **Checking who posted:** add `--jq .user.login` to the API call; it prints `npl436-bot` when the bot posted.
 - **Requesting a review, or requesting it again:** `gh api --method POST repos/{owner}/{repo}/pulls/<n>/requested_reviewers -f "reviewers[]=npl436-bot"`.
