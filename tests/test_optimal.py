@@ -1,9 +1,11 @@
 """Constrained optimal segmentation: best-fit segments under constraints (#45)."""
 
 import dataclasses
+import datetime
 import math
 import pickle
 import re
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -210,7 +212,7 @@ def test_spanning_segments_count_against_every_period_they_touch():
 
 
 @pytest.mark.parametrize("per", ["26h", "1560min", "1 days 02:00:00", "1 day 2 hours", "1D2h", "P1DT2H",
-                                 pd.Timedelta(26, "h")])
+                                 pd.Timedelta(26, "h"), np.timedelta64(26, "h"), datetime.timedelta(hours=26)])
 def test_each_form_of_a_period_names_the_same_periods(per):
     # 26-hour periods from midnight: twelve-hour segments touch three, three and two of them.
     idx = pd.date_range("2026-03-02", periods=72, freq="1h")
@@ -225,6 +227,84 @@ def test_a_period_string_pandas_cannot_read_is_refused_by_name():
     idx = pd.date_range("2026-03-02", periods=24, freq="1h")
     with pytest.raises(ValueError, match="'bogus'"):
         count_by_period([Segment(0, 24, ST)], idx, "bogus")
+
+
+_NUMBERS = [pytest.param(7200, id="int"), pytest.param(7200.0, id="float"), pytest.param(np.int64(7200), id="np.int64"),
+            pytest.param(np.float64(7200.0), id="np.float64"), pytest.param(True, id="bool"),
+            pytest.param(np.True_, id="np.bool_")]
+_FORMS_OF_A_PERIOD = r"a string \(e\.g\. '2h'\) or a Timedelta"
+
+
+@pytest.mark.parametrize("per", _NUMBERS)
+def test_a_number_as_the_period_of_datetimes_is_refused(per):
+    # A number has no unit beside a DatetimeIndex; the error names the forms that have one.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=_FORMS_OF_A_PERIOD):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match=_FORMS_OF_A_PERIOD):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+def _timedelta_without_a_unit(n):
+    with warnings.catch_warnings():  # numpy 2.5 deprecates making one
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return np.timedelta64(n)
+
+
+@pytest.mark.parametrize("per", ["7200", " 7200 ", "7200.0", "1e3",
+                                 pytest.param(_timedelta_without_a_unit(7200), id="generic np.timedelta64")])
+def test_a_period_without_a_unit_is_refused(per):
+    # pandas reads a bare number in a string, or a numpy timedelta without a unit, as nanoseconds.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=r"has no unit; .*a string with one \(e\.g\. '2h'\) or a Timedelta"):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match="has no unit"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+@pytest.mark.parametrize("per", _NUMBERS)
+def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
+    # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
+    step = float(per) / 2
+    t = np.arange(6) * step
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    counts = count_by_period(segs, t, per)
+    assert counts["steady"].tolist() == [2, 2, 2]
+    assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
+
+
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600)], ids=["int", "float", "np.int64"])
+def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
+    # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
+    t = np.arange(6) * 3600.0
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=origin)
+    assert counts["steady"].tolist() == [1, 2, 2, 1]
+    assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
+
+
+@pytest.mark.parametrize("origin", ["2026-03-02 01:00", pd.Timestamp("2026-03-02 01:00", tz="America/Chicago")],
+                         ids=["naive", "aware"])
+def test_a_period_origin_is_read_on_the_wall_clock(origin):
+    # Four-hour periods from 01:00 local, whether or not the origin carries the zone. Chicago is UTC-6, which is
+    # not a whole number of periods: read in UTC, the origin would start them at 23:00 and give [3, 3].
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h", period_origin=origin)
+    assert counts["steady"].tolist() == [1, 4, 1]
+    assert list(counts.index) == [pd.Timestamp("2026-03-01 21:00"), pd.Timestamp("2026-03-02 01:00"),
+                                  pd.Timestamp("2026-03-02 05:00")]
+
+
+@pytest.mark.parametrize("origin", _NUMBERS)
+def test_a_number_as_the_period_origin_of_datetimes_is_refused(origin):
+    # A number has no unit or epoch beside a DatetimeIndex; the error names the timestamp form.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp \(e\.g\. '2026-03-02 06:00'\)"):
+        count_by_period(segs, idx, "2h", period_origin=origin)
+    with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per="2h", period_origin=origin)
 
 
 def test_count_tables_without_segments_or_columns_are_empty():

@@ -173,16 +173,65 @@ def _times(t) -> Tuple[np.ndarray, Any]:
     return np.asarray(t, dtype=float), None
 
 
+def _is_number(x) -> bool:
+    """Whether ``x`` is a number pandas would read as nanoseconds: a bool or a numpy number counts, a timedelta not."""
+    return isinstance(x, (Real, np.bool_)) and not isinstance(x, np.timedelta64)
+
+
+def _refuse_unitless(per) -> None:
+    """
+    Refuse a period of a DatetimeIndex without a unit: a number, a string
+    holding only one (``"7200"``, ``"nan"``) or a numpy timedelta without a
+    unit, each of which pandas would read as nanoseconds.
+    """
+    if _is_number(per):
+        raise ValueError(f"per as a number needs numeric times (seconds); with a DatetimeIndex give a string "
+                         f"(e.g. '2h') or a Timedelta, got {per!r}")
+    if isinstance(per, np.timedelta64):
+        unitless = np.datetime_data(per.dtype)[0] == "generic"
+    elif isinstance(per, str):
+        try:
+            float(per)
+            unitless = True
+        except ValueError:
+            unitless = False
+    else:
+        unitless = False
+    if unitless:
+        raise ValueError(f"per {per!r} has no unit; with a DatetimeIndex give a string with one (e.g. '2h') "
+                         "or a Timedelta")
+
+
+def _origin_seconds(period_origin) -> float:
+    """The start ``period_origin`` of periods of numeric times, in seconds (default: 0)."""
+    return 0.0 if period_origin is None else float(period_origin)
+
+
 def _period_step(per):
     """
     The period length ``per`` as a Timedelta. pandas 2.x parses a single
     string into a numpy timedelta without a unit, which numpy 2.5 deprecates; a
     list of one string takes the parse that keeps the unit and gives the
-    same value.
+    same value. A number, or a period without a unit, is refused: pandas
+    would read it as nanoseconds.
     """
     import pandas as pd
 
+    _refuse_unitless(per)
     return pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
+
+
+def _origin_stamp(period_origin):
+    """The wall-clock start ``period_origin`` of periods of a DatetimeIndex (default: the Unix epoch)."""
+    import pandas as pd
+
+    if period_origin is None:
+        return pd.Timestamp("1970-01-01")
+    if _is_number(period_origin):
+        raise ValueError(f"period_origin as a number needs numeric times (seconds); with a DatetimeIndex give a "
+                         f"timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}")
+    origin = pd.Timestamp(period_origin)
+    return origin.tz_localize(None) if origin.tzinfo is not None else origin
 
 
 def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]:
@@ -193,9 +242,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         import pandas as pd
 
         wall = idx.tz_localize(None) if idx.tz is not None else idx  # local wall-clock time
-        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin)
-        if origin.tzinfo is not None:
-            origin = origin.tz_localize(None)
+        origin = _origin_stamp(period_origin)
         step = _period_step(per)
         if step <= pd.Timedelta(0):
             raise ValueError(f"per must be positive, got {per!r}")
@@ -209,7 +256,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
     step = float(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
-    origin = 0.0 if period_origin is None else float(period_origin)
+    origin = _origin_seconds(period_origin)
     return np.floor((ts - origin) / step).astype(np.int64)
 
 
@@ -219,6 +266,10 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     Segments of each state touching each period: a DataFrame indexed by
     period start, one column per state (``states``, default: those present).
     A segment counts once against every period one of its samples lies in.
+    ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
+    with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
+    ``period_origin`` a timestamp (a number raises ``ValueError``); with
+    numeric times, both are seconds.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -260,9 +311,8 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
     if per is None:
         return pd.Index(["all"] * len(ids))
     if idx is not None:
-        origin = pd.Timestamp("1970-01-01") if period_origin is None else pd.Timestamp(period_origin).tz_localize(None)
-        return pd.Index(origin + ids * _period_step(per))
-    return pd.Index((0.0 if period_origin is None else float(period_origin)) + ids * float(per))
+        return pd.Index(_origin_stamp(period_origin) + ids * _period_step(per))
+    return pd.Index(_origin_seconds(period_origin) + ids * float(per))
 
 
 # ---------------------------------------------------------------------------
@@ -1552,17 +1602,20 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     Parameters
     ----------
     t : array of seconds, or DatetimeIndex
-        Sample times, increasing. With a DatetimeIndex, ``per`` may be a
-        string or Timedelta (``"1D"``, ``"7D"``, ``"12h"``) and periods follow
-        its wall clock.
+        Sample times, increasing. With a DatetimeIndex, ``per`` is a string
+        or Timedelta (``"1D"``, ``"7D"``, ``"12h"``) and periods follow its
+        wall clock.
     y : array
         The signal. Non-finite samples are ignored by the fits.
     models : mapping
         ``{state: model spec}`` for the states to use (``"steady"``,
         ``"transient"``, ``"indeterminate"``), e.g. ``{"steady": 0,
         "transient": "exp"}``. Specs as in ``rocksteady.fit``.
-    per : str, Timedelta or float (seconds), optional
-        The period the counts apply to. None: the whole record.
+    per : str, Timedelta or float, optional
+        The period the counts apply to. None: the whole record. With a
+        DatetimeIndex, a string or Timedelta with a unit (a number, or a
+        string or numpy timedelta without a unit, raises ``ValueError``);
+        with numeric times, a number of seconds.
     max_counts : mapping, optional
         ``{state or subtype: maximum segments per period}``. A state's cap
         counts all of its segments, whatever their subtype, and both caps
@@ -1593,8 +1646,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         gap between candidates. The detector's ``timing.evaluated_window_s``
         is a natural choice for detector candidates.
     period_origin : optional
-        Where periods start (a timestamp, or seconds). Default: the Unix
-        epoch, i.e. midnight for days.
+        Where periods start: a timestamp with a DatetimeIndex (a number
+        raises ``ValueError``), seconds with numeric times. Default: the
+        Unix epoch, i.e. midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
