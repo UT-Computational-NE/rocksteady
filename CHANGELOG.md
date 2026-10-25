@@ -8,6 +8,14 @@
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
 
+### Tests and CI
+
+- The hang test in `tests/test_mutate.py` no longer fails on a loaded
+  machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
+  mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
+  the test's project slows every pytest start-up by 3 s, so the test
+  itself shows the headroom. It takes about 27 s (#134).
+
 ## 0.5.1
 
 Caller-named subtypes for best-fit segments, with `classify_segments`

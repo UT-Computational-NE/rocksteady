@@ -180,11 +180,13 @@ def test_cached_bytecode_cannot_hide_a_mutant(tmp_path, prefix):
 def test_a_mutant_whose_tests_hang_times_out_red_and_the_rest_still_run(tmp_path):
     """Decided on #101: a hang fails in CI too."""
     spec = _project(tmp_path, [SLOW, ("quick", "MUTATED = False", "MUTATED = False  # unchanged")],
-                    calc=SLOW_CALC, tests=SLOW_TEST.format(False), extra="TIMEOUT = 3\n")
+                    calc=SLOW_CALC, tests=SLOW_TEST.format(False), extra="TIMEOUT = 20\n")
+    # Every pytest start-up takes 3 s longer, as on a loaded machine; the quick mutant still finishes in TIMEOUT.
+    (tmp_path / "conftest.py").write_text("import time\n\ntime.sleep(3)\n")
     started = time.monotonic()
     run = _mutate(tmp_path, spec)
-    assert time.monotonic() - started < 50
-    assert run.stdout.splitlines() == ["slow: red (timed out after 3 s)", "quick: survived"], run.stderr
+    assert time.monotonic() - started < 50  # well under the slow test's 60 s sleep: the hang was stopped
+    assert run.stdout.splitlines() == ["slow: red (timed out after 20 s)", "quick: survived"], run.stderr
     assert run.returncode == 1 and (tmp_path / "calc.py").read_text() == SLOW_CALC
 
 
