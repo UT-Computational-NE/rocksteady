@@ -213,12 +213,16 @@ def _period_step(per):
     string into a numpy timedelta without a unit, which numpy 2.5 deprecates; a
     list of one string takes the parse that keeps the unit and gives the
     same value. A number, or a period without a unit, is refused: pandas
-    would read it as nanoseconds.
+    would read it as nanoseconds. So is one pandas reads as NaT (``"NaT"``,
+    ``""``, ``pd.NA``).
     """
     import pandas as pd
 
     _refuse_unitless(per)
-    return pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
+    step = pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
+    if pd.isna(step):
+        raise ValueError(f"per must be a duration (e.g. '2h' or a Timedelta), got {per!r}, which pandas reads as NaT")
+    return step
 
 
 def _origin_stamp(period_origin):
@@ -231,6 +235,9 @@ def _origin_stamp(period_origin):
         raise ValueError(f"period_origin as a number needs numeric times (seconds); with a DatetimeIndex give a "
                          f"timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}")
     origin = pd.Timestamp(period_origin)
+    if pd.isna(origin):
+        raise ValueError(f"period_origin must be a timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}, "
+                         "which pandas reads as NaT")
     return origin.tz_localize(None) if origin.tzinfo is not None else origin
 
 
@@ -268,8 +275,8 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     A segment counts once against every period one of its samples lies in.
     ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
-    ``period_origin`` a timestamp (a number raises ``ValueError``); with
-    numeric times, both are seconds.
+    ``period_origin`` a timestamp (a number, or a value pandas reads as
+    NaT, raises ``ValueError``); with numeric times, both are seconds.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -1610,9 +1617,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         "transient": "exp"}``. Specs as in ``rocksteady.fit``.
     per : str, Timedelta or float, optional
         The period the counts apply to. None: the whole record. With a
-        DatetimeIndex, a string or Timedelta with a unit (a number, or a
-        string or numpy timedelta without a unit, raises ``ValueError``);
-        with numeric times, a number of seconds.
+        DatetimeIndex, a string or Timedelta with a unit (a number, a
+        string or numpy timedelta without a unit, or one pandas reads as
+        NaT, raises ``ValueError``); with numeric times, a number of seconds.
     max_counts : mapping, optional
         ``{state or subtype: maximum segments per period}``. A state's cap
         counts all of its segments, whatever their subtype, and both caps
@@ -1643,8 +1650,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         gap between candidates. The detector's ``timing.evaluated_window_s``
         is a natural choice for detector candidates.
     period_origin : optional
-        Where periods start: a timestamp with a DatetimeIndex (a number
-        raises ``ValueError``), seconds with numeric times. Default: the
+        Where periods start: a timestamp with a DatetimeIndex (a number, or
+        one pandas reads as NaT, raises ``ValueError``), seconds with
+        numeric times. Default: the
         Unix epoch, i.e. midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible

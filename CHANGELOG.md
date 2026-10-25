@@ -125,6 +125,14 @@
   that pandas cannot read as a period still raises `ValueError`, now with
   a message that names it ("Could not convert 'bogus' to NumPy timedelta")
   (#121).
+- With times as a `DatetimeIndex`, a `per` that pandas reads as NaT
+  (`pd.NaT`, `"NaT"`, `""`, `pd.NA`, `np.timedelta64("NaT", "h")`) is
+  refused with a `ValueError` that names it; it failed with pandas' bare
+  `TypeError` (`unsupported operand type(s) for //`). A `period_origin`
+  that pandas reads as NaT is refused the same way; it raised nothing and
+  put every sample in one period indexed `NaT`, so a `max_counts` cap
+  bound the whole record as one period. This applies to `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` (#138).
 
 ### Documentation
 
