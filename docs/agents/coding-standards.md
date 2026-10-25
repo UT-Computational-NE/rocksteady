@@ -5,7 +5,7 @@ The judgement calls a reviewer checks in every diff. A rule a tool can decide li
 - `tools/lint.sh`: the lint rules this repo enforces.
 - mypy: the types in `src/rocksteady`.
 - `tests/test_vocabulary.py`: the phrases `GLOSSARY.md` avoids that are always wrong. A phrase wrong only in some contexts is a review call.
-- `tests/test_wording_of_tests.py`: tests say what they pin down, not the review or PR that found them.
+- `tests/test_wording_of_tests.py`: a test does not name the review or PR that found it.
 
 Add a rule here when reviews raise the same call twice, or when the user admits one sooner (recorded on #92). Move it into a check, and delete it here, once a tool can decide it.
 
@@ -22,8 +22,8 @@ Add a rule here when reviews raise the same call twice, or when the user admits 
   In PR #104, accepting `(name, bool)` pairs as well as a mapping let one mask be named twice. Which pair won then depended on the order a set iterated in.
 - **A test claims no more than it checks.** A test's name, docstring and comments say only what its assertions pin down. A word such as "every", "only" or "and nothing else", or a mechanism the test never exercises, is a claim its assertions must check; otherwise narrow the words, or add the check.
 
-  In PR #126 (#118), a guard's docstring said "Every test marked `checkout_only` runs in a checkout" while the guard checked a fixed list, and "Only the checkout-only tests check the conftest's PYTHONPATH under another install, so a checkout must run each of them", though only one of them does. In PR #120 (#109), a test named "…matches missing text and nothing else" checked three differing cases (now #122).
-- **A restatement keeps the code's qualifiers.** When prose (a guide page, the README, the CHANGELOG, a docstring, an example's comment) restates what the code does, or what a docstring or another page says it does, it carries over each qualifier the source states: "on its own", "for any call that both accept", "once its model is fitted in full". A restatement that drops one claims more than the code does. It is the prose counterpart of #128's rule for tests. `docs/agents/review.md`'s *Probing restatements* finds the sentences a change has made untrue; this rule asks for the qualifiers in the first draft.
+  In PR #126 (#118), a guard's docstring said "Every test marked `checkout_only` runs in a checkout …" while the guard checked a fixed list, and "Only the checkout-only tests check the conftest's PYTHONPATH under another install, so a checkout must run each of them", though only one of them does. In PR #120 (#109), a test named "…matches missing text and nothing else" checked three differing cases (fixed in #122).
+- **A restatement keeps the code's qualifiers.** When prose (a guide page, the README, the CHANGELOG, a docstring, an example's comment) restates what the code does, or what a docstring or another page says it does, it carries over each qualifier the source states: "on its own", "for any call that both accept", "once its model is fitted in full". A restatement that drops one claims more than the code does. It is the prose counterpart of *A test claims no more than it checks*. `docs/agents/review.md`'s *Probing restatements* finds the sentences a change has made untrue; this rule asks for the qualifiers in the first draft.
 
   In PR #131 (#67), the own review and review 1 found four sentences that had dropped a qualifier:
   - "a catch-all declared last … takes only the segments that no earlier subtype can take within the constraints", without the module docstring's "on its own" (with the least-sum tie-break, a catch-all can take a segment to let a neighbour take an earlier subtype);

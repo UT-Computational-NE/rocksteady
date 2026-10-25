@@ -1,4 +1,4 @@
-"""Tests say what they pin down, not the review or pull request that found it (#92, #106)."""
+"""A test's comments and docstrings do not name the review or pull request that found it (#92, #106)."""
 
 import glob
 import io
