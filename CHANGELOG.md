@@ -4,11 +4,11 @@
 
 ### Tests and CI
 
-- The hang test of `tools/mutate.py` no longer fails on a loaded machine.
-  Its `TIMEOUT` was 3 s, which the quick mutant's pytest start-up alone
-  could exceed; it is now 20 s, and the test's project slows every pytest
-  start-up by 3 s, so the suite itself shows the headroom. The test takes
-  about 25 s (#134).
+- The hang test in `tests/test_mutate.py` no longer fails on a loaded
+  machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
+  mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
+  the test's project slows every pytest start-up by 3 s, so the test
+  itself shows the headroom. It takes about 27 s (#134).
 
 ## 0.5.1
 
