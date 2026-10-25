@@ -87,6 +87,9 @@ Upgrading from 0.5.1. Behaviour changes to check:
 
 ### Documentation
 
+- `docs/agents/coding-standards.md`: a test claims no more than it checks;
+  its name, docstring and comments say only what its assertions pin down
+  (#128).
 - `docs/agents/coding-standards.md`: a restatement keeps the code's
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
