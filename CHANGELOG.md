@@ -14,6 +14,13 @@
   subtypes satisfies the transitions and the subtypes' conditions"
   (#137).
 
+### Documentation
+
+- `docs/agents/coding-standards.md`: a check over every item (`any(...)`)
+  is tested with the item it looks for after the first position, beside
+  items that do not match, so that `all(...)` or the first item cannot
+  stand in for it (#146).
+
 ## 0.5.1
 
 Caller-named subtypes for best-fit segments, with `classify_segments`
