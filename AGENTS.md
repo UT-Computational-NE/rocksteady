@@ -20,7 +20,7 @@ Use one worktree per ticket: `git worktree add .claude/worktrees/feat-<n> -b fea
 
 ### Checks
 
-`tools/check.sh` runs CI's fast checks: the tests without `slow`, mypy, `tools/lint.sh` (pylint on the messages it enforces, pycodestyle on blank lines), and the strict docs build. `tools/check.sh <pytest args>` runs only that selection, without mypy, lint or the docs build, and needs the package's dependencies and only the test extra. `tests/test_vocabulary.py` fails on a fixed list of phrases (`AVOIDED`) that `GLOSSARY.md` avoids and that are always wrong. When you find another such phrase, add it to `AVOIDED` with a near-miss: correct text close to it that the scan must not flag. A test's comments and docstrings say what it pins down, never the review or PR that found it; `tests/test_wording_of_tests.py` enforces this.
+`tools/check.sh` runs CI's fast checks: the tests without `slow`, mypy, `tools/lint.sh` (pylint on the messages it enforces, pycodestyle on blank lines), and the strict docs build. `tools/check.sh <pytest args>` runs only that selection, without mypy, lint or the docs build, and needs the package's dependencies and only the test extra. `tests/test_vocabulary.py` fails on a fixed list of phrases (`AVOIDED`) that `GLOSSARY.md` avoids and that are always wrong. When you find another such phrase, add it to `AVOIDED` with a near-miss: correct text that the scan must not flag, on a boundary of the phrase's pattern (`BOUNDARIES` lists them; the test checks it). A test's comments and docstrings say what it pins down, never the review or PR that found it; `tests/test_wording_of_tests.py` enforces this.
 
 ### Reviews and merging
 

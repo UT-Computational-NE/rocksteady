@@ -130,6 +130,14 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - `tests/test_lint_sh.py` lints a module in each of `src`, `tests`, `tools`
   and `examples`, so dropping a directory from either linter's command in
   `tools/lint.sh` fails a test (#115).
+- `tests/test_vocabulary.py` flags "passing state" after any of "a", "the",
+  "its", "their" and "each", not only "a passing state" (#81). It no longer
+  flags "time-domain rules", "the frequency domain rules out …" or "within
+  a tolerance band"; "all statistics under limits" stays flagged by choice,
+  since "under their limits" says it without the phrase (#89).
+- Each near-miss in `tests/test_vocabulary.py` must sit on a boundary of
+  its phrase's pattern (relaxing that boundary alone flags it), and share a
+  word other than an article with the phrase (#89).
 
 ## 0.5.1
 
