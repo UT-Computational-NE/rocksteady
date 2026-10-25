@@ -1,6 +1,63 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
+
+Caller-named subtypes for best-fit segments, with `classify_segments`
+(#55, #67); an infeasibility error that names where it gets stuck (#62);
+docs in the glossary's terms (#56); no numpy 2.5 warnings on pandas 2.x
+(#121); a period beside a `DatetimeIndex` must carry a unit (#127).
+
+Upgrading from 0.5.0. Behaviour changes to check:
+- **Breaking:** `optimal_segments` refuses two calls that 0.5.0 accepted:
+  a state whose `min_duration_s` exceeds its `max_duration_s` (#117), and
+  a `penalty` mapping that names something other than a state with a model
+  or a subtype (#63).
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse a number as
+  `per` or `period_origin`, and a `per` without a unit (`"7200"`, a
+  unitless `np.timedelta64`). 0.5.0 read such a number as nanoseconds, so
+  `per=7200` gave 7200 ns periods; give `"2h"`, a Timedelta, or a
+  timestamp for `period_origin` (#127). With numeric times, a number is
+  still seconds.
+- Some error messages read differently; code that matches their text needs
+  updating. The `ValueError` for an infeasible `optimal_segments` says
+  *constraints* (0.5.0 said "limits") and names the time where it gets
+  stuck, its period, and the caps and transitions in force (#56, #62).
+  `models` naming an unknown state says which argument and which states
+  are valid (#61). `max_counts`, `transitions` (keys and targets),
+  `min_duration_s` and `max_duration_s` naming an unknown name say "names
+  'bogus', which is not a state with a model or a subtype" (0.5.0: "names
+  state 'bogus', which has no model"); a state without a model keeps
+  0.5.0's text (#61, #63). Messages say "sample spacing" for
+  `Timing.sample_period_s` (#56).
+- With pruning and a nonlinear model, an infeasible call takes seconds
+  where 0.5.0 took hundredths of a second: it fits models up to where every
+  segmentation gets stuck (about 4 s against 0.02 s for the methods page's
+  example) (#62).
+- `n_fits` can be lower: the model of a state capped at 0 segments per
+  period is never fitted (#62).
+- `Segment` has a new fifth field, `subtype` (None without subtypes),
+  which shows in its `repr` and in `dataclasses.asdict`, and makes
+  `dataclasses.astuple` five items long, so `start, stop, state, forced =
+  astuple(seg)` now raises; `OptimalSegmentation` has
+  `subtypes`, and its `info` holds `"subtypes"` and `"events"` (#61, #65).
+- `Report.provenance["parameter_reference"]` says "segment centre" for
+  `poly`, so exported JSON reads differently (#56).
+- On pandas 1.5, an empty `count_by_period` table with numeric periods has
+  a float index, as on later pandas (#75). Past pandas' nanosecond range,
+  clock times raise `OutOfBoundsDatetime` or `OutOfBoundsTimedelta` the
+  same way on every supported pandas, and a period string that pandas
+  cannot read still raises `ValueError`, now with a message that names it
+  (#121).
+- For contributors: the `test` extra needs `pytest>=7`, `dev` installs the
+  `docs`, `typecheck` and `lint` extras (sphinx, mypy, pylint,
+  pycodestyle), and `docs/requirements.txt` is gone; use
+  `pip install -e ".[docs]"` (#73, #93, #99, #106). `rocksteady.report` no
+  longer imports `State` as a side effect; import it from `rocksteady`
+  (#106).
+- Otherwise, an `optimal_segments` call with no `subtypes`, `events`,
+  `initial` or `final` returns the segments, objective and counts that
+  0.5.0 returned.
 
 ### Added
 
@@ -93,7 +150,8 @@
 - `optimal_segments` no longer fits the model of a state capped at 0
   segments per period, which can never be used, so `n_fits` can be lower;
   the results are unchanged. With pruning, an infeasible call fits models
-  only up to where every segmentation gets stuck (#62).
+  up to where every segmentation gets stuck, which costs seconds where
+  0.5.0 raised at once (#62).
 - With times as a `DatetimeIndex`, a number as `per` (an int, a float, a
   bool or a numpy number) is refused with a `ValueError` that names the
   forms to use, a string (`"2h"`) or a Timedelta. pandas read the number as
@@ -117,7 +175,7 @@
   and the clock times in reports no longer make numpy warn that a timedelta
   without a unit is deprecated, which a later numpy will make an error.
   Periods, counts and clock times are unchanged on pandas 1.5, 2.3 and 3.1,
-  except past pandas' nanosecond limits: on pandas 3, a clock time after
+  except past pandas' nanosecond range: on pandas 3, a clock time after
   2262-04-11 now raises `OutOfBoundsDatetime` (`OutOfBoundsTimedelta` 292
   years or more after the record's start), as on pandas 1.5 and 2.3; on
   pandas 1.5, one 292 years or more after the start raises

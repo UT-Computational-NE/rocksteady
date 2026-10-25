@@ -21,7 +21,7 @@ Documentation: https://rocksteady.readthedocs.io
 ## Install
 
 ```
-pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.5.0"
+pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.git@v0.5.1"
 ```
 
 Python 3.10 or later, with numpy and pandas; both are installed with the
