@@ -302,8 +302,12 @@ def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
 
 
-@pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA],
-                         ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"])
+_NUMPY_NATS = [np.datetime64("NaT", "ns"), np.timedelta64("NaT", "s"), _without_a_unit(np.timedelta64, "NaT")]
+_NUMPY_NAT_IDS = ["np.datetime64 NaT ns", "np.timedelta64 NaT s", "generic np.timedelta64 NaT"]
+
+
+@pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA] + _NUMPY_NATS,
+                         ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
 def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused_by_name(origin):
     # An origin that is not a finite number of seconds would put every sample in one period; the error names it.
     t = np.arange(6) * 3600.0
@@ -315,7 +319,7 @@ def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
 
 
-@pytest.mark.parametrize("per", [pd.NaT, pd.NA], ids=["pd.NaT", "pd.NA"])
+@pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
 def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]

@@ -214,18 +214,24 @@ def _is_missing(x) -> bool:
 
 
 def _seconds(x) -> float:
-    """``x`` as a float of seconds, with ``pd.NaT`` and ``pd.NA`` as NaN (``float()`` takes neither)."""
+    """
+    ``x`` as a float of seconds, with ``pd.NaT``, ``pd.NA`` and a numpy NaT
+    (``np.datetime64`` or ``np.timedelta64``, any unit) as NaN (``float()``
+    takes none of them).
+    """
     import pandas as pd
 
-    return math.nan if x is pd.NaT or x is pd.NA else float(x)
+    if x is pd.NaT or x is pd.NA or (isinstance(x, (np.datetime64, np.timedelta64)) and np.isnat(x)):
+        return math.nan
+    return float(x)
 
 
 def _origin_seconds(period_origin) -> float:
     """
     The start ``period_origin`` of periods of numeric times, in seconds
     (default: 0). One that is not a finite number (NaN, infinite,
-    ``pd.NaT``, ``pd.NA``) is refused: it would put every sample in one
-    period.
+    ``pd.NaT``, ``pd.NA``, a numpy NaT) is refused: it would put every
+    sample in one period.
     """
     if period_origin is None:
         return 0.0
@@ -1699,8 +1705,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         wall clock. Beside an aware index, an aware one is converted to the
         index's zone first, so the same instant in any zone starts the same
         periods; beside a naive index, it keeps its own clock. With numeric
-        times, a finite number of seconds (NaN, infinite, ``pd.NaT`` or
-        ``pd.NA`` raises ``ValueError``). Default: the Unix epoch, i.e.
+        times, a finite number of seconds (NaN, infinite, ``pd.NaT``,
+        ``pd.NA`` or a numpy NaT, ``np.datetime64`` or ``np.timedelta64``
+        of any unit, raises ``ValueError``). Default: the Unix epoch, i.e.
         midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible

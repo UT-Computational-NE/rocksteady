@@ -18,9 +18,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   and `OptimalSegmentation.counts` refuse a `period_origin` that is not a
   finite number of seconds (#144). 0.5.1 accepted `np.nan`, `np.inf` and
   `-np.inf` and put every sample in one period (indexed by that value), so a
-  `max_counts` cap bound the whole record as one period. `pd.NaT` and
-  `pd.NA`, as `period_origin` or as `per`, raised `float()`'s `TypeError`;
-  they now raise `ValueError`.
+  `max_counts` cap bound the whole record as one period. `pd.NaT`, `pd.NA`
+  and a numpy NaT (`np.datetime64("NaT")` or `np.timedelta64("NaT")`, any
+  unit; #154), as `period_origin` or as `per`, raised `float()`'s
+  `TypeError`; they now raise `ValueError`.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -84,6 +85,12 @@ Upgrading from 0.5.1. Behaviour changes to check:
   which now gets "per must be a positive number of seconds". This applies
   to `count_by_period`, `optimal_segments` and
   `OptimalSegmentation.counts` (#144).
+- With numeric times, a numpy NaT (`np.datetime64("NaT")` or
+  `np.timedelta64("NaT")`, any unit) as `period_origin` gets "period_origin
+  must be a finite number of seconds", and as `per` gets "per must be a
+  positive number of seconds", each naming the value; both failed with
+  `float()`'s `TypeError`. This applies to `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` (#154).
 
 ### Documentation
 
