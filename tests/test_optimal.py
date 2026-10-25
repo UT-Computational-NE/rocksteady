@@ -344,8 +344,8 @@ def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused
 @pytest.mark.parametrize("per, origin", [(7200, 1e300), (7200, -1e300), (7200, 1e20), (1e-300, None)],
                          ids=["origin 1e300", "origin -1e300", "origin 1e20", "per 1e-300"])
 def test_period_numbers_a_float_cannot_hold_exactly_are_refused_by_name(per, origin):
-    # Each gives hourly samples period numbers of 2**53 or more. A float holds such numbers only to a whole
-    # period or worse, and past 2**63 they overflow int64: the six samples would fall in one or two periods.
+    # Each gives hourly samples period numbers of 2**53 or more in magnitude, where a float no longer holds every
+    # whole number and, past 2**63, int64 holds none. The error names per and period_origin.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     named = rf"per {re.escape(repr(per))} and period_origin {re.escape(repr(origin))} give .* 2\*\*53"
@@ -366,11 +366,13 @@ def test_a_large_period_origin_whose_period_numbers_a_float_holds_keeps_its_peri
     assert counts.index.tolist() == [-800.0, 6400.0, 13600.0]
 
 
-@pytest.mark.parametrize("held, refused",[(-(2**53 - 1 - 18000), -(2**53 - 18000)), (2**53 - 1, 2**53)],
+@pytest.mark.parametrize("held, refused, farthest", [(-(2**53 - 1 - 18000), -(2**53 - 18000), "18000.0"),
+                                                     (2**53 - 1, 2**53, "0.0")],
                          ids=["origin before the times", "origin after the times"])
-def test_period_numbers_up_to_2_53_keep_their_periods_and_2_53_is_refused(held, refused):
+def test_period_numbers_up_to_2_53_keep_their_periods_and_2_53_is_refused(held, refused, farthest):
     # One-second periods: hourly samples from 0 s to 18000 s, each its own period. The held origin puts the
-    # farthest sample at period number 2**53 - 1 in magnitude, the refused one at 2**53; every value is exact.
+    # farthest sample at period number 2**53 - 1 in magnitude, the refused one at 2**53; every value is exact. The
+    # error names the farthest sample, the only one at 2**53.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     starts = [0.0, 3600.0, 7200.0, 10800.0, 14400.0, 18000.0]
@@ -380,11 +382,26 @@ def test_period_numbers_up_to_2_53_keep_their_periods_and_2_53_is_refused(held, 
     # The optimiser fits one segment over all six, which touches every one-second period from 0 s to 18000 s.
     fit = optimal_segments(t, np.zeros(6), {"steady": 0}, per=1, period_origin=held, method="exact")
     assert fit.counts.index.tolist() == [float(s) for s in range(18001)]
-    named = rf"per 1 and period_origin {refused} give a sample a period number of 2\*\*53 or more"
+    named = (rf"per 1 and period_origin {refused} give the sample at {re.escape(farthest)} s a period number of "
+             r"magnitude 2\*\*53 or more")
     with pytest.raises(ValueError, match=named):
         count_by_period(segs, t, 1, period_origin=refused)
     with pytest.raises(ValueError, match=named):
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=1, period_origin=refused)
+
+
+def test_a_time_that_is_not_a_number_leaves_the_other_period_numbers_checked():
+    # The NaN sample has no period number; the others are 1e20 s from the origin, past 2**53 periods of 7200 s.
+    t = np.array([0.0, 3600.0, 7200.0, np.nan, 14400.0, 18000.0])
+    with pytest.raises(ValueError, match=r"give the sample at 0\.0 s a period number of magnitude 2\*\*53 or more"):
+        count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=1e20)
+
+
+def test_an_infinite_time_is_named_as_the_sample_whose_period_number_is_refused():
+    t = np.array([0.0, 3600.0, np.inf, 10800.0, 14400.0, 18000.0])
+    named = r"per 7200 and period_origin None give the sample at inf s a period number of magnitude 2\*\*53 or more"
+    with pytest.raises(ValueError, match=named):
+        count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200)
 
 
 @pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
