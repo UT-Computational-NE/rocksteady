@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+Upgrading from 0.5.1. Behaviour changes to check:
+- Two error messages read differently; code that matches their text needs
+  updating (#137). The infeasibility `ValueError` of `optimal_segments`
+  opened "no segmentation satisfies the constraints (counts, durations,
+  transitions, first and last segments) and the subtypes' conditions on
+  these candidate breakpoints"; it now names "first and last segments" only
+  when `initial` or `final` is given, and "the subtypes' conditions" only
+  with subtypes. `classify_segments`' error said "these segments cannot be
+  typed: no choice of subtypes satisfies the transitions, first and last
+  segments and the subtypes' conditions"; it names the first and last
+  segments the same way, and without subtypes it says "these segments
+  cannot be typed: they do not satisfy the transitions". Matching "no
+  segmentation satisfies the constraints" or "these segments cannot be
+  typed" still works.
+- Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
+  raised.
+
 ### Changed
 
 - The `ValueError` for an infeasible `optimal_segments` names only what
