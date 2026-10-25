@@ -40,8 +40,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   error opened "these segments cannot be typed: no choice of subtypes
   satisfies the transitions, first and last segments and the subtypes'
   conditions"; it now opens "these segments cannot be typed: they do not
-  satisfy the transitions". Matching "no segmentation satisfies the
-  constraints" or "these segments cannot be typed" still works.
+  satisfy the transitions". A call that uses only some of subtypes,
+  `initial` and `final` changes its opening too: it keeps only the clauses
+  it uses (see Changed). With `initial` or `final` but no subtypes,
+  `optimal_segments` drops " and the subtypes' conditions", and
+  `classify_segments`' error opens "these segments cannot be typed: they do
+  not satisfy the transitions, first and last segments"; with subtypes but
+  neither `initial` nor `final`, both drop ", first and last segments".
+  Only a call with subtypes and also `initial` or `final` keeps 0.5.1's
+  opening; an empty `subtypes` counts as none. Matching "no
+  segmentation satisfies the constraints" or "these segments cannot be
+  typed" still works.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
 
@@ -91,10 +100,14 @@ Upgrading from 0.5.1. Behaviour changes to check:
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
 - `docs/agents/coding-standards.md`: a check whether any item, or every
-  item, of a collection matches is tested with the deciding item after the
-  first, beside items that decide the other way, so that neither the other
-  check (`all(...)` for `any(...)`) nor the first item can stand in for it
-  (#146).
+  item, of a collection matches is tested with the deciding item neither
+  first nor last, beside items that decide the other way (or with a case at
+  each end), so that neither the other check (`all(...)` for `any(...)`),
+  the first item nor the last can stand in for it (#146, #156).
+- `docs/agents/coding-standards.md`: a test that pins an offset, an origin,
+  a phase or a zone uses one the code's fallback cannot reach by accident:
+  not a whole number of periods from the default, and not already in the
+  zone a conversion targets (#158).
 - `docs/agents/review.md`: the shape of `review.json` for a review posted
   as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
 
