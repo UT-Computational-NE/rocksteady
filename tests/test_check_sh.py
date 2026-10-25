@@ -31,10 +31,11 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     assert str(bare) in run.stderr and sys.executable in run.stderr  # as given, and the binary it runs
     assert "pytest" in run.stderr and "sphinx" in run.stderr and "mypy" in run.stderr  # the full run typechecks
     assert "pylint" in run.stderr and "pycodestyle" in run.stderr  # and lints
+    assert "lacks numpy pandas, which the package needs, and pytest" in run.stderr  # its own dependencies first
     # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
     # the environment's editable install at the worktree.
     # With the minimum versions the extras in pyproject.toml ask for.
-    want = "'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'pycodestyle>=2.11' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
+    want = "'numpy>=1.22' 'pandas>=1.5' 'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'pycodestyle>=2.11' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
     assert f"{sys.executable} -m pip install {want}" in run.stderr
     # A fresh environment also needs the package's own dependencies: the editable install, from the main checkout.
     assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
@@ -72,3 +73,33 @@ def test_a_selection_asks_only_for_the_test_extra(tmp_path):
     run = _check(tmp_path / "no-such-python", "tests/test_check_sh.py")
     assert run.returncode == 1
     assert "test extra" in run.stderr and "dev extra" not in run.stderr
+
+
+def test_a_python_that_is_not_executable_is_named_as_such(tmp_path):
+    plain = tmp_path / "plain-python"
+    plain.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    plain.chmod(0o644)
+    run = _check(plain)
+    assert run.returncode == 1
+    assert f"check.sh: {plain} is not executable" in run.stderr
+    assert "there is no interpreter" not in run.stderr
+
+
+def test_a_python_that_exits_non_zero_is_named_and_stops_the_checks(tmp_path):
+    broken = tmp_path / "broken-python"  # it runs, but every call fails, as in a broken environment
+    broken.write_text("#!/bin/sh\necho 'no module named encodings' >&2\nexit 3\n")
+    broken.chmod(0o755)
+    run = _check(broken)
+    assert run.returncode == 1
+    assert f"check.sh: {broken} exited with status 3" in run.stderr
+    assert "no module named encodings" in run.stderr  # its own error, passed through
+
+
+@pytest.mark.parametrize("args", [(), ("tests/test_check_sh.py",)], ids=["full run", "selection"])
+def test_an_interpreter_without_the_packages_dependencies_is_named_and_stops_the_checks(tmp_path, args):
+    (tmp_path / "sitecustomize.py").write_text("import sys\nsys.modules['numpy'] = None\n")  # numpy cannot be found
+    run = _check(sys.executable, *args, pythonpath=tmp_path)
+    assert run.returncode == 1
+    assert "lacks numpy, which the package needs." in run.stderr  # the extras' modules are all there
+    assert f"{sys.executable} -m pip install 'numpy>=1.22')" in run.stderr  # its minimum version in pyproject.toml
+    assert "passed" not in run.stdout and "error" not in run.stdout  # stopped before pytest collected anything
