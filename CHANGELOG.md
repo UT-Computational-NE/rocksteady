@@ -4,6 +4,14 @@
 
 ### Changed
 
+- With an aware `DatetimeIndex`, an aware `period_origin` in another zone
+  is converted to the index's zone before periods start on its wall clock,
+  so the same instant in any zone starts the same periods. It was read on
+  its own clock: beside a Chicago index, `07:00 UTC` (01:00 in Chicago)
+  started four-hour periods on 07:00's grid (23:00, 03:00, ...), not
+  01:00's. An origin in the index's own zone, or a naive one, gives the
+  same periods as before; beside a naive index, an aware origin still
+  keeps its own clock (#144).
 - The `ValueError` for an infeasible `optimal_segments` names only what
   the call uses: "first and last segments" only when `initial` or `final`
   is given, and "the subtypes' conditions" only with subtypes. Without
@@ -13,6 +21,18 @@
   the segments "do not satisfy the transitions" instead of "no choice of
   subtypes satisfies the transitions and the subtypes' conditions"
   (#137).
+
+### Fixed
+
+- With numeric times, a `period_origin` that is not a finite number of
+  seconds (`np.nan`, `np.inf`, `pd.NaT`, `pd.NA`) is refused with a
+  `ValueError` that names it. A NaN or infinite origin raised nothing and
+  put every sample in one period (indexed `nan`, `inf` or `-inf`), so a
+  `max_counts` cap bound the whole record as one period; `pd.NaT` and
+  `pd.NA` failed with `float()`'s `TypeError`, as did a `per` of either,
+  which now gets "per must be a positive number of seconds". This applies
+  to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#144).
 
 ### Documentation
 
@@ -24,6 +44,11 @@
 
 ### Tests and CI
 
+- The wall-clock test of `period_origin` pins each accepted form beside a
+  Chicago `DatetimeIndex`: a naive string, `pd.Timestamp`,
+  `datetime.datetime` and `np.datetime64` (in ns and in minutes), and aware
+  ones in Chicago, UTC and New York, each through `count_by_period` and a
+  capped `optimal_segments` (#145).
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
