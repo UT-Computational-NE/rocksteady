@@ -247,14 +247,15 @@ def test_a_number_as_the_period_of_datetimes_is_refused(per):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
 
 
-def _timedelta_without_a_unit(n):
+def _without_a_unit(numpy_time, n):
     with warnings.catch_warnings():  # numpy 2.5 deprecates making one
         warnings.simplefilter("ignore", DeprecationWarning)
-        return np.timedelta64(n)
+        return numpy_time(n)
 
 
 @pytest.mark.parametrize("per", ["7200", " 7200 ", "7200.0", "1e3",
-                                 pytest.param(_timedelta_without_a_unit(7200), id="generic np.timedelta64")])
+                                 pytest.param(_without_a_unit(np.timedelta64, 7200), id="generic np.timedelta64"),
+                                 pytest.param(_without_a_unit(np.timedelta64, "NaT"), id="generic np.timedelta64 NaT")])
 def test_a_period_without_a_unit_is_refused(per):
     # pandas reads a bare number in a string, or a numpy timedelta without a unit, as nanoseconds.
     idx = pd.date_range("2026-03-02", periods=6, freq="1h")
@@ -262,6 +263,22 @@ def test_a_period_without_a_unit_is_refused(per):
     with pytest.raises(ValueError, match=r"has no unit; .*a string with one \(e\.g\. '2h'\) or a Timedelta"):
         count_by_period(segs, idx, per)
     with pytest.raises(ValueError, match="has no unit"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
+
+
+@pytest.mark.parametrize("per", [pd.NaT, "NaT", "nat", "", np.timedelta64("NaT", "h"), np.timedelta64("NaT", "ns"),
+                                 pd.NA],
+                         ids=["pd.NaT", "'NaT'", "'nat'", "''", "np.timedelta64 NaT h", "np.timedelta64 NaT ns",
+                              "pd.NA"])
+def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
+    # A period that is not a duration has no period number to give a sample; the error names the value given.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = (r"per must be a duration \(e\.g\. '2h' or a Timedelta\), "
+             rf"got {re.escape(repr(per))}, which pandas reads as NaT")
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, idx, per)
+    with pytest.raises(ValueError, match=named):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
 
 
@@ -362,6 +379,22 @@ def test_a_number_as_the_period_origin_of_datetimes_is_refused(origin):
     with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp \(e\.g\. '2026-03-02 06:00'\)"):
         count_by_period(segs, idx, "2h", period_origin=origin)
     with pytest.raises(ValueError, match=r"period_origin as a number .* a timestamp"):
+        optimal_segments(idx, np.zeros(6), {"steady": 0}, per="2h", period_origin=origin)
+
+
+@pytest.mark.parametrize("origin", [pd.NaT, "NaT", "nat", "", np.datetime64("NaT", "ns"),
+                                    _without_a_unit(np.datetime64, "NaT"), pd.NA],
+                         ids=["pd.NaT", "'NaT'", "'nat'", "''", "np.datetime64 NaT ns", "generic np.datetime64 NaT",
+                              "pd.NA"])
+def test_a_period_origin_pandas_reads_as_nat_is_refused_by_name(origin):
+    # An origin that is not a time puts no sample in a period; the error names the value given.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h")
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = (r"period_origin must be a timestamp \(e\.g\. '2026-03-02 06:00'\), "
+             rf"got {re.escape(repr(origin))}, which pandas reads as NaT")
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, idx, "2h", period_origin=origin)
+    with pytest.raises(ValueError, match=named):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per="2h", period_origin=origin)
 
 
