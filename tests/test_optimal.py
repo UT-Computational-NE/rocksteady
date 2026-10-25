@@ -266,14 +266,15 @@ def test_a_period_without_a_unit_is_refused(per):
 
 
 @pytest.mark.parametrize("per", [pd.NaT, "NaT", "nat", "", np.timedelta64("NaT", "h"), np.timedelta64("NaT", "ns"),
-                                 pd.Timedelta("NaT"), pd.NA],
+                                 pd.NA],
                          ids=["pd.NaT", "'NaT'", "'nat'", "''", "np.timedelta64 NaT h", "np.timedelta64 NaT ns",
-                              "Timedelta NaT", "pd.NA"])
+                              "pd.NA"])
 def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
     # A period that is not a duration has no period number to give a sample; the error names the value given.
     idx = pd.date_range("2026-03-02", periods=6, freq="1h")
     segs = [Segment(i, i + 1, ST) for i in range(6)]
-    named = rf"per must be a duration \(e\.g\. '2h' or a Timedelta\), got {re.escape(repr(per))}, which pandas reads as NaT"
+    named = (r"per must be a duration \(e\.g\. '2h' or a Timedelta\), "
+             rf"got {re.escape(repr(per))}, which pandas reads as NaT")
     with pytest.raises(ValueError, match=named):
         count_by_period(segs, idx, per)
     with pytest.raises(ValueError, match=named):
