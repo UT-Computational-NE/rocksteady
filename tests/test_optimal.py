@@ -622,6 +622,10 @@ def test_an_infeasible_record_without_periods_is_named_whole():
     ({"subtypes": {"cold": rs.Subtype("steady")}, "models": {"steady": 0, "transient": 1},
       "max_counts": {"steady": 1, "transient": 0}},
      "(counts, durations, transitions) and the subtypes' conditions on"),
+    # Subtypes of a later state only.
+    ({"subtypes": {"tr": rs.Subtype("transient")}, "models": {"steady": 0, "transient": 1},
+      "max_counts": {"steady": 1, "transient": 0}},
+     "(counts, durations, transitions) and the subtypes' conditions on"),
 ])
 def test_an_infeasible_call_names_only_what_it_uses(kw, opening):
     # One segment of at most 4 s cannot cover 10 s. The message names the first and last segments only when

@@ -1328,11 +1328,13 @@ class _Problem:
         # Name only what the call uses: the first and last segments when initial or final is given, the
         # subtypes' conditions when there are subtypes.
         first_last = ", first and last segments" if self.given_initial_final else ""
+        has_subtypes = any(o.subtype is not None for o in self.options)
+        conditions = " and the subtypes' conditions" if has_subtypes else ""
         if self.fixed_segments is not None:  # classify_segments: no counts or durations; the caller's segments
-            return (f"these segments cannot be typed: no choice of subtypes satisfies the transitions{first_last} "
-                    f"and the subtypes' conditions: none can continue from {at}{unit} (sample {stuck}), in "
-                    f"{where}. In force: transitions={trans}{initial_final}.")
-        conditions = " and the subtypes' conditions" if any(o.subtype is not None for o in self.options) else ""
+            fails = "no choice of subtypes satisfies" if has_subtypes else "they do not satisfy"
+            return (f"these segments cannot be typed: {fails} the transitions{first_last}{conditions}: none can "
+                    f"continue from {at}{unit} (sample {stuck}), in {where}. In force: "
+                    f"transitions={trans}{initial_final}.")
         return (f"no segmentation satisfies the constraints (counts, durations, transitions{first_last})"
                 f"{conditions} on these candidate breakpoints: none can continue from {at}{unit} (sample {stuck}), "
                 f"in {where}. In force: max_counts={caps}, transitions={trans}{initial_final}.")

@@ -9,8 +9,10 @@
   is given, and "the subtypes' conditions" only with subtypes. Without
   them it opens "no segmentation satisfies the constraints (counts,
   durations, transitions) on these candidate breakpoints".
-  `classify_segments`' error names "first and last segments" only when
-  `initial` or `final` is given (#137).
+  `classify_segments`' error does the same, and without subtypes it says
+  the segments "do not satisfy the transitions" instead of "no choice of
+  subtypes satisfies the transitions and the subtypes' conditions"
+  (#137).
 
 ## 0.5.1
 
