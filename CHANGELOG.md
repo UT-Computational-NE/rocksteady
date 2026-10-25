@@ -33,6 +33,9 @@ Upgrading from 0.5.1. Behaviour changes to check:
 
 ### Documentation
 
+- `docs/agents/coding-standards.md`: a restatement keeps the code's
+  qualifiers; prose that restates what the code does carries over each
+  qualifier its source states, such as "on its own" (#133).
 - `docs/agents/coding-standards.md`: a check over every item (`any(...)`)
   is tested with the item it looks for after the first position, beside
   items that do not match, so that `all(...)` or the first item cannot
