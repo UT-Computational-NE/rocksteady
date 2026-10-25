@@ -9,9 +9,18 @@
   so the same instant in any zone starts the same periods. It was read on
   its own clock: beside a Chicago index, `07:00 UTC` (01:00 in Chicago)
   started four-hour periods on 07:00's grid (23:00, 03:00, ...), not
-  01:00's. An origin in
-  the index's own zone, or a naive one, gives the same periods as before;
-  beside a naive index, an aware origin still keeps its own clock (#144).
+  01:00's. An origin in the index's own zone, or a naive one, gives the
+  same periods as before; beside a naive index, an aware origin still
+  keeps its own clock (#144).
+- The `ValueError` for an infeasible `optimal_segments` names only what
+  the call uses: "first and last segments" only when `initial` or `final`
+  is given, and "the subtypes' conditions" only with subtypes. Without
+  them it opens "no segmentation satisfies the constraints (counts,
+  durations, transitions) on these candidate breakpoints".
+  `classify_segments`' error does the same, and without subtypes it says
+  the segments "do not satisfy the transitions" instead of "no choice of
+  subtypes satisfies the transitions and the subtypes' conditions"
+  (#137).
 
 ### Fixed
 
@@ -21,8 +30,9 @@
   put every sample in one period (indexed `nan`, `inf` or `-inf`), so a
   `max_counts` cap bound the whole record as one period; `pd.NaT` and
   `pd.NA` failed with `float()`'s `TypeError`, as did a `per` of either,
-  which now gets "per must be a positive number of seconds". This applies to `count_by_period`,
-  `optimal_segments` and `OptimalSegmentation.counts` (#144).
+  which now gets "per must be a positive number of seconds". This applies
+  to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#144).
 
 ### Documentation
 

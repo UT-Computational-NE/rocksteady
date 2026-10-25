@@ -668,6 +668,33 @@ def test_an_infeasible_record_without_periods_is_named_whole():
     assert "max_counts={'steady': 1}" in msg
 
 
+@pytest.mark.parametrize("kw, opening", [
+    ({}, "(counts, durations, transitions) on"),
+    ({"subtypes": {}}, "(counts, durations, transitions) on"),
+    ({"subtypes": {"cold": rs.Subtype("steady")}}, "(counts, durations, transitions) and the subtypes' conditions on"),
+    ({"initial": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
+    ({"final": ["steady"]}, "(counts, durations, transitions, first and last segments) on"),
+    ({"subtypes": {"cold": rs.Subtype("steady")}, "final": ["cold"]},
+     "(counts, durations, transitions, first and last segments) and the subtypes' conditions on"),
+    # Subtypes of one state, beside a state without subtypes (here one that can never be placed).
+    ({"subtypes": {"cold": rs.Subtype("steady")}, "models": {"steady": 0, "transient": 1},
+      "max_counts": {"steady": 1, "transient": 0}},
+     "(counts, durations, transitions) and the subtypes' conditions on"),
+    # Subtypes of a later state only.
+    ({"subtypes": {"tr": rs.Subtype("transient")}, "models": {"steady": 0, "transient": 1},
+      "max_counts": {"steady": 1, "transient": 0}},
+     "(counts, durations, transitions) and the subtypes' conditions on"),
+])
+def test_an_infeasible_call_names_only_what_it_uses(kw, opening):
+    # One segment of at most 4 s cannot cover 10 s. The message names the first and last segments only when
+    # initial or final is given, and the subtypes' conditions only when there are subtypes.
+    t = np.arange(10.0)
+    kw = {"models": {"steady": 0}, "max_counts": {"steady": 1}, **kw}
+    msg = _infeasible_message(t, np.zeros(10), method="exact", max_duration_s={"steady": 4.0}, penalty=0.0, **kw)
+    assert msg.startswith(f"no segmentation satisfies the constraints {opening} these candidate breakpoints: none "
+                          "can continue from 4.0 s (sample 4), in the whole record. In force: ")
+
+
 def test_a_duration_no_candidate_meets_is_named_the_same_way():
     # The candidate segments last 5 s or 10 s, none between 6 s and 8 s: nothing can start at the first sample.
     t = 3.0 + np.arange(10.0)
