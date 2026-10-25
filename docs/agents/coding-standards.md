@@ -11,12 +11,13 @@ Add a rule here when reviews raise the same call twice, or when the user admits 
 
 ## Rules
 
-- **Pin the exact value.** When code converts a value (coerces a type, counts, normalises a form) or checks the items of a collection, a test asserts the exact result. Its input must be one on which a weaker version of the code gives a different answer:
+- **Pin the exact value.** When code converts a value (coerces a type, counts, normalises a form), checks the items of a collection, or applies an offset, an origin, a phase or a zone, a test asserts the exact result. Its input must be one on which a weaker version of the code gives a different answer:
   - `type(x) is bool`, not `x == True`, which `np.True_` also passes;
   - a count of two, not one, so that `.any()` cannot stand in for `.sum()`;
-  - for `any(...)` or `all(...)` over options, states, segments or masks, the deciding item (one that matches for `any`, one that fails for `all`) after the first, beside items that decide the other way, not first or alone, so that neither the other check nor `items[0]` can stand in.
+  - for `any(...)` or `all(...)` over options, states, segments or masks, the deciding item (one that matches for `any`, one that fails for `all`) neither first nor last, beside items that decide the other way, or else two cases beside such items, one with it first and one with it last, so that neither the other check, `items[0]` nor `items[-1]` can stand in;
+  - for an offset, an origin, a phase or a zone, a value that the code's fallback cannot reach by accident: not a whole number of periods from the default (an origin 3600 s from 0 with 7200 s periods, UTC-6 with 4 h periods), and not already in the zone a conversion targets (New York, not UTC, when the code may convert to UTC).
 
-  In PR #104, a dropped `bool()` and a count that the only test held at 1 both survived the tests. In PR #139, `all(...)` and then the first option's subtype each survived in place of `any(...)` over the options: every case had subtypes on every state, and then only on the first state.
+  In PR #104, a dropped `bool()` and a count that the only test held at 1 both survived the tests. In PR #139, `all(...)` and then the first option's subtype each survived in place of `any(...)` over the options: every case had subtypes on every state, and then only on the first state. The tests then needed a case at each end, subtypes on the first state only and on the last state only: with only the last-state case, the last option's subtype would have survived. In PR #136, a UTC-6 origin with 2 h periods was a whole number of periods from UTC, and an origin of 3e8 s with 300 s periods a whole number from 0 s, so a `tz_convert` mutant and then every mutant that ignored the origin survived. In PR #152, a UTC origin beside a naive index gave the same periods whether or not the code converted it to UTC.
 - **A widened input brings its degenerate cases.** When a change makes an argument accept a new form, test that form's degenerate cases in the same change: a repeated item, an empty collection, a different order.
 
   In PR #104, accepting `(name, bool)` pairs as well as a mapping let one mask be named twice. Which pair won then depended on the order a set iterated in.
