@@ -28,7 +28,8 @@ AVOIDED = {
                             ("In the time domain, rules of thumb fail.", "Time-domain rules of thumb.",
                              "The frequency domain rules out aliasing."), not_before=("out",)),
     "under limits": _Avoided("under constraints (a limit is a criterion's threshold)",
-                             ("the criterion a statistic falls under; limits are its thresholds",)),
+                             ("the criterion a statistic falls under; limits are its thresholds",
+                              "Thunder limits the view.")),
     "within a tolerance": _Avoided("within a limit", ("Within a tolerance band of the sensor.",), not_before=("band",)),
     "sample period": _Avoided("sample spacing (a period is the optimiser's counting span)",
                               ("the sample periodogram",)),
@@ -66,11 +67,11 @@ def _phrase_pattern(phrase, avoided, relaxed=None):
     """
     words = [re.escape(w).replace("'", "['’]") for w in phrase.split()]
     if avoided.after and relaxed != "after":
-        words.insert(0, "(?:" + "|".join(avoided.after) + ")")
+        words.insert(0, "(?:" + "|".join(map(re.escape, avoided.after)) + ")")
     start = "" if relaxed == "start" else r"(?<![\w-])"
     end = "" if relaxed == "end" else r"\b"
     if avoided.not_before and relaxed != "not_before":
-        end += f"(?!{_GAP}(?:{'|'.join(avoided.not_before)})\\b)"
+        end += f"(?!{_GAP}(?:{'|'.join(map(re.escape, avoided.not_before))})\\b)"
     return start + (r"\W+" if relaxed == "gap" else _GAP).join(words) + "s?" + end
 
 
@@ -98,14 +99,23 @@ def _guarded(phrase, avoided, near_miss):
     return {b for b in BOUNDARIES if re.search(_phrase_pattern(phrase, avoided, b), near_miss, re.IGNORECASE)}
 
 
+def _sat_on(phrase, avoided):
+    """The boundaries of ``phrase``'s pattern that one of ``avoided``'s near-misses sits on."""
+    return set().union(*(_guarded(phrase, avoided, near_miss) for near_miss in avoided.near_misses))
+
+
 def _near_miss_problems(phrase, avoided):
     """The problems with ``avoided``'s near-misses for ``phrase``, each as a sentence; none when all is fine."""
+    if isinstance(avoided.near_misses, str):
+        return [f"{phrase!r}: its near-misses are one string, {avoided.near_misses!r}, not a tuple of them"]
+    if not avoided.near_misses:
+        return [f"{phrase!r} has no near-miss"]
     problems = []
     for near_miss in avoided.near_misses:
         problems += _one_near_miss_problems(phrase, avoided, near_miss)
-    on = set().union(*(_guarded(phrase, avoided, n) for n in avoided.near_misses))
+    sat_on = _sat_on(phrase, avoided)
     problems += [f"{phrase!r}: no near-miss sits on its {narrowing}"
-                 for narrowing in ("after", "not_before") if getattr(avoided, narrowing) and narrowing not in on]
+                 for narrowing in ("after", "not_before") if getattr(avoided, narrowing) and narrowing not in sat_on]
     return problems
 
 
@@ -139,7 +149,7 @@ def test_words_apart_or_inside_other_words_are_not_avoided_phrases():
     assert _avoided_phrases(text) == []
 
 
-def test_a_word_after_or_a_hyphen_before_that_makes_an_avoided_phrase_correct_text_is_not_flagged():
+def test_correct_text_after_a_hyphen_or_before_a_not_before_word_is_not_flagged():
     text = ("The frequency domain rules out aliasing.\nTime-domain rules of thumb.\n"
             "Within a tolerance band of the sensor, or within a tolerance\n    # band.\n"
             "Domain rules outweigh guesses. Within a tolerance of 0.1.")
@@ -155,10 +165,10 @@ def test_correct_text_flagged_by_choice_is_flagged_as_its_phrase():
 
 def test_passing_state_after_a_determiner_is_found_and_passing_state_as_a_verb_is_not():
     text = ("A sample keeps the passing state.\nIts passing\n    state, or their passing states.\n"
-            "Done by passing state between calls.\npassing state between calls")
+            "Done by passing state between calls.\npassing state between calls, for each passing state")
     found = _avoided_phrases(text)
     assert [(n, phrase) for n, phrase, _ in found] == [(1, "the passing state"), (2, "Its passing\n    state"),
-                                                       (3, "their passing states")]
+                                                       (3, "their passing states"), (5, "each passing state")]
     assert all(use.startswith("… passing label") for _, _, use in found)
 
 
@@ -181,14 +191,19 @@ def test_a_narrowing_that_no_near_miss_sits_on_is_a_problem():
 
 
 def test_each_boundary_of_the_patterns_has_a_near_miss_on_it():
-    on = set().union(*(_guarded(phrase, avoided, near_miss)
-                       for phrase, avoided in AVOIDED.items() for near_miss in avoided.near_misses))
-    assert on == set(BOUNDARIES)
+    assert set().union(*(_sat_on(phrase, avoided) for phrase, avoided in AVOIDED.items())) == set(BOUNDARIES)
 
 
 def test_a_near_miss_the_scan_flags_is_a_problem_after_one_that_passes():
     avoided = _Avoided("sample spacing", ("the sample periodogram", "one sample period"))
-    assert _near_miss_problems("sample period", avoided) == ["'sample period' flags its own near-miss 'one sample period'"]
+    assert _near_miss_problems("sample period", avoided) == [
+        "'sample period' flags its own near-miss 'one sample period'"]
+
+
+def test_an_entry_without_near_misses_is_a_problem():
+    assert _near_miss_problems("sample period", _Avoided("sample spacing", ())) == ["'sample period' has no near-miss"]
+    assert _near_miss_problems("sample period", _Avoided("sample spacing", "the sample periodogram")) == [
+        "'sample period': its near-misses are one string, 'the sample periodogram', not a tuple of them"]
 
 
 def test_a_near_miss_on_no_boundary_of_its_pattern_is_a_problem():
