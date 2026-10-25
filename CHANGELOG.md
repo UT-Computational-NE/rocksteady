@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+Upgrading from 0.5.1. Behaviour changes to check:
+- **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
+  and `OptimalSegmentation.counts` refuse a `period_origin` that is not a
+  finite number of seconds (#144). 0.5.1 accepted `np.nan`, `np.inf` and
+  `-np.inf` and put every sample in one period (indexed by that value), so a
+  `max_counts` cap bound the whole record as one period. `pd.NaT` and
+  `pd.NA`, as `period_origin` or as `per`, raised `float()`'s `TypeError`;
+  they now raise `ValueError`.
+- With an aware `DatetimeIndex`, an aware `period_origin` in another zone
+  starts different periods: it is converted to the index's zone first
+  (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
+  started four-hour periods at 19:00, 23:00, 03:00, ...; it now starts them
+  at 21:00, 01:00, 05:00, ..., as `"2026-03-02 01:00-06:00"` (01:00 in
+  Chicago) does. An origin in the index's own zone, or a naive one, gives
+  the same periods as in 0.5.1; beside a naive index, an aware origin still
+  keeps its own clock.
+- Two error messages read differently; code that matches their text needs
+  updating (#137; the rule is under Changed). Without `subtypes`, `initial`
+  or `final`, the infeasibility `ValueError` of `optimal_segments` opened
+  "no segmentation satisfies the constraints (counts, durations,
+  transitions, first and last segments) and the subtypes' conditions on
+  these candidate breakpoints"; it now opens "no segmentation satisfies
+  the constraints (counts, durations, transitions) on these candidate
+  breakpoints". Without subtypes, `initial` or `final`, `classify_segments`'
+  error opened "these segments cannot be typed: no choice of subtypes
+  satisfies the transitions, first and last segments and the subtypes'
+  conditions"; it now opens "these segments cannot be typed: they do not
+  satisfy the transitions". Matching "no segmentation satisfies the
+  constraints" or "these segments cannot be typed" still works.
+- Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
+  raised.
+
 ### Changed
 
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
@@ -47,6 +79,11 @@
 - `docs/agents/coding-standards.md`: a restatement keeps the code's
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
+- `docs/agents/coding-standards.md`: a check whether any item, or every
+  item, of a collection matches is tested with the deciding item after the
+  first, beside items that decide the other way, so that neither the other
+  check (`all(...)` for `any(...)`) nor the first item can stand in for it
+  (#146).
 - `docs/agents/review.md`: the shape of `review.json` for a review posted
   as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
 
