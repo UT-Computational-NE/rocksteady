@@ -3,6 +3,17 @@
 ## Unreleased
 
 Upgrading from 0.5.1. Behaviour changes to check:
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse a
+  `period_origin` that pandas reads as NaT (`pd.NaT`, `"NaT"`, `""`,
+  `np.datetime64("NaT")`, `pd.NA`) with a `ValueError` that names it
+  (#138). 0.5.1 accepted it and put every sample in one period indexed
+  `NaT`, so a `max_counts` cap bound the whole record as one period (on
+  pandas 1.5, `pd.NA` raised `TypeError`). A `per` that pandas reads as NaT
+  (`pd.NaT`, `"NaT"`, `""`, `pd.NA`, `np.timedelta64("NaT", "h")`) raised
+  pandas' `TypeError` (`unsupported operand type(s) for //`; on pandas 1.5,
+  `OutOfBoundsTimedelta` or `ValueError` for some forms); it now raises
+  `ValueError`.
 - **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
   and `OptimalSegmentation.counts` refuse a `period_origin` that is not a
   finite number of seconds (#144). 0.5.1 accepted `np.nan`, `np.inf` and
