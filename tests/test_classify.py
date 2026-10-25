@@ -123,6 +123,23 @@ def test_a_segmentation_that_cannot_be_typed_raises_naming_where():
                             "and last segments and the subtypes' conditions: none can continue from 40.0 s (sample "
                             "40), in the whole record. In force: transitions={'cold': ['heat-up'], 'heat-up': "
                             "['hot']}, final=['cold', 'hot'].")
+    # Without initial or final, the message does not name the first and last segments.
+    with pytest.raises(ValueError) as e:
+        rs.classify_segments(t, y, segments, subtypes=subtypes, transitions={"cold": ["heat-up"], "heat-up": ["hot"]})
+    assert str(e.value).startswith("these segments cannot be typed: no choice of subtypes satisfies the transitions "
+                                   "and the subtypes' conditions: none can continue from 40.0 s (sample 40), in the "
+                                   "whole record. In force: ")
+    # Without subtypes, it names neither a choice of subtypes nor their conditions.
+    for no_subtypes in ({}, None):
+        with pytest.raises(ValueError) as e:
+            rs.classify_segments(t, y, segments, subtypes=no_subtypes, transitions={"steady": ["transient"]})
+        assert str(e.value) == ("these segments cannot be typed: they do not satisfy the transitions: none can "
+                                "continue from 40.0 s (sample 40), in the whole record. In force: "
+                                "transitions={'steady': ['transient']}.")
+        with pytest.raises(ValueError) as e:
+            rs.classify_segments(t, y, segments, subtypes=no_subtypes, initial=["transient"])
+        assert str(e.value).startswith("these segments cannot be typed: they do not satisfy the transitions, first "
+                                       "and last segments: none can continue from ")
     # A catch-all transient may follow cold and lead back to it.
     subtypes["other"] = rs.Subtype("transient")
     got = rs.classify_segments(t, y, segments, subtypes=subtypes,
