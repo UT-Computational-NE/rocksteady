@@ -41,6 +41,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   first, beside items that decide the other way, so that neither the other
   check (`all(...)` for `any(...)`) nor the first item can stand in for it
   (#146).
+- `docs/agents/review.md`: the shape of `review.json` for a review posted
+  as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
 
 ### Tests and CI
 
@@ -49,6 +51,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
   the test's project slows every pytest start-up by 3 s, so the test
   itself shows the headroom. It takes about 27 s (#134).
+- `tools/check.sh` stops before pytest, naming the modules and the
+  install command, when its interpreter lacks one of the package's
+  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  interpreter that exits non-zero, which ended the script without a message
+  of its own, and a `PYTHON` that is not executable, which it called
+  missing (#90).
+- mypy also checks the bodies of functions without annotations
+  (`check_untyped_defs`); the one finding needed a `cast`, with no
+  behaviour change (#98).
+- `tests/test_lint_sh.py` lints a module in each of `src`, `tests`, `tools`
+  and `examples`, so dropping a directory from either linter's command in
+  `tools/lint.sh` fails a test (#115).
 
 ## 0.5.1
 
