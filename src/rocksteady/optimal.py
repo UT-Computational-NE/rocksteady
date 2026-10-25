@@ -202,9 +202,25 @@ def _refuse_unitless(per) -> None:
                          "or a Timedelta")
 
 
+def _seconds(x) -> float:
+    """``x`` as a float of seconds, with ``pd.NaT`` and ``pd.NA`` as NaN (``float()`` takes neither)."""
+    import pandas as pd
+
+    return math.nan if x is pd.NaT or x is pd.NA else float(x)
+
+
 def _origin_seconds(period_origin) -> float:
-    """The start ``period_origin`` of periods of numeric times, in seconds (default: 0)."""
-    return 0.0 if period_origin is None else float(period_origin)
+    """
+    The start ``period_origin`` of periods of numeric times, in seconds
+    (default: 0). One that is not a finite number (NaN, infinite, NaT) is
+    refused: it would put no sample in a period.
+    """
+    if period_origin is None:
+        return 0.0
+    origin = _seconds(period_origin)
+    if not math.isfinite(origin):
+        raise ValueError(f"period_origin must be a finite number of seconds, got {period_origin!r}")
+    return origin
 
 
 def _period_step(per):
@@ -221,8 +237,13 @@ def _period_step(per):
     return pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
 
 
-def _origin_stamp(period_origin):
-    """The wall-clock start ``period_origin`` of periods of a DatetimeIndex (default: the Unix epoch)."""
+def _origin_stamp(period_origin, tz):
+    """
+    The wall-clock start ``period_origin`` of periods of a DatetimeIndex in
+    zone ``tz`` (default: the Unix epoch). An aware origin is read on the
+    index's clock, so the same instant in any zone starts the same periods;
+    beside a naive index (``tz`` None) it keeps its own clock.
+    """
     import pandas as pd
 
     if period_origin is None:
@@ -231,7 +252,9 @@ def _origin_stamp(period_origin):
         raise ValueError(f"period_origin as a number needs numeric times (seconds); with a DatetimeIndex give a "
                          f"timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}")
     origin = pd.Timestamp(period_origin)
-    return origin.tz_localize(None) if origin.tzinfo is not None else origin
+    if origin.tzinfo is None:
+        return origin
+    return (origin.tz_convert(tz) if tz is not None else origin).tz_localize(None)
 
 
 def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]:
@@ -242,7 +265,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         import pandas as pd
 
         wall = idx.tz_localize(None) if idx.tz is not None else idx  # local wall-clock time
-        origin = _origin_stamp(period_origin)
+        origin = _origin_stamp(period_origin, idx.tz)
         step = _period_step(per)
         if step <= pd.Timedelta(0):
             raise ValueError(f"per must be positive, got {per!r}")
@@ -253,7 +276,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         return np.maximum.accumulate(ids) if len(ids) else ids
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
-    step = float(per)
+    step = _seconds(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
@@ -269,7 +292,7 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
     ``period_origin`` a timestamp (a number raises ``ValueError``); with
-    numeric times, both are seconds.
+    numeric times, both are seconds, and ``period_origin`` must be finite.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -311,7 +334,7 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
     if per is None:
         return pd.Index(["all"] * len(ids))
     if idx is not None:
-        return pd.Index(_origin_stamp(period_origin) + ids * _period_step(per))
+        return pd.Index(_origin_stamp(period_origin, idx.tz) + ids * _period_step(per))
     return pd.Index(_origin_seconds(period_origin) + ids * float(per))
 
 
@@ -1644,8 +1667,11 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         is a natural choice for detector candidates.
     period_origin : optional
         Where periods start: a timestamp with a DatetimeIndex (a number
-        raises ``ValueError``), seconds with numeric times. Default: the
-        Unix epoch, i.e. midnight for days.
+        raises ``ValueError``), read on the index's wall clock; an aware
+        one is converted to the index's zone first, so the same instant in
+        any zone starts the same periods. With numeric times, a finite
+        number of seconds (NaN, infinite or NaT raises ``ValueError``).
+        Default: the Unix epoch, i.e. midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
