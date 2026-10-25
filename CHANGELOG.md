@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- `docs/agents/coding-standards.md`: a restatement keeps the code's
+  qualifiers; prose that restates what the code does carries over each
+  condition its source states (#133).
+
 ## 0.5.1
 
 Caller-named subtypes for best-fit segments, with `classify_segments`
