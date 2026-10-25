@@ -311,7 +311,7 @@ _NUMPY_TIMES_FLOAT_READS = [
 
 @pytest.mark.parametrize("value", _NUMPY_TIMES_FLOAT_READS)
 def test_a_numpy_time_that_is_not_nat_gives_numeric_times_the_periods_of_its_float(value):
-    # float() reads each as 3600; only a NaT is refused, so these keep the periods of 3600 seconds.
+    # float() reads each as 3600, and none is a NaT, so each keeps the periods of 3600 seconds.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     by_origin = count_by_period(segs, t, 7200, period_origin=value)
