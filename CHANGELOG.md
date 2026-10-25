@@ -5,13 +5,20 @@
 Caller-named subtypes for best-fit segments, with `classify_segments`
 (#55, #67); an infeasibility error that names where it gets stuck (#62);
 docs in the glossary's terms (#56); no numpy 2.5 warnings on pandas 2.x
-(#121).
+(#121); a period beside a `DatetimeIndex` must carry a unit (#127).
 
 Upgrading from 0.5.0. Behaviour changes to check:
 - **Breaking:** `optimal_segments` refuses two calls that 0.5.0 accepted:
   a state whose `min_duration_s` exceeds its `max_duration_s` (#117), and
   a `penalty` mapping that names something other than a state with a model
   or a subtype (#63).
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse a number as
+  `per` or `period_origin`, and a `per` without a unit (`"7200"`, a
+  unitless `np.timedelta64`). 0.5.0 read such a number as nanoseconds, so
+  `per=7200` gave 7200 ns periods; give `"2h"`, a Timedelta, or a
+  timestamp for `period_origin` (#127). With numeric times, a number is
+  still seconds.
 - Some error messages read differently; code that matches their text needs
   updating. The `ValueError` for an infeasible `optimal_segments` says
   *constraints* (0.5.0 said "limits") and names the time where it gets
@@ -145,6 +152,17 @@ Upgrading from 0.5.0. Behaviour changes to check:
   the results are unchanged. With pruning, an infeasible call fits models
   up to where every segmentation gets stuck, which costs seconds where
   0.5.0 raised at once (#62).
+- With times as a `DatetimeIndex`, a number as `per` (an int, a float, a
+  bool or a numpy number) is refused with a `ValueError` that names the
+  forms to use, a string (`"2h"`) or a Timedelta. pandas read the number as
+  nanoseconds, so `per=7200` gave 7200 ns periods, though the docstring
+  said seconds. A `per` without a unit, a string holding only a number
+  (`"7200"`) or an `np.timedelta64` without one, is refused for the same
+  reason, and so is a number as `period_origin` (it was nanoseconds after
+  the epoch, though the docstring said seconds); give a timestamp. This
+  applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts`; with numeric times a number is still
+  seconds for both (#127).
 
 ### Fixed
 
@@ -288,7 +306,11 @@ Upgrading from 0.5.0. Behaviour changes to check:
   A mutant whose tests hang is stopped after a timeout (`TIMEOUT`, or ten
   times the unmutated run, at least 60 s) and counts as red. The file's
   cached bytecode is deleted first, so a same-length mutant cannot run as
-  the cached original, and a second run on the same file is refused.
+  the cached original, and a second run on the same file is refused, by
+  whatever path it names the file (a symlink or a hard link). That lock is
+  on the file itself, opened for writing (an exclusive flock over NFS needs
+  it), so the tool leaves nothing in the temp directory; a file it cannot
+  write or lock is refused as such (#124).
   `docs/agents/review.md` points the mutant probe at it.
 
 ## 0.5.0
