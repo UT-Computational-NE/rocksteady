@@ -161,6 +161,7 @@ def test_correct_text_flagged_by_choice_is_flagged_as_its_phrase():
     assert FLAGGED_BY_CHOICE
     for text, phrase in FLAGGED_BY_CHOICE.items():
         assert [use for _, _, use in _avoided_phrases(text)] == [AVOIDED[phrase].use_instead], text
+    assert _avoided_phrases("all statistics under their limits") == []
 
 
 def test_passing_state_after_a_determiner_is_found_and_passing_state_as_a_verb_is_not():
