@@ -63,6 +63,7 @@ filterwarnings = ["error::FutureWarning", "error:The 'generic' unit:DeprecationW
 [tool.mypy]
 files = ["src/rocksteady"]
 python_version = "3.10"
+check_untyped_defs = true  # also check the bodies of functions without annotations
 
 [[tool.mypy.overrides]]
 module = ["pandas", "pandas.*"]

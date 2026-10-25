@@ -213,9 +213,26 @@ def _is_missing(x) -> bool:
     return x is pd.NA or (isinstance(x, np.timedelta64) and bool(np.isnat(x)))
 
 
+def _seconds(x) -> float:
+    """``x`` as a float of seconds, with ``pd.NaT`` and ``pd.NA`` as NaN (``float()`` takes neither)."""
+    import pandas as pd
+
+    return math.nan if x is pd.NaT or x is pd.NA else float(x)
+
+
 def _origin_seconds(period_origin) -> float:
-    """The start ``period_origin`` of periods of numeric times, in seconds (default: 0)."""
-    return 0.0 if period_origin is None else float(period_origin)
+    """
+    The start ``period_origin`` of periods of numeric times, in seconds
+    (default: 0). One that is not a finite number (NaN, infinite,
+    ``pd.NaT``, ``pd.NA``) is refused: it would put every sample in one
+    period.
+    """
+    if period_origin is None:
+        return 0.0
+    origin = _seconds(period_origin)
+    if not math.isfinite(origin):
+        raise ValueError(f"period_origin must be a finite number of seconds, got {period_origin!r}")
+    return origin
 
 
 def _period_step(per):
@@ -239,8 +256,13 @@ def _period_step(per):
     return step
 
 
-def _origin_stamp(period_origin):
-    """The wall-clock start ``period_origin`` of periods of a DatetimeIndex (default: the Unix epoch)."""
+def _origin_stamp(period_origin, tz):
+    """
+    The wall-clock start ``period_origin`` of periods of a DatetimeIndex in
+    zone ``tz`` (default: the Unix epoch). An aware origin is read on the
+    index's clock, so the same instant in any zone starts the same periods;
+    beside a naive index (``tz`` None) it keeps its own clock.
+    """
     import pandas as pd
 
     if period_origin is None:
@@ -252,7 +274,9 @@ def _origin_stamp(period_origin):
     if pd.isna(origin):
         raise ValueError(f"period_origin must be a timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}, "
                          "which pandas reads as NaT")
-    return origin.tz_localize(None) if origin.tzinfo is not None else origin
+    if origin.tzinfo is None:
+        return origin
+    return (origin.tz_convert(tz) if tz is not None else origin).tz_localize(None)
 
 
 def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]:
@@ -263,7 +287,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         import pandas as pd
 
         wall = idx.tz_localize(None) if idx.tz is not None else idx  # local wall-clock time
-        origin = _origin_stamp(period_origin)
+        origin = _origin_stamp(period_origin, idx.tz)
         step = _period_step(per)
         if step <= pd.Timedelta(0):
             raise ValueError(f"per must be positive, got {per!r}")
@@ -274,7 +298,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         return np.maximum.accumulate(ids) if len(ids) else ids
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
-    step = float(per)
+    step = _seconds(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
@@ -291,7 +315,7 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``); with numeric times, both are
-    seconds.
+    seconds, and ``period_origin`` must be finite.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -333,7 +357,7 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
     if per is None:
         return pd.Index(["all"] * len(ids))
     if idx is not None:
-        return pd.Index(_origin_stamp(period_origin) + ids * _period_step(per))
+        return pd.Index(_origin_stamp(period_origin, idx.tz) + ids * _period_step(per))
     return pd.Index(_origin_seconds(period_origin) + ids * float(per))
 
 
@@ -1347,14 +1371,19 @@ class _Problem:
         given = self.given_transitions
         trans = "any" if given is None else {a: sorted(set(b)) for a, b in given.items()}
         initial_final = "".join(f", {what}={names}" for what, names in self.given_initial_final.items())
+        # Name only what the call uses: the first and last segments when initial or final is given, the
+        # subtypes' conditions when there are subtypes.
+        first_last = ", first and last segments" if self.given_initial_final else ""
+        has_subtypes = any(o.subtype is not None for o in self.options)
+        conditions = " and the subtypes' conditions" if has_subtypes else ""
         if self.fixed_segments is not None:  # classify_segments: no counts or durations; the caller's segments
-            return (f"these segments cannot be typed: no choice of subtypes satisfies the transitions, first and "
-                    f"last segments and the subtypes' conditions: none can continue from {at}{unit} (sample "
-                    f"{stuck}), in {where}. In force: transitions={trans}{initial_final}.")
-        return (f"no segmentation satisfies the constraints (counts, durations, transitions, first and last "
-                f"segments) and the subtypes' conditions on these candidate breakpoints: none can continue from "
-                f"{at}{unit} (sample {stuck}), in {where}. In force: max_counts={caps}, "
-                f"transitions={trans}{initial_final}.")
+            fails = "no choice of subtypes satisfies" if has_subtypes else "they do not satisfy"
+            return (f"these segments cannot be typed: {fails} the transitions{first_last}{conditions}: none can "
+                    f"continue from {at}{unit} (sample {stuck}), in {where}. In force: "
+                    f"transitions={trans}{initial_final}.")
+        return (f"no segmentation satisfies the constraints (counts, durations, transitions{first_last})"
+                f"{conditions} on these candidate breakpoints: none can continue from {at}{unit} (sample {stuck}), "
+                f"in {where}. In force: max_counts={caps}, transitions={trans}{initial_final}.")
 
     def _best_ending_at(self, k: int, o: int, C: np.ndarray, F: np.ndarray, R: np.ndarray, same: np.ndarray,
                         spans: np.ndarray):
@@ -1666,8 +1695,13 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         is a natural choice for detector candidates.
     period_origin : optional
         Where periods start: a timestamp with a DatetimeIndex (a number, or
-        one pandas reads as NaT, raises ``ValueError``), seconds with
-        numeric times. Default: the Unix epoch, i.e. midnight for days.
+        one pandas reads as NaT, raises ``ValueError``), read on the index's
+        wall clock. Beside an aware index, an aware one is converted to the
+        index's zone first, so the same instant in any zone starts the same
+        periods; beside a naive index, it keeps its own clock. With numeric
+        times, a finite number of seconds (NaN, infinite, ``pd.NaT`` or
+        ``pd.NA`` raises ``ValueError``). Default: the Unix epoch, i.e.
+        midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
