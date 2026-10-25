@@ -1,5 +1,6 @@
-"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84); runs a selection (#87);
-the full run typechecks (#93) and lints (#106)."""
+"""tools/check.sh names its interpreter and stops when it lacks the extra it needs (#84) or the package's dependencies,
+or when the interpreter is not executable or exits non-zero (#90); runs a selection (#87); the full run typechecks
+(#93) and lints (#106)."""
 
 import os
 import subprocess
@@ -14,11 +15,13 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python, *args, pythonpath=None):
+def _check(python, *args, pythonpath=None, path_first=None):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
     env["PYTHON"] = str(python)
     if pythonpath is not None:
         env["PYTHONPATH"] = str(pythonpath)
+    if path_first is not None:
+        env["PATH"] = str(path_first) + os.pathsep + env["PATH"]
     return subprocess.run(["bash", CHECK, *args], env=env, capture_output=True, text=True, timeout=60)
 
 
@@ -35,9 +38,10 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
     # the environment's editable install at the worktree.
     # With the minimum versions the extras in pyproject.toml ask for.
-    want = "'numpy>=1.22' 'pandas>=1.5' 'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'pycodestyle>=2.11' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'"
+    want = ("'numpy>=1.22' 'pandas>=1.5' 'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'pycodestyle>=2.11' 'sphinx>=7' "
+            "'sphinx-rtd-theme>=2' 'myst-parser>=2'")
     assert f"{sys.executable} -m pip install {want}" in run.stderr
-    # A fresh environment also needs the package's own dependencies: the editable install, from the main checkout.
+    # A fresh environment is set up with the editable install, from the main checkout.
     assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
     assert "passed" not in run.stdout  # stopped before the tests ran
 
@@ -45,7 +49,7 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
 def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     run = _check(tmp_path / "no-such-python")
     assert run.returncode == 1
-    assert "check.sh:" in run.stderr and str(tmp_path / "no-such-python") in run.stderr
+    assert f"check.sh: there is no interpreter {tmp_path / 'no-such-python'}." in run.stderr
 
 
 def test_arguments_select_the_tests_and_skip_mypy_lint_and_the_docs_build(tmp_path):
@@ -85,6 +89,15 @@ def test_a_python_that_is_not_executable_is_named_as_such(tmp_path):
     assert "there is no interpreter" not in run.stderr
 
 
+def test_a_python_on_path_that_is_not_executable_is_named_as_such(tmp_path):
+    plain = tmp_path / "py3x"  # named without a directory, as found on PATH
+    plain.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    plain.chmod(0o644)
+    run = _check("py3x", path_first=tmp_path)
+    assert run.returncode == 1
+    assert "check.sh: py3x is not executable" in run.stderr
+
+
 def test_a_python_that_exits_non_zero_is_named_and_stops_the_checks(tmp_path):
     broken = tmp_path / "broken-python"  # it runs, but every call fails, as in a broken environment
     broken.write_text("#!/bin/sh\necho 'no module named encodings' >&2\nexit 3\n")
@@ -100,6 +113,9 @@ def test_an_interpreter_without_the_packages_dependencies_is_named_and_stops_the
     (tmp_path / "sitecustomize.py").write_text("import sys\nsys.modules['numpy'] = None\n")  # numpy cannot be found
     run = _check(sys.executable, *args, pythonpath=tmp_path)
     assert run.returncode == 1
-    assert "lacks numpy, which the package needs." in run.stderr  # the extras' modules are all there
-    assert f"{sys.executable} -m pip install 'numpy>=1.22')" in run.stderr  # its minimum version in pyproject.toml
+    # A selection needs only pytest; a full run may lack the dev extra too (CI's test jobs install the test extra).
+    end = "." if args else ""
+    assert f"lacks numpy, which the package needs{end}" in run.stderr
+    end = ")" if args else ""
+    assert f"{sys.executable} -m pip install 'numpy>=1.22'{end}" in run.stderr  # its minimum version in pyproject.toml
     assert "passed" not in run.stdout and "error" not in run.stdout  # stopped before pytest collected anything

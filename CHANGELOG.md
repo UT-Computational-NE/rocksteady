@@ -19,9 +19,10 @@
   itself shows the headroom. It takes about 27 s (#134).
 - `tools/check.sh` stops before pytest, naming the modules and the
   install command, when its interpreter lacks one of the package's
-  dependencies (numpy, pandas: those `pyproject.toml` lists); and it names
-  an interpreter that exits non-zero, or a `PYTHON` that is not executable,
-  instead of ending without a message or calling it missing (#90).
+  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  interpreter that exits non-zero, which ended the script without a message
+  of its own, and a `PYTHON` that is not executable, which it called
+  missing (#90).
 - mypy also checks the bodies of functions without annotations
   (`check_untyped_defs`); the one finding needed a `cast`, with no
   behaviour change (#98).

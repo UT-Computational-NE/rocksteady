@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, mypy (configured
-# in pyproject.toml), tools/lint.sh (pylint on the messages it enforces, pycodestyle on blank lines), and the strict
-# docs build. Needs the modules of the dev extra (a selection: the test extra); when they are missing it says how
-# to install them. Exports PYTHONPATH=src for the docs build, which imports this checkout's rocksteady (pytest, and
-# the processes tests start, get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the
-# interpreter (default: python on PATH).
+# The fast checks CI runs (.github/workflows/tests.yml): the tests without the slow Monte Carlo, mypy (configured in
+# pyproject.toml), tools/lint.sh (pylint on the messages it enforces, pycodestyle on blank lines), and the strict docs
+# build. Needs the package's dependencies and the modules of the dev extra (a selection: the test extra); when they are
+# missing it says how to install them, and it names an interpreter that is not executable or exits non-zero. Exports
+# PYTHONPATH=src for the docs build, which imports this checkout's rocksteady (pytest, and the processes tests start,
+# get src/ from pyproject.toml and tests/conftest.py). Set PYTHON to pick the interpreter (default: python on PATH).
 # With arguments, it runs only that pytest selection, without mypy, lint or the docs build:
 # tools/check.sh tests/test_optimal.py -k infeasible
 set -euo pipefail
@@ -20,7 +20,9 @@ if [ "$selection" -gt 0 ]; then
 else
   extra=dev; needs=(pytest mypy pylint pycodestyle sphinx sphinx_rtd_theme myst_parser)
 fi
-if [[ "$py" == */* && -f "$py" && ! -x "$py" ]]; then
+file="$py"  # bash's command -v passes over a file that is not executable, unless found by name on PATH
+[[ "$py" == */* ]] || file="$(command -v "$py" || true)"
+if [[ -e "$file" && ! -x "$file" ]]; then
   echo "check.sh: $py is not executable. Make it executable (chmod +x), or set PYTHON to one that has the $extra" \
        "extra." >&2
   exit 1
@@ -35,11 +37,11 @@ info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" |
 }
 exe="${info#* }"
 echo "check.sh: $py is Python ${info%% *} at $exe"
-# The missing modules of the package's dependencies (pyproject.toml's `dependencies`, each module named
-# as its distribution, with _ for -), a ;, then those of the extra.
+# The missing modules of the package's dependencies (pyproject.toml's `dependencies`, each module named as its
+# distribution, as numpy's and pandas's are), a ;, then those of the extra.
 missing="$("$py" -c 'import importlib.util as u, re, sys
 deps = re.search(r"^dependencies = \[(.*?)\]", open("pyproject.toml").read(), re.M | re.S).group(1)
-deps = [re.match(r"[\w.-]+", d).group(0).lower().replace("-", "_") for d in re.findall(r"\"([^\"]+)\"", deps)]
+deps = [re.match(r"[\w.-]+", d).group(0) for d in re.findall(r"\"([^\"]+)\"", deps)]
 print(";".join(" ".join(m for m in modules if u.find_spec(m) is None) for modules in (deps, sys.argv[1:])))
 ' "${needs[@]}")"
 missing_deps="${missing%%;*}" missing_extra="${missing#*;}"
@@ -57,8 +59,8 @@ for dist in sys.argv[1:]:
     m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
     print(repr(m.group(1) if m else dist), end=" ")' ${missing//_/-})"
   echo "check.sh: $py ($exe) lacks $what. Install them into it" \
-       "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment needs" \
-       "the package's dependencies too: pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
+       "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment is set" \
+       "up with pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
   exit 1
 fi
 "$py" -m pytest -m "not slow" -q "$@"  # with arguments, only that selection; a later -m overrides "not slow"
