@@ -212,8 +212,9 @@ def _seconds(x) -> float:
 def _origin_seconds(period_origin) -> float:
     """
     The start ``period_origin`` of periods of numeric times, in seconds
-    (default: 0). One that is not a finite number (NaN, infinite, NaT) is
-    refused: it would put no sample in a period.
+    (default: 0). One that is not a finite number (NaN, infinite,
+    ``pd.NaT``, ``pd.NA``) is refused: it would put every sample in one
+    period.
     """
     if period_origin is None:
         return 0.0
@@ -1667,10 +1668,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         is a natural choice for detector candidates.
     period_origin : optional
         Where periods start: a timestamp with a DatetimeIndex (a number
-        raises ``ValueError``), read on the index's wall clock; an aware
-        one is converted to the index's zone first, so the same instant in
-        any zone starts the same periods. With numeric times, a finite
-        number of seconds (NaN, infinite or NaT raises ``ValueError``).
+        raises ``ValueError``), read on the index's wall clock. Beside an
+        aware index, an aware one is converted to the index's zone first,
+        so the same instant in any zone starts the same periods; beside a
+        naive index, it keeps its own clock. With numeric times, a finite
+        number of seconds (NaN, infinite, ``pd.NaT`` or ``pd.NA`` raises
+        ``ValueError``).
         Default: the Unix epoch, i.e. midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible

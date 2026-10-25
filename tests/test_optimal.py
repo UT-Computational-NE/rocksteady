@@ -288,7 +288,7 @@ def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
 @pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA],
                          ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"])
 def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused_by_name(origin):
-    # An origin that is not a finite number of seconds puts no sample in a period; the error names the value given.
+    # An origin that is not a finite number of seconds would put every sample in one period; the error names it.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     named = rf"period_origin must be a finite number of seconds, got {re.escape(repr(origin))}$"
@@ -344,13 +344,14 @@ def test_a_period_origin_is_read_on_the_wall_clock(origin):
 
 
 def test_an_aware_period_origin_beside_a_naive_index_keeps_its_own_clock():
-    # A naive index has no zone to convert to: 07:00 UTC starts periods at 07:00 on the index's clock, so four-hour
-    # periods start at 23:00 and 03:00 and hourly samples from midnight fall [3, 3], where 01:00 would give [1, 4, 1].
+    # A naive index has no zone to convert to: 02:00 in New York starts periods at 02:00 on the index's clock, so
+    # four-hour periods start at 22:00 and 02:00 and hourly samples from midnight fall [2, 4]. Read in UTC (07:00),
+    # they would start at 23:00 and give [3, 3].
     idx = pd.date_range("2026-03-02", periods=6, freq="1h")
     counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h",
-                             period_origin=pd.Timestamp("2026-03-02 07:00", tz="UTC"))
-    assert counts["steady"].tolist() == [3, 3]
-    assert list(counts.index) == [pd.Timestamp("2026-03-01 23:00"), pd.Timestamp("2026-03-02 03:00")]
+                             period_origin=pd.Timestamp("2026-03-02 02:00", tz="America/New_York"))
+    assert counts["steady"].tolist() == [2, 4]
+    assert list(counts.index) == [pd.Timestamp("2026-03-01 22:00"), pd.Timestamp("2026-03-02 02:00")]
 
 
 @pytest.mark.parametrize("origin", _NUMBERS)
