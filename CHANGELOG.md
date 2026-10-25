@@ -19,6 +19,8 @@
 - `docs/agents/coding-standards.md`: a restatement keeps the code's
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
+- `docs/agents/review.md`: the shape of `review.json` for a review posted
+  as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
 
 ### Tests and CI
 
@@ -35,6 +37,18 @@
   run, and the mutant's run until it started its child; it is now 20 s,
   with every pytest start-up in its project 3 s slower. It takes about
   30 s (#147).
+- `tools/check.sh` stops before pytest, naming the modules and the
+  install command, when its interpreter lacks one of the package's
+  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  interpreter that exits non-zero, which ended the script without a message
+  of its own, and a `PYTHON` that is not executable, which it called
+  missing (#90).
+- mypy also checks the bodies of functions without annotations
+  (`check_untyped_defs`); the one finding needed a `cast`, with no
+  behaviour change (#98).
+- `tests/test_lint_sh.py` lints a module in each of `src`, `tests`, `tools`
+  and `examples`, so dropping a directory from either linter's command in
+  `tools/lint.sh` fails a test (#115).
 
 ## 0.5.1
 
