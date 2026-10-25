@@ -4,18 +4,18 @@
 
 Upgrading from 0.5.1. Behaviour changes to check:
 - Two error messages read differently; code that matches their text needs
-  updating (#137). The infeasibility `ValueError` of `optimal_segments`
-  opened "no segmentation satisfies the constraints (counts, durations,
+  updating (#137; the rule is under Changed). Without `subtypes`, `initial`
+  or `final`, the infeasibility `ValueError` of `optimal_segments` opened
+  "no segmentation satisfies the constraints (counts, durations,
   transitions, first and last segments) and the subtypes' conditions on
-  these candidate breakpoints"; it now names "first and last segments" only
-  when `initial` or `final` is given, and "the subtypes' conditions" only
-  with subtypes. `classify_segments`' error said "these segments cannot be
-  typed: no choice of subtypes satisfies the transitions, first and last
-  segments and the subtypes' conditions"; it names the first and last
-  segments the same way, and without subtypes it says "these segments
-  cannot be typed: they do not satisfy the transitions". Matching "no
-  segmentation satisfies the constraints" or "these segments cannot be
-  typed" still works.
+  these candidate breakpoints"; it now opens "no segmentation satisfies
+  the constraints (counts, durations, transitions) on these candidate
+  breakpoints". Without subtypes, `initial` or `final`, `classify_segments`'
+  error opened "these segments cannot be typed: no choice of subtypes
+  satisfies the transitions, first and last segments and the subtypes'
+  conditions"; it now opens "these segments cannot be typed: they do not
+  satisfy the transitions". Matching "no segmentation satisfies the
+  constraints" or "these segments cannot be typed" still works.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
 
@@ -36,10 +36,11 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - `docs/agents/coding-standards.md`: a restatement keeps the code's
   qualifiers; prose that restates what the code does carries over each
   qualifier its source states, such as "on its own" (#133).
-- `docs/agents/coding-standards.md`: a check over every item (`any(...)`)
-  is tested with the item it looks for after the first position, beside
-  items that do not match, so that `all(...)` or the first item cannot
-  stand in for it (#146).
+- `docs/agents/coding-standards.md`: a check whether any item, or every
+  item, of a collection matches is tested with the deciding item after the
+  first, beside items that decide the other way, so that neither the other
+  check (`all(...)` for `any(...)`) nor the first item can stand in for it
+  (#146).
 
 ### Tests and CI
 

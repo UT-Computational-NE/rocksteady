@@ -11,12 +11,12 @@ Add a rule here when reviews raise the same call twice, or when the user admits 
 
 ## Rules
 
-- **Pin the exact value.** When code converts a value (coerces a type, counts, normalises a form), a test asserts the exact result. Its input must be one on which a weaker version of the code gives a different answer:
+- **Pin the exact value.** When code converts a value (coerces a type, counts, normalises a form) or checks the items of a collection, a test asserts the exact result. Its input must be one on which a weaker version of the code gives a different answer:
   - `type(x) is bool`, not `x == True`, which `np.True_` also passes;
   - a count of two, not one, so that `.any()` cannot stand in for `.sum()`;
-  - for a check over every item (`any(...)` over options, states, segments or masks), the item it looks for after the first position and beside items that do not match, so that neither `all(...)` nor `items[0]` can stand in for `any(...)`.
+  - for `any(...)` or `all(...)` over options, states, segments or masks, the deciding item (one that matches for `any`, one that fails for `all`) after the first, beside items that decide the other way, not first or alone, so that neither the other check nor `items[0]` can stand in.
 
-  In PR #104, a dropped `bool()` and a count that the only test held at 1 both survived the tests. In PR #139, `all(...)` and then the first option's subtype each survived in place of `any(...)` over the options: every case had subtypes on every state, and then only on the first.
+  In PR #104, a dropped `bool()` and a count that the only test held at 1 both survived the tests. In PR #139, `all(...)` and then the first option's subtype each survived in place of `any(...)` over the options: every case had subtypes on every state, and then only on the first state.
 - **A widened input brings its degenerate cases.** When a change makes an argument accept a new form, test that form's degenerate cases in the same change: a repeated item, an empty collection, a different order.
 
   In PR #104, accepting `(name, bool)` pairs as well as a mapping let one mask be named twice. Which pair won then depended on the order a set iterated in.
