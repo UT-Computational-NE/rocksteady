@@ -14,6 +14,12 @@
   subtypes satisfies the transitions and the subtypes' conditions"
   (#137).
 
+### Documentation
+
+- `docs/agents/coding-standards.md`: a restatement keeps the code's
+  qualifiers; prose that restates what the code does carries over each
+  qualifier its source states, such as "on its own" (#133).
+
 ### Tests and CI
 
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
