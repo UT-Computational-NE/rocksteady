@@ -308,7 +308,14 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
-    return np.floor((ts - origin) / step).astype(np.int64)
+    numbers = (ts - origin) / step
+    # Past 2**53 a float holds a period number only to a whole period or worse, and past 2**63 int64 overflows:
+    # samples would share periods that are not theirs.
+    if np.abs(numbers).max(initial=0.0) >= 2.0 ** 53:
+        raise ValueError(f"per {per!r} and period_origin {period_origin!r} give a sample a period number of "
+                         "2**53 or more, which a float does not hold exactly; give a period_origin nearer the "
+                         "times, or a longer per")
+    return np.floor(numbers).astype(np.int64)
 
 
 def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
@@ -321,7 +328,10 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``); with numeric times, both are
-    seconds, and ``period_origin`` must be finite.
+    seconds, ``period_origin`` must be finite, and a ``per`` and
+    ``period_origin`` that give a sample a period number of 2**53 or more
+    in magnitude raise ``ValueError``: a float does not hold such numbers
+    exactly.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -1708,7 +1718,10 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         times, a finite number of seconds (NaN, infinite, ``pd.NaT``,
         ``pd.NA``, or a NaT ``np.datetime64`` or ``np.timedelta64`` of any
         unit raises ``ValueError``). Default: the Unix epoch, i.e.
-        midnight for days.
+        midnight for days. With numeric times, a ``per`` and
+        ``period_origin`` that give a sample a period number,
+        ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
+        ``ValueError``: a float does not hold such numbers exactly.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).

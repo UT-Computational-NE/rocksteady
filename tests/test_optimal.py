@@ -341,6 +341,52 @@ def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
 
 
+@pytest.mark.parametrize("per, origin", [(7200, 1e300), (7200, -1e300), (7200, 1e20), (1e-300, None)],
+                         ids=["origin 1e300", "origin -1e300", "origin 1e20", "per 1e-300"])
+def test_period_numbers_a_float_cannot_hold_exactly_are_refused_by_name(per, origin):
+    # Each gives hourly samples period numbers of 2**53 or more. A float holds such numbers only to a whole
+    # period or worse, and past 2**63 they overflow int64: the six samples would fall in one or two periods.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"per {re.escape(repr(per))} and period_origin {re.escape(repr(origin))} give .* 2\*\*53"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # refused before numpy warns of the int64 cast
+        with pytest.raises(ValueError, match=named):
+            count_by_period(segs, t, per, period_origin=origin)
+        with pytest.raises(ValueError, match=named):
+            optimal_segments(t, np.zeros(6), {"steady": 0}, per=per, period_origin=origin)
+
+
+def test_a_large_period_origin_whose_period_numbers_a_float_holds_keeps_its_periods():
+    # 1e15 s is 138888888888 periods of 7200 s plus 6400 s, so periods start at -800 s; the period numbers stay
+    # below 2**53 and hourly samples fall 2, 2, 2.
+    t = np.arange(6) * 3600.0
+    counts = count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=1e15)
+    assert counts["steady"].tolist() == [2, 2, 2]
+    assert counts.index.tolist() == [-800.0, 6400.0, 13600.0]
+
+
+@pytest.mark.parametrize("held, refused",[(-(2**53 - 1 - 18000), -(2**53 - 18000)), (2**53 - 1, 2**53)],
+                         ids=["origin before the times", "origin after the times"])
+def test_period_numbers_up_to_2_53_keep_their_periods_and_2_53_is_refused(held, refused):
+    # One-second periods: hourly samples from 0 s to 18000 s, each its own period. The held origin puts the
+    # farthest sample at period number 2**53 - 1 in magnitude, the refused one at 2**53; every value is exact.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    starts = [0.0, 3600.0, 7200.0, 10800.0, 14400.0, 18000.0]
+    counts = count_by_period(segs, t, 1, period_origin=held)
+    assert counts["steady"].tolist() == [1, 1, 1, 1, 1, 1]
+    assert counts.index.tolist() == starts
+    # The optimiser fits one segment over all six, which touches every one-second period from 0 s to 18000 s.
+    fit = optimal_segments(t, np.zeros(6), {"steady": 0}, per=1, period_origin=held, method="exact")
+    assert fit.counts.index.tolist() == [float(s) for s in range(18001)]
+    named = rf"per 1 and period_origin {refused} give a sample a period number of 2\*\*53 or more"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, 1, period_origin=refused)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=1, period_origin=refused)
+
+
 @pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
 def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
     t = np.arange(6) * 3600.0
@@ -431,6 +477,8 @@ def test_count_tables_without_segments_or_columns_are_empty():
     assert (no_segments.dtypes == "int64").all() and no_segments.index.name == "period"
     assert count_by_period([Segment(0, 48, ST)], idx, "1D", states=[]).shape == (0, 0)
     assert count_by_period([Segment(0, 48, ST)], np.arange(48.0), 25.0, states=[]).shape == (0, 0)
+    no_times = count_by_period([], np.array([]), 25.0, states=["steady"])
+    assert no_times.shape == (0, 1) and list(no_times.columns) == ["steady"]
 
 
 @pytest.mark.parametrize("datetimes", [False, True])
