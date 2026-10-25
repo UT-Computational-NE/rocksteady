@@ -202,6 +202,13 @@ def _refuse_unitless(per) -> None:
                          "or a Timedelta")
 
 
+def _is_missing(x) -> bool:
+    """Whether ``x`` is a missing scalar (``pd.NA``, ``pd.NaT``, a numpy NaT), which pandas 1.5 cannot always convert."""
+    import pandas as pd
+
+    return bool(pd.api.types.is_scalar(x) and pd.isna(x))
+
+
 def _origin_seconds(period_origin) -> float:
     """The start ``period_origin`` of periods of numeric times, in seconds (default: 0)."""
     return 0.0 if period_origin is None else float(period_origin)
@@ -219,7 +226,10 @@ def _period_step(per):
     import pandas as pd
 
     _refuse_unitless(per)
-    step = pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
+    if _is_missing(per):
+        step = pd.NaT
+    else:
+        step = pd.to_timedelta([per])[0] if isinstance(per, str) else pd.Timedelta(per)
     if pd.isna(step):
         raise ValueError(f"per must be a duration (e.g. '2h' or a Timedelta), got {per!r}, which pandas reads as NaT")
     return step
@@ -234,7 +244,7 @@ def _origin_stamp(period_origin):
     if _is_number(period_origin):
         raise ValueError(f"period_origin as a number needs numeric times (seconds); with a DatetimeIndex give a "
                          f"timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}")
-    origin = pd.Timestamp(period_origin)
+    origin = pd.NaT if _is_missing(period_origin) else pd.Timestamp(period_origin)
     if pd.isna(origin):
         raise ValueError(f"period_origin must be a timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}, "
                          "which pandas reads as NaT")
@@ -275,8 +285,9 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     A segment counts once against every period one of its samples lies in.
     ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
-    ``period_origin`` a timestamp (a number, or a value pandas reads as
-    NaT, raises ``ValueError``); with numeric times, both are seconds.
+    ``period_origin`` a timestamp (for either, a number, or a value pandas
+    reads as NaT, raises ``ValueError``); with numeric times, both are
+    seconds.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -1652,8 +1663,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     period_origin : optional
         Where periods start: a timestamp with a DatetimeIndex (a number, or
         one pandas reads as NaT, raises ``ValueError``), seconds with
-        numeric times. Default: the
-        Unix epoch, i.e. midnight for days.
+        numeric times. Default: the Unix epoch, i.e. midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
