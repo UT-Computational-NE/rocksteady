@@ -1,4 +1,5 @@
-"""tools/lint.sh fails on the blank lines PEP 8 asks for around definitions (#111)."""
+"""tools/lint.sh fails on the blank lines PEP 8 asks for around definitions (#111), in each directory it lints
+(#115)."""
 
 import importlib.util
 import os
@@ -19,15 +20,17 @@ pytestmark = pytest.mark.skipif(
 CLEAN = '"""A module."""\n\n\ndef f():\n    return 1\n\n\ndef g():\n    return 2\n'
 METHODS = 'class C:\n    def a(self):\n        return 1\n\n    def b(self):\n        return 2\n'
 NESTED = 'def h():\n    x = 1\n\n    def inner():\n        return x\n    return inner\n'
+DIRS = ("src", "tests", "tools", "examples")  # the directories tools/lint.sh lints
 
 
-def _lint(tmp_path, source):
-    """tools/lint.sh run on a tree holding one module, ``source``, beside the repo's own pyproject.toml."""
-    for d in ("src", "tests", "tools", "examples"):
+def _lint(tmp_path, source, where="src"):
+    """tools/lint.sh run on a tree holding one module, ``source`` in directory ``where``, beside the repo's own
+    pyproject.toml."""
+    for d in DIRS:
         (tmp_path / d).mkdir()
     shutil.copy(LINT, tmp_path / "tools" / "lint.sh")
     shutil.copy(os.path.join(ROOT, "pyproject.toml"), tmp_path / "pyproject.toml")
-    (tmp_path / "src" / "module.py").write_text(source)
+    (tmp_path / where / "module.py").write_text(source)
     env = dict(os.environ, PYTHON=sys.executable)
     return subprocess.run(["bash", str(tmp_path / "tools" / "lint.sh")], env=env, capture_output=True, text=True,
                           timeout=120)
@@ -51,7 +54,8 @@ def test_definitions_need_their_blank_lines(tmp_path, source, code):
     assert code in run.stdout + run.stderr
 
 
-def test_one_run_reports_pylints_and_pycodestyles_findings(tmp_path):
-    run = _lint(tmp_path, "import os\n" + CLEAN.replace("\n\n\ndef g", "\n\ndef g"))
+@pytest.mark.parametrize("where", DIRS)
+def test_one_run_reports_pylints_and_pycodestyles_findings_in_each_directory(tmp_path, where):
+    run = _lint(tmp_path, "import os\n" + CLEAN.replace("\n\n\ndef g", "\n\ndef g"), where)
     assert run.returncode != 0
     assert "unused-import" in run.stdout and "E302" in run.stdout
