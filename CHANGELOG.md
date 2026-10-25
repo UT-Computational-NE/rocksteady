@@ -6,7 +6,7 @@
 
 - `docs/agents/coding-standards.md`: a restatement keeps the code's
   qualifiers; prose that restates what the code does carries over each
-  condition its source states (#133).
+  qualifier its source states, such as "on its own" (#133).
 
 ## 0.5.1
 
