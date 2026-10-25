@@ -1706,8 +1706,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         index's zone first, so the same instant in any zone starts the same
         periods; beside a naive index, it keeps its own clock. With numeric
         times, a finite number of seconds (NaN, infinite, ``pd.NaT``,
-        ``pd.NA`` or a numpy NaT, ``np.datetime64`` or ``np.timedelta64``
-        of any unit, raises ``ValueError``). Default: the Unix epoch, i.e.
+        ``pd.NA``, or a NaT ``np.datetime64`` or ``np.timedelta64`` of any
+        unit raises ``ValueError``). Default: the Unix epoch, i.e.
         midnight for days.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
