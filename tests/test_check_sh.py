@@ -52,6 +52,12 @@ def test_a_missing_interpreter_is_named_and_stops_the_checks(tmp_path):
     assert f"check.sh: there is no interpreter {tmp_path / 'no-such-python'}." in run.stderr
 
 
+def test_a_missing_interpreter_named_without_a_directory_is_named_and_stops_the_checks():
+    run = _check("no-such-python-on-path")  # looked up on PATH, as the default python is
+    assert run.returncode == 1
+    assert "check.sh: there is no interpreter no-such-python-on-path." in run.stderr
+
+
 def test_arguments_select_the_tests_and_skip_mypy_lint_and_the_docs_build(tmp_path):
     # As in CI's test jobs, which install only the test extra: the docs modules cannot be found.
     (tmp_path / "sitecustomize.py").write_text(
@@ -106,6 +112,19 @@ def test_a_python_that_exits_non_zero_is_named_and_stops_the_checks(tmp_path):
     assert run.returncode == 1
     assert f"check.sh: {broken} exited with status 3" in run.stderr
     assert "no module named encodings" in run.stderr  # its own error, passed through
+
+
+@pytest.mark.parametrize("fails_on", ["importlib.util", "re.escape"], ids=["finding the modules", "naming them"])
+def test_a_python_that_exits_non_zero_after_the_version_check_is_named_and_stops_the_checks(tmp_path, fails_on):
+    # It runs without site-packages, so modules are missing, and fails the one call whose code names `fails_on`.
+    broken = tmp_path / "broken-python"
+    broken.write_text(f'#!/bin/sh\ncase "$*" in *{fails_on}*) echo boom >&2; exit 5;; esac\n'
+                      f'exec "{sys.executable}" -S "$@"\n')
+    broken.chmod(0o755)
+    run = _check(broken)
+    assert run.returncode == 1
+    assert f"check.sh: {broken} exited with status 5" in run.stderr
+    assert "boom" in run.stderr and "lacks" not in run.stderr
 
 
 @pytest.mark.parametrize("args", [(), ("tests/test_check_sh.py",)], ids=["full run", "selection"])

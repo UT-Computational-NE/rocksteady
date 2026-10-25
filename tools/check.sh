@@ -31,10 +31,12 @@ if ! command -v "$py" >/dev/null; then
   echo "check.sh: there is no interpreter $py. Set PYTHON to one that has the $extra extra." >&2
   exit 1
 fi
-info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" || {
-  echo "check.sh: $py exited with status $? (its own error is above). Set PYTHON to one that has the $extra extra." >&2
+crashed() {  # after a call to "$py" exits non-zero with status $1, so that set -e does not end the script unnamed
+  echo "check.sh: $py exited with status $1 (any error it printed is above). Set PYTHON to one that has the $extra" \
+       "extra." >&2
   exit 1
 }
+info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" || crashed $?
 exe="${info#* }"
 echo "check.sh: $py is Python ${info%% *} at $exe"
 # The missing modules of the package's dependencies (pyproject.toml's `dependencies`, each module named as its
@@ -43,7 +45,7 @@ missing="$("$py" -c 'import importlib.util as u, re, sys
 deps = re.search(r"^dependencies = \[(.*?)\]", open("pyproject.toml").read(), re.M | re.S).group(1)
 deps = [re.match(r"[\w.-]+", d).group(0) for d in re.findall(r"\"([^\"]+)\"", deps)]
 print(";".join(" ".join(m for m in modules if u.find_spec(m) is None) for modules in (deps, sys.argv[1:])))
-' "${needs[@]}")"
+' "${needs[@]}")" || crashed $?
 missing_deps="${missing%%;*}" missing_extra="${missing#*;}"
 missing="${missing_deps}${missing_deps:+${missing_extra:+ }}${missing_extra}"
 if [ -n "$missing" ]; then
@@ -57,7 +59,7 @@ if [ -n "$missing" ]; then
 text = open("pyproject.toml").read()
 for dist in sys.argv[1:]:
     m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
-    print(repr(m.group(1) if m else dist), end=" ")' ${missing//_/-})"
+    print(repr(m.group(1) if m else dist), end=" ")' ${missing//_/-})" || crashed $?
   echo "check.sh: $py ($exe) lacks $what. Install them into it" \
        "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment is set" \
        "up with pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
