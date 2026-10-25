@@ -5,18 +5,19 @@
 Upgrading from 0.5.1. Behaviour changes to check:
 - **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
   and `OptimalSegmentation.counts` refuse a `period_origin` that is not a
-  finite number of seconds (#144). 0.5.1 accepted `np.nan` and `np.inf`
-  and put every sample in one period (indexed `nan` or `inf`), so a
+  finite number of seconds (#144). 0.5.1 accepted `np.nan`, `np.inf` and
+  `-np.inf` and put every sample in one period (indexed by that value), so a
   `max_counts` cap bound the whole record as one period. `pd.NaT` and
   `pd.NA`, as `period_origin` or as `per`, raised `float()`'s `TypeError`;
   they now raise `ValueError`.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
-  (#144). Beside a Chicago index, `"07:00+00:00"` started four-hour periods
-  at 19:00, 23:00, 03:00, ...; it now starts them at 21:00, 01:00, 05:00,
-  ..., as an origin of 01:00 in Chicago does. An origin in the index's own
-  zone, or a naive one, gives the same periods as in 0.5.1; beside a naive
-  index, an aware origin still keeps its own clock.
+  (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
+  started four-hour periods at 19:00, 23:00, 03:00, ...; it now starts them
+  at 21:00, 01:00, 05:00, ..., as `"2026-03-02 01:00-06:00"` (01:00 in
+  Chicago) does. An origin in the index's own zone, or a naive one, gives
+  the same periods as in 0.5.1; beside a naive index, an aware origin still
+  keeps its own clock.
 - Two error messages read differently; code that matches their text needs
   updating (#137; the rule is under Changed). Without `subtypes`, `initial`
   or `final`, the infeasibility `ValueError` of `optimal_segments` opened
