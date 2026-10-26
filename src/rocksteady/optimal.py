@@ -145,6 +145,7 @@ import datetime
 import math
 import warnings
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from numbers import Real
 from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol,
                     Sequence, Sized, Tuple, Union, cast)
@@ -335,30 +336,64 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         # than that would recur. Period numbers never go back: the repeated time stays in the period in
         # progress, so each period has one count budget, and the optimiser's counters stay valid.
         return np.maximum.accumulate(ids) if len(ids) else ids
+    step, first = _numeric_periods(per, period_origin)
+    lead = float(first)
+    finite = np.isfinite(ts)
+    with np.errstate(over="ignore", invalid="ignore"):  # an overflow or an infinite time is refused below
+        if first == 0:
+            diff, exact = ts, finite
+        else:
+            diff = ts - lead
+            # The rounding error of ts - lead (Knuth's two-sum): zero exactly when the difference is exact.
+            back = diff - ts
+            error = (ts - (diff - back)) + (-lead - back)
+            exact = finite & (error == 0) & (Fraction(lead) == first)
+        quotient = diff / step
+    numbers = np.floor(quotient)
+    # From 2**53 a float no longer holds every whole number, and past 2**63 int64 overflows: samples would share
+    # periods that are not theirs. With the difference exact, its comparison with 2**53 periods (a power of two
+    # times per, so exact) is exact. A NaN time has no period number and fails every comparison; an infinite one
+    # is past every bound, but no per or period_origin helps it, so it is named on its own.
+    too_large = (exact & (np.abs(diff) >= 2.0 ** 53 * step)) | np.isinf(ts)
+    # A float quotient that is not whole floors to the exact period number: rounding is monotone and keeps it
+    # between the same whole numbers. One that is whole is exact only when the remainder (exact, from fmod) is 0.
+    # The others, and every sample whose difference rounded, are worked out in exact arithmetic.
+    doubtful = finite & ~too_large & ~exact
+    whole = np.flatnonzero(exact & ~too_large & (numbers == quotient))
+    doubtful[whole[np.fmod(diff[whole], step) != 0]] = True
+    for i in np.flatnonzero(doubtful):
+        number = (Fraction(float(ts[i])) - first) / Fraction(step)
+        if abs(number) >= 2 ** 53:
+            too_large[i] = True
+        else:
+            numbers[i] = math.floor(number)
+    if too_large.any():
+        refused = np.flatnonzero(too_large)
+        infinite = refused[np.isinf(ts[refused])]
+        if len(infinite):
+            raise ValueError(f"the sample at {float(ts[infinite[0]])!r} s is not a finite time, so it falls in no "
+                             f"period of per {per!r}")
+        raise ValueError(f"per {per!r} and period_origin {period_origin!r} give the sample at "
+                         f"{float(ts[refused[0]])!r} s a period number of magnitude 2**53 or more, counted from "
+                         "the period start in [0, per), where a float no longer holds every whole number; give a "
+                         "longer per")
+    return numbers.astype(np.int64)
+
+
+def _numeric_periods(per, period_origin) -> Tuple[float, Fraction]:
+    """
+    The period ``per`` of numeric times, in seconds, and the one period start
+    in ``[0, per)``: ``period_origin`` modulo ``per``, exact, so a far origin
+    loses nothing to rounding. It is often not a float (``period_origin``
+    -1e-300 beside ``per`` 7200 gives 7200 - 1e-300). Period numbers count
+    from it.
+    """
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
     step = _seconds(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
-    origin = _origin_seconds(period_origin)
-    with np.errstate(over="ignore"):  # a quotient too large for a float is refused below, without a warning
-        numbers = (ts - origin) / step
-    # From 2**53 a float no longer holds every whole number, and past 2**63 int64 overflows: samples would share
-    # periods that are not theirs. Below the bound, rounding can still move a sample or a period start when the
-    # origin is far from the times; this check does not catch that. A NaN time has no period number and fails
-    # the comparison; an infinite one is past every bound, but no per or period_origin helps it, so it is named
-    # on its own.
-    too_large = np.flatnonzero(np.abs(numbers) >= 2.0 ** 53)
-    if len(too_large):
-        infinite = too_large[np.isinf(ts[too_large])]
-        if len(infinite):
-            raise ValueError(f"the sample at {float(ts[infinite[0]])!r} s is not a finite time, so it falls in no "
-                             f"period of per {per!r}")
-        raise ValueError(f"per {per!r} and period_origin {period_origin!r} give the sample at "
-                         f"{float(ts[too_large[0]])!r} s a period number of magnitude 2**53 or more, where a "
-                         "float no longer holds every whole number; give a period_origin nearer the times, or a "
-                         "longer per")
-    return np.floor(numbers).astype(np.int64)
+    return step, Fraction(_origin_seconds(period_origin)) % Fraction(step)
 
 
 def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
@@ -372,12 +407,14 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``, as does an aware string without a
     whole date for ``period_origin``); with numeric times, both are
-    seconds, ``period_origin`` must be finite, and a ``per`` and
-    ``period_origin`` that give a sample a period number,
-    ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
-    ``ValueError``: from 2**53 on, a float no longer holds every whole
-    number. With a ``per``, an infinite time raises ``ValueError``: it
-    falls in no period.
+    seconds, ``period_origin`` must be finite, each sample falls in the
+    period exact arithmetic gives it, and each period is indexed by the
+    float nearest its exact start, however far ``period_origin`` is from
+    the times. A ``per`` that gives a sample a period number of 2**53 or
+    more in magnitude, counted from the period start in ``[0, per)``
+    (``period_origin`` modulo ``per``), raises ``ValueError``: from 2**53
+    on, a float no longer holds every whole number. With a ``per``, an
+    infinite time raises ``ValueError``: it falls in no period.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -420,7 +457,22 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
         return pd.Index(["all"] * len(ids))
     if idx is not None:
         return pd.Index(_origin_stamp(period_origin, idx.tz) + ids * _period_step(per))
-    return pd.Index(_origin_seconds(period_origin) + ids * float(per))
+    # The float nearest each exact start, first + k * step. When first is a float and k * step is exact (k times
+    # step's odd integer significand is under 2**53), one float addition rounds it once, to the nearest. The
+    # others are worked out over a common power-of-two denominator: Python divides integers with one rounding.
+    step, first = _numeric_periods(per, period_origin)
+    lead, pace = float(first), Fraction(step)
+    odd = pace.numerator // (pace.numerator & -pace.numerator)
+    ids = np.asarray(ids, dtype=np.int64)
+    starts = lead + ids * step
+    rest = np.flatnonzero(np.abs(ids) >= 2 ** 53 // odd) if Fraction(lead) == first else np.arange(len(ids))
+    if len(rest):
+        den = math.lcm(first.denominator, pace.denominator)
+        base = first.numerator * (den // first.denominator)
+        size = pace.numerator * (den // pace.denominator)
+        for i in rest:
+            starts[i] = (base + int(ids[i]) * size) / den
+    return pd.Index(starts)
 
 
 # ---------------------------------------------------------------------------
@@ -1774,10 +1826,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         number of seconds (NaN, infinite, ``pd.NaT``, ``pd.NA``, or a NaT
         ``np.datetime64`` or ``np.timedelta64`` of any unit raises
         ``ValueError``). Default: the Unix epoch, i.e. midnight for days.
-        With numeric times, a ``per`` and ``period_origin`` that give a
-        sample a period number, ``(t - period_origin) / per``, of 2**53 or
-        more in magnitude raise ``ValueError``: from 2**53 on, a float no
-        longer holds every whole number.
+        With numeric times, each sample falls in the period exact
+        arithmetic gives it, however far ``period_origin`` is from the
+        times, and a ``per`` that gives a sample a period number of 2**53 or
+        more in magnitude, counted from the period start in ``[0, per)``
+        (``period_origin`` modulo ``per``), raises ``ValueError``: from
+        2**53 on, a float no longer holds every whole number.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
