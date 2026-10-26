@@ -359,6 +359,27 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
     assert (tmp_path / "calc.py").read_text() == SLOW_CALC
 
 
+def _dump(when):
+    import glob, threading
+    with open("/tmp/diag.txt", "a") as out:
+        out.write(f"--- {when} t={time.monotonic():.6f} handler={signal.getsignal(signal.SIGINT)!r} "
+                  f"pythreads={[(t.name, t.daemon) for t in threading.enumerate()]}\n")
+        for st in sorted(glob.glob("/proc/self/task/*/status")):
+            task = st.rsplit("/", 1)[0]
+            fields = dict(l.split(":", 1) for l in open(st) if ":" in l)
+            try:
+                sysc = open(task + "/syscall").read().split()[0]
+            except OSError as e:
+                sysc = repr(e)
+            try:
+                wchan = open(task + "/wchan").read()
+            except OSError as e:
+                wchan = repr(e)
+            out.write(task.rsplit("/", 1)[1] + " " + " ".join(f"{k}={fields[k].strip()}" for k in
+                      ("Name", "State", "SigPnd", "ShdPnd", "SigBlk", "SigIgn", "SigCgt")) +
+                      f" syscall={sysc} wchan={wchan}\n")
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal masks")
 def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatch):
     """A second Ctrl-C between the truncating open and the write would leave the file empty."""
@@ -370,12 +391,27 @@ def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatc
     def interrupted_open(file, mode="r", *args, **kwargs):
         handle = real_open(file, mode, *args, **kwargs)
         if "w" in mode:
+            _dump("before kill")
             os.kill(os.getpid(), signal.SIGINT)  # lands between the truncation and the write
+            _dump("after kill")
         return handle
 
     monkeypatch.setattr(tool, "open", interrupted_open, raising=False)
-    with pytest.raises(KeyboardInterrupt):
+    raised = False
+    try:
         tool._restore(str(path), CALC.encode(), os.stat(path))
+    except KeyboardInterrupt:
+        raised = True
+    _dump(f"after restore raised={raised} content_ok={path.read_text() == CALC}")
+    if not raised:
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                pass
+            _dump("no late KeyboardInterrupt in 2 s")
+        except KeyboardInterrupt:
+            _dump("late KeyboardInterrupt")
+    assert raised
     assert path.read_text() == CALC
 
 
