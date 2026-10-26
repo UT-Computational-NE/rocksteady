@@ -243,9 +243,8 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
     "steady", "transient", "indeterminate"), pooling that state's segments.
     With ``by="subtype"``, each state's row is followed by one row per
     subtype its segments carry, sorted by name, pooling that subtype's
-    segments (``_grouping.groups``). Returns a DataFrame indexed by state (an
-    index named ``"subtype"`` with ``by="subtype"``). ``t``: see
-    ``error_stats``.
+    segments. Returns a DataFrame indexed by state (an index named
+    ``"subtype"`` with ``by="subtype"``). ``t``: see ``error_stats``.
     """
     import pandas as pd
 

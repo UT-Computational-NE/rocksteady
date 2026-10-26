@@ -1155,6 +1155,20 @@ def test_overflow_in_two_periods_and_of_two_soft_caps():
     assert none.objective == hard.objective and none.overflow.shape == (2, 0) and "soft caps" not in none.summary()
 
 
+@pytest.mark.parametrize("datetimes", [False, True])
+def test_each_periods_overflow_is_on_its_own_row(datetimes):
+    # Three plateaus in the first 12-sample period and two in the second: 2 and 1 beyond a cap of 1.
+    y = np.concatenate((np.repeat([0.0, 4.0, 0.0], 4), np.repeat([4.0, 0.0], 6)))
+    y = y + np.random.default_rng(3).normal(0, 0.01, 24)
+    t = pd.date_range("2026-03-02", periods=24, freq="1h") if datetimes else np.arange(24.0)
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per="12h" if datetimes else 12.0,
+                         max_counts={"steady": 1}, overflow_penalty={"steady": 0.5},
+                         penalty={"steady": 0.1, "transient": 50.0})
+    assert [s.start for s in r.segments] == [0, 4, 8, 12, 18]
+    assert r.overflow["steady"].tolist() == [2, 1] and r.overflow.index.equals(r.counts.index)
+    assert r.overflow.index[1] == (t[12] if datetimes else 12.0) and r.info["overflow_cost"] == 1.5
+
+
 def test_overflow_penalty_validation():
     t, y = np.arange(10.0), np.zeros(10)
     for bad, match in [({"transient": 1.0}, "overflow_penalty names 'transient', which max_counts does not cap"),
