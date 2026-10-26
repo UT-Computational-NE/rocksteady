@@ -23,19 +23,35 @@ Upgrading from 0.5.1. Behaviour changes to check:
   unit; #154), as `period_origin` or as `per`, raised `float()`'s
   `TypeError`; they now raise `ValueError`.
 - **Breaking:** with numeric times, `count_by_period` and
-  `optimal_segments` refuse a `per` and `period_origin` that give a sample
-  a period number, `(t - period_origin) / per`, of `2**53` or more in
-  magnitude, with a `ValueError` that names both and the sample's time
-  (#155). 0.5.1 accepted them and could give wrong periods: six hourly samples
-  from 0 s with `per=7200` fell in one period with `period_origin=1e300`
-  (the period numbers overflowed int64) and in two with
-  `period_origin=1e20`, not three; with `per=1e-300`,
-  `optimal_segments(..., method="exact")` on those samples did not finish
-  in 20 s. Some calls at `2**53` or more are refused that 0.5.1
-  got right: `per=1` with `period_origin=2**53` gave each of those samples
-  its own period. `count_by_period` with a `per` also refuses an infinite
-  time, naming it (`optimal_segments` already refused one); 0.5.1 counted
-  that sample in a period of its own, far from the times.
+  `optimal_segments` refuse a `per` that gives a sample a period number of
+  `2**53` or more in magnitude, counted from the period start in
+  `[0, per)` (`period_origin` modulo `per`), with a `ValueError` that names
+  `per`, `period_origin` and the sample's time (#155, #165). With
+  `per=1e-300`, `optimal_segments(..., method="exact")` on six hourly
+  samples from 0 s did not finish in 20 s in 0.5.1. Some calls are refused
+  that 0.5.1 got right: `per=1` with samples at `2**53` s and on, 2 s
+  apart, gave each sample its own period. `count_by_period` with a `per`
+  also refuses an infinite time, naming it (`optimal_segments` already
+  refused one); 0.5.1 counted that sample in a period of its own, far
+  from the times. A period start past the most negative float is refused
+  too, naming `per`, `period_origin` and the sample (#165); only a `per`
+  near the largest float gives one. With `per=1.5e308`, 0.5.1 indexed the
+  period of the sample at `-1.7e308` s as `-inf`.
+- With numeric times, each sample falls in the period exact arithmetic
+  gives it, taking the floats as given, and each period is indexed by the
+  float nearest its exact start (#165). 0.5.1 worked periods out in
+  floats, which gave wrong periods without an error when `period_origin`
+  was far from the times.
+  Six hourly samples from 0 s with `per=7200` fell in one period with
+  `period_origin=1e300` (the period numbers overflowed int64), and in two
+  periods, starting 0 s and 16384 s, with `period_origin=1e20`; they now
+  fall two to a period, in periods starting -800 s, 6400 s and 13600 s.
+  With `period_origin=-(2**48) * 7200`, the periods were indexed 0 s,
+  7168 s and 14336 s, not 0 s, 7200 s and 14400 s. Floats also misplaced
+  a sample just before a period start: with `per=0.1`, the sample at
+  0.5 s fell in the period indexed 0.5; the float `0.1` is a little more
+  than a tenth, so five periods end just after 0.5 s, and it now falls in
+  the period indexed 0.4.
 - **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
   and `OptimalSegmentation.counts` refuse a time as `per` or
   `period_origin`, whatever its unit, with a `ValueError` that names it
@@ -200,17 +216,26 @@ Upgrading from 0.5.1. Behaviour changes to check:
   positive number of seconds", each naming the value; both failed with
   `float()`'s `TypeError`. This applies to `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` (#154).
-- With numeric times, a `per` and `period_origin` that give a sample a
-  period number of `2**53` or more in magnitude are refused with a
-  `ValueError` that names both and the sample's time. From `2**53` on, a
-  float no longer holds every whole number: an origin far from the times
-  (`1e20` beside hourly samples from 0 s, with `per=7200`) or a tiny `per`
-  put samples in periods not their own, and past `2**63` in magnitude the
-  period numbers overflowed int64 (with `period_origin=1e300`, every
-  sample fell in one period), all without an error. This applies to
-  `count_by_period` and `optimal_segments`. `count_by_period` with a `per`
-  also refuses an infinite time, naming it; it counted that sample in a
-  period of its own, far from the times (#155).
+- With numeric times, periods are worked out in exact arithmetic: each
+  sample falls in `floor((t - period_origin) / per)`, taking the floats as
+  given, and each period start is the float nearest
+  `period_origin + k * per`. Floats rounded `t - period_origin` when the
+  origin was far from the times (`1e20` beside hourly samples from 0 s,
+  with `per=7200`), and past `2**63` in magnitude the period numbers
+  overflowed int64 (with `period_origin=1e300`, every sample fell in one
+  period); they also misplaced a sample whose quotient rounded onto a
+  period start, and the period starts themselves. All of it happened
+  without an error (#155, #165). A `per` that gives a sample a period
+  number of `2**53` or more in magnitude, counted from the period start in
+  `[0, per)`, is refused with a `ValueError` that names `per`,
+  `period_origin` and the sample's time: from `2**53` on, a float no
+  longer holds every whole number, and a tiny `per` made the optimiser
+  walk every period. This applies to `count_by_period` and
+  `optimal_segments`. `count_by_period` with a `per` also refuses an
+  infinite time, naming it; it counted that sample in a period of its
+  own, far from the times (#155). A period start past the most negative
+  float, which no index can show, is refused by name; it was indexed
+  `-inf` (#165).
 - With numeric times, a time as `per` or `period_origin` gets "with
   numeric times, per (or period_origin) must be a number of seconds, not a
   time", naming the value, whatever its unit: an `np.datetime64` or
