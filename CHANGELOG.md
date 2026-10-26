@@ -22,6 +22,20 @@ Upgrading from 0.5.1. Behaviour changes to check:
   and a numpy NaT (`np.datetime64("NaT")` or `np.timedelta64("NaT")`, any
   unit; #154), as `period_origin` or as `per`, raised `float()`'s
   `TypeError`; they now raise `ValueError`.
+- **Breaking:** with numeric times, `count_by_period` and
+  `optimal_segments` refuse a `per` and `period_origin` that give a sample
+  a period number, `(t - period_origin) / per`, of `2**53` or more in
+  magnitude, with a `ValueError` that names both and the sample's time
+  (#155). 0.5.1 accepted them and could give wrong periods: six hourly samples
+  from 0 s with `per=7200` fell in one period with `period_origin=1e300`
+  (the period numbers overflowed int64) and in two with
+  `period_origin=1e20`, not three; with `per=1e-300`,
+  `optimal_segments(..., method="exact")` on those samples did not finish
+  in 20 s. Some calls at `2**53` or more are refused that 0.5.1
+  got right: `per=1` with `period_origin=2**53` gave each of those samples
+  its own period. `count_by_period` with a `per` also refuses an infinite
+  time, naming it (`optimal_segments` already refused one); 0.5.1 counted
+  that sample in a period of its own, far from the times.
 - **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
   and `OptimalSegmentation.counts` refuse a time as `per` or
   `period_origin`, whatever its unit, with a `ValueError` that names it
@@ -110,6 +124,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   positive number of seconds", each naming the value; both failed with
   `float()`'s `TypeError`. This applies to `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` (#154).
+- With numeric times, a `per` and `period_origin` that give a sample a
+  period number of `2**53` or more in magnitude are refused with a
+  `ValueError` that names both and the sample's time. From `2**53` on, a
+  float no longer holds every whole number: an origin far from the times
+  (`1e20` beside hourly samples from 0 s, with `per=7200`) or a tiny `per`
+  put samples in periods not their own, and past `2**63` in magnitude the
+  period numbers overflowed int64 (with `period_origin=1e300`, every
+  sample fell in one period), all without an error. This applies to
+  `count_by_period` and `optimal_segments`. `count_by_period` with a `per`
+  also refuses an infinite time, naming it; it counted that sample in a
+  period of its own, far from the times (#155).
 - With numeric times, a time as `per` or `period_origin` gets "with
   numeric times, per (or period_origin) must be a number of seconds, not a
   time", naming the value, whatever its unit: an `np.datetime64` or
@@ -163,12 +188,25 @@ Upgrading from 0.5.1. Behaviour changes to check:
   run, and the mutant's run until it started its child; it is now 20 s,
   with every pytest start-up in its project 3 s slower. It takes about
   30 s (#147).
-- `tools/check.sh` stops before pytest, naming the modules and the
-  install command, when its interpreter lacks one of the package's
+- `tools/check.sh` stops before pytest, naming them and the install
+  command, when its interpreter lacks one of the package's
   dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
   interpreter that exits non-zero, which ended the script without a message
   of its own, and a `PYTHON` that is not executable, which it called
   missing (#90).
+- `tools/check.sh` checks the package's dependencies as installed
+  distributions (`importlib.metadata`), not as modules named like them, so
+  a dependency whose module has another name (python-dateutil's is
+  `dateutil`) counts as installed, and a dotted name is not imported. Its
+  read of `pyproject.toml`'s `dependencies` survives a requirement with
+  extras (`"pkg[x]>=1"`), whose `]` ended the list early, and a list over
+  several lines with comments, single-quoted strings or escaped quotes. A
+  list it cannot read stops the run. The install command gives each
+  missing requirement as written there, with its extras, version and
+  marker, quoted for the shell (as it does the extra's, which may now
+  have a space before the version). Markers are not evaluated, so a
+  requirement whose marker is false still counts as needed, and an
+  installed dependency's extras are not checked (#153).
 - mypy also checks the bodies of functions without annotations
   (`check_untyped_defs`); the one finding needed a `cast`, with no
   behaviour change (#98).
