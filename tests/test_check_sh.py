@@ -3,8 +3,10 @@ or when the interpreter is not executable or exits non-zero (#90); runs a select
 (#93) and lints (#106)."""
 
 import os
+import shutil
 import subprocess
 import sys
+import sysconfig
 
 import pytest
 
@@ -15,14 +17,43 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python, *args, pythonpath=None, path_first=None):
+def _check(python, *args, pythonpath=None, path_first=None, check=CHECK):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
     env["PYTHON"] = str(python)
     if pythonpath is not None:
         env["PYTHONPATH"] = str(pythonpath)
     if path_first is not None:
         env["PATH"] = str(path_first) + os.pathsep + env["PATH"]
-    return subprocess.run(["bash", CHECK, *args], env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run(["bash", check, *args], env=env, capture_output=True, text=True, timeout=60)
+
+
+def _check_beside(tmp_path, dependencies):
+    """A copy of tools/check.sh in a scratch project whose pyproject.toml lists ``dependencies``, run on a passing
+    test there."""
+    (tmp_path / "tools").mkdir()
+    shutil.copy(CHECK, tmp_path / "tools" / "check.sh")
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname = "scratch"\ndependencies = [{", ".join(dependencies)}]\n\n'
+        '[project.optional-dependencies]\ntest = ["pytest>=7"]\n')
+    (tmp_path / "test_scratch.py").write_text("def test_scratch():\n    pass\n")
+    return _check(sys.executable, "test_scratch.py", check=tmp_path / "tools" / "check.sh")
+
+
+def test_dependencies_are_checked_as_distributions_whatever_their_modules_are_named(tmp_path):
+    # python-dateutil's module is dateutil; pandas[excel] has extras, whose ] must not end the list early.
+    run = _check_beside(tmp_path, ['"numpy>=1.22"', '"python-dateutil>=2.8"', '"pandas[excel]>=1.5"'])
+    assert run.returncode == 0, run.stderr
+    assert "1 passed" in run.stdout
+
+
+def test_a_missing_distribution_after_one_with_extras_is_named_with_its_requirement(tmp_path):
+    # Two missing distributions, one with extras and one with a dotted name, each after a requirement with extras.
+    run = _check_beside(tmp_path, ['"numpy>=1.22"', '"pandas[excel]>=1.5"', '"no-such-distribution[x]>=1"',
+                                   '"no.such.distribution>=2"'])
+    assert run.returncode == 1
+    assert "lacks no-such-distribution no.such.distribution, which the package needs." in run.stderr
+    assert f"{sys.executable} -m pip install 'no-such-distribution[x]>=1' 'no.such.distribution>=2')" in run.stderr
+    assert "passed" not in run.stdout
 
 
 def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_path):
@@ -129,8 +160,18 @@ def test_a_python_that_exits_non_zero_after_the_version_check_is_named_and_stops
 
 @pytest.mark.parametrize("args", [(), ("tests/test_check_sh.py",)], ids=["full run", "selection"])
 def test_an_interpreter_without_the_packages_dependencies_is_named_and_stops_the_checks(tmp_path, args):
-    (tmp_path / "sitecustomize.py").write_text("import sys\nsys.modules['numpy'] = None\n")  # numpy cannot be found
-    run = _check(sys.executable, *args, pythonpath=tmp_path)
+    # This interpreter without site-packages (-S), on a path holding everything installed there but numpy, so that
+    # numpy's distribution is missing as well as its module.
+    site = tmp_path / "site"
+    site.mkdir()
+    for lib in {sysconfig.get_paths()["purelib"], sysconfig.get_paths()["platlib"]}:
+        for entry in os.listdir(lib):
+            if not entry.lower().startswith("numpy") and not (site / entry).exists():
+                (site / entry).symlink_to(os.path.join(lib, entry))
+    bare = tmp_path / "bare-python"
+    bare.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n')
+    bare.chmod(0o755)
+    run = _check(bare, *args, pythonpath=site)
     assert run.returncode == 1
     # A selection needs only pytest; a full run may lack the dev extra too (CI's test jobs install the test extra).
     end = "." if args else ""

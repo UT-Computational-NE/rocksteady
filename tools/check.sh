@@ -39,27 +39,34 @@ crashed() {  # after a call to "$py" exits non-zero with status $1, so that set 
 info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" || crashed $?
 exe="${info#* }"
 echo "check.sh: $py is Python ${info%% *} at $exe"
-# The missing modules of the package's dependencies (pyproject.toml's `dependencies`, each module named as its
-# distribution, as numpy's and pandas's are), a ;, then those of the extra.
-missing="$("$py" -c 'import importlib.util as u, re, sys
-deps = re.search(r"^dependencies = \[(.*?)\]", open("pyproject.toml").read(), re.M | re.S).group(1)
+# The missing distributions of the package's dependencies (pyproject.toml's `dependencies`, a list of quoted
+# requirements, which may have extras), a ;, then the missing modules of the extra.
+missing="$("$py" -c 'import importlib.metadata as md, importlib.util as u, re, sys
+deps = re.search(r"^dependencies = \[((?:\s*\"[^\"]*\",?)*)\s*\]", open("pyproject.toml").read(), re.M).group(1)
 deps = [re.match(r"[\w.-]+", d).group(0) for d in re.findall(r"\"([^\"]+)\"", deps)]
-print(";".join(" ".join(m for m in modules if u.find_spec(m) is None) for modules in (deps, sys.argv[1:])))
+def installed(dist):
+    try:
+        md.distribution(dist)
+    except md.PackageNotFoundError:
+        return False
+    return True
+print(" ".join(d for d in deps if not installed(d)), end=";")
+print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))
 ' "${needs[@]}")" || crashed $?
 missing_deps="${missing%%;*}" missing_extra="${missing#*;}"
 missing="${missing_deps}${missing_deps:+${missing_extra:+ }}${missing_extra}"
 if [ -n "$missing" ]; then
   what="${missing_deps:+$missing_deps, which the package needs}"
   what="${what}${missing_extra:+${what:+, and }$missing_extra, from the $extra extra}"
-  # Name the distributions (module names with - for _), with the minimum versions from pyproject.toml, not
+  # Name the distributions (the extra's module names with - for _), with the requirements in pyproject.toml, not
   # `pip install -e ".[$extra]"`: run from a worktree, that would point the environment's editable install at the
   # worktree, for every session using the environment. A fresh environment needs that install once, from the main
   # checkout.
   reqs="$("$py" -c 'import re, sys
 text = open("pyproject.toml").read()
 for dist in sys.argv[1:]:
-    m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
-    print(repr(m.group(1) if m else dist), end=" ")' ${missing//_/-})" || crashed $?
+    m = re.search(r"\"(" + re.escape(dist) + r"(?:\[[^\]\"]*\])?(?:[<>=!~][^\"]*)?)\"", text)
+    print(repr(m.group(1) if m else dist), end=" ")' $missing_deps ${missing_extra//_/-})" || crashed $?
   echo "check.sh: $py ($exe) lacks $what. Install them into it" \
        "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment is set" \
        "up with pip install -e \".[dev]\" from the main checkout, not a worktree." >&2

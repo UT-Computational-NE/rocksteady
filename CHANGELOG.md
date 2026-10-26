@@ -145,6 +145,13 @@ Upgrading from 0.5.1. Behaviour changes to check:
   interpreter that exits non-zero, which ended the script without a message
   of its own, and a `PYTHON` that is not executable, which it called
   missing (#90).
+- `tools/check.sh` checks the package's dependencies as installed
+  distributions (`importlib.metadata`), not as modules named like them, so
+  a dependency whose module has another name (python-dateutil's is
+  `dateutil`) counts as installed, and a dotted name is not imported. Its
+  read of `pyproject.toml`'s `dependencies` survives a requirement with
+  extras (`"pkg[x]>=1"`), whose `]` ended the list early, and it names a
+  missing one in the install command with its extras (#153).
 - mypy also checks the bodies of functions without annotations
   (`check_untyped_defs`); the one finding needed a `cast`, with no
   behaviour change (#98).
