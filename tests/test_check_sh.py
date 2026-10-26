@@ -17,42 +17,55 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python, *args, pythonpath=None, path_first=None, check=CHECK):
+def _check(python, *args, pythonpath=None, path_first=None, script=CHECK):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
     env["PYTHON"] = str(python)
     if pythonpath is not None:
         env["PYTHONPATH"] = str(pythonpath)
     if path_first is not None:
         env["PATH"] = str(path_first) + os.pathsep + env["PATH"]
-    return subprocess.run(["bash", check, *args], env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run(["bash", script, *args], env=env, capture_output=True, text=True, timeout=60)
 
 
 def _check_beside(tmp_path, dependencies):
-    """A copy of tools/check.sh in a scratch project whose pyproject.toml lists ``dependencies``, run on a passing
-    test there."""
+    """A copy of tools/check.sh in a scratch project whose pyproject.toml has ``dependencies = [<dependencies>]``,
+    run on a passing test there."""
     (tmp_path / "tools").mkdir()
     shutil.copy(CHECK, tmp_path / "tools" / "check.sh")
     (tmp_path / "pyproject.toml").write_text(
-        f'[project]\nname = "scratch"\ndependencies = [{", ".join(dependencies)}]\n\n'
+        f'[project]\nname = "scratch"\ndependencies = [{dependencies}]\n\n'
         '[project.optional-dependencies]\ntest = ["pytest>=7"]\n')
     (tmp_path / "test_scratch.py").write_text("def test_scratch():\n    pass\n")
-    return _check(sys.executable, "test_scratch.py", check=tmp_path / "tools" / "check.sh")
+    return _check(sys.executable, "test_scratch.py", script=tmp_path / "tools" / "check.sh")
 
 
-def test_dependencies_are_checked_as_distributions_whatever_their_modules_are_named(tmp_path):
-    # python-dateutil's module is dateutil; pandas[excel] has extras, whose ] must not end the list early.
-    run = _check_beside(tmp_path, ['"numpy>=1.22"', '"python-dateutil>=2.8"', '"pandas[excel]>=1.5"'])
+def test_a_dependency_is_checked_as_its_distribution_when_its_module_is_named_otherwise(tmp_path):
+    run = _check_beside(tmp_path, '"numpy>=1.22", "python-dateutil>=2.8"')  # python-dateutil's module is dateutil
     assert run.returncode == 0, run.stderr
     assert "1 passed" in run.stdout
 
 
 def test_a_missing_distribution_after_one_with_extras_is_named_with_its_requirement(tmp_path):
     # Two missing distributions, one with extras and one with a dotted name, each after a requirement with extras.
-    run = _check_beside(tmp_path, ['"numpy>=1.22"', '"pandas[excel]>=1.5"', '"no-such-distribution[x]>=1"',
-                                   '"no.such.distribution>=2"'])
+    run = _check_beside(tmp_path, '"numpy>=1.22", "pandas[excel]>=1.5", "no-such-distribution[x]>=1", '
+                                  '"no.such.distribution>=2"')
     assert run.returncode == 1
     assert "lacks no-such-distribution no.such.distribution, which the package needs." in run.stderr
     assert f"{sys.executable} -m pip install 'no-such-distribution[x]>=1' 'no.such.distribution>=2')" in run.stderr
+    assert "passed" not in run.stdout
+
+
+def test_a_dependency_list_over_lines_with_comments_is_read_whole(tmp_path):
+    # A comment holding ] and a quote, single quotes, and spaces in a requirement and before a comma: the missing
+    # distributions after them are named, and their requirements are given as written, with extras, minimum versions
+    # and a marker, whose ; must not split the message.
+    run = _check_beside(tmp_path, '\n    "numpy>=1.22",  # arrays ] that don\'t end the list\n'
+                                  "    'pandas >= 1.5' ,\n    \"no-such-distribution [x] >= 1\",\n"
+                                  "    \"no-such-marked>=2; python_version >= '3'\",\n")
+    assert run.returncode == 1
+    assert "lacks no-such-distribution no-such-marked, which the package needs." in run.stderr
+    want = "'no-such-distribution [x] >= 1' \"no-such-marked>=2; python_version >= '3'\")"
+    assert f"{sys.executable} -m pip install {want}" in run.stderr
     assert "passed" not in run.stdout
 
 

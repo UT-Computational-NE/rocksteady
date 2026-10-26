@@ -39,21 +39,27 @@ crashed() {  # after a call to "$py" exits non-zero with status $1, so that set 
 info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" || crashed $?
 exe="${info#* }"
 echo "check.sh: $py is Python ${info%% *} at $exe"
-# The missing distributions of the package's dependencies (pyproject.toml's `dependencies`, a list of quoted
-# requirements, which may have extras), a ;, then the missing modules of the extra.
+# The distributions of the package's dependencies that are not installed (pyproject.toml's `dependencies`, a list of
+# quoted requirements, which may have extras and comments; markers are not evaluated), a ;, the modules of the extra
+# that cannot be found, a ;, then the missing requirements as written there, quoted for the shell.
 missing="$("$py" -c 'import importlib.metadata as md, importlib.util as u, re, sys
-deps = re.search(r"^dependencies = \[((?:\s*\"[^\"]*\",?)*)\s*\]", open("pyproject.toml").read(), re.M).group(1)
-deps = [re.match(r"[\w.-]+", d).group(0) for d in re.findall(r"\"([^\"]+)\"", deps)]
-def installed(dist):
+text = open("pyproject.toml").read()
+rest = text[re.search(r"^dependencies\s*=\s*\[", text, re.M).end():]
+items = re.match(r"(?:\s|,|#[^\n]*|\"[^\"]*\"|\x27[^\x27]*\x27)*(?=\])", rest).group(0)
+reqs = [d or s for d, s in re.findall(r"#[^\n]*|\"([^\"]*)\"|\x27([^\x27]*)\x27", items) if d or s]
+def installed(req):
     try:
-        md.distribution(dist)
+        md.distribution(re.match(r"\s*([\w.-]+)", req).group(1))
     except md.PackageNotFoundError:
         return False
     return True
-print(" ".join(d for d in deps if not installed(d)), end=";")
-print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None))
+reqs = [r for r in reqs if not installed(r)]
+print(" ".join(re.match(r"\s*([\w.-]+)", r).group(1) for r in reqs), end=";")
+print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None), end=";")
+print(" ".join(repr(r) for r in reqs))
 ' "${needs[@]}")" || crashed $?
-missing_deps="${missing%%;*}" missing_extra="${missing#*;}"
+missing_deps="${missing%%;*}" missing="${missing#*;}"
+missing_extra="${missing%%;*}" dep_reqs="${missing#*;}"  # requirements last: a marker may hold a ;
 missing="${missing_deps}${missing_deps:+${missing_extra:+ }}${missing_extra}"
 if [ -n "$missing" ]; then
   what="${missing_deps:+$missing_deps, which the package needs}"
@@ -65,10 +71,11 @@ if [ -n "$missing" ]; then
   reqs="$("$py" -c 'import re, sys
 text = open("pyproject.toml").read()
 for dist in sys.argv[1:]:
-    m = re.search(r"\"(" + re.escape(dist) + r"(?:\[[^\]\"]*\])?(?:[<>=!~][^\"]*)?)\"", text)
-    print(repr(m.group(1) if m else dist), end=" ")' $missing_deps ${missing_extra//_/-})" || crashed $?
+    m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
+    print(repr(m.group(1) if m else dist), end=" ")' ${missing_extra//_/-})" || crashed $?
+  reqs="${dep_reqs}${dep_reqs:+${reqs:+ }}${reqs% }"
   echo "check.sh: $py ($exe) lacks $what. Install them into it" \
-       "($exe -m pip install ${reqs% }), or set PYTHON to an interpreter that has them. A fresh environment is set" \
+       "($exe -m pip install $reqs), or set PYTHON to an interpreter that has them. A fresh environment is set" \
        "up with pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
   exit 1
 fi

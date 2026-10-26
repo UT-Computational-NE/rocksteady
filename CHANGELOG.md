@@ -150,8 +150,11 @@ Upgrading from 0.5.1. Behaviour changes to check:
   a dependency whose module has another name (python-dateutil's is
   `dateutil`) counts as installed, and a dotted name is not imported. Its
   read of `pyproject.toml`'s `dependencies` survives a requirement with
-  extras (`"pkg[x]>=1"`), whose `]` ended the list early, and it names a
-  missing one in the install command with its extras (#153).
+  extras (`"pkg[x]>=1"`), whose `]` ended the list early, and a list over
+  several lines with comments. The install command gives each missing
+  requirement as written there, with its extras, version and marker;
+  markers are not evaluated, so a requirement whose marker is false still
+  counts as needed (#153).
 - mypy also checks the bodies of functions without annotations
   (`check_untyped_defs`); the one finding needed a `cast`, with no
   behaviour change (#98).
