@@ -27,16 +27,16 @@ def _check(python, *args, pythonpath=None, path_first=None, script=CHECK):
     return subprocess.run(["bash", script, *args], env=env, capture_output=True, text=True, timeout=60)
 
 
-def _check_beside(tmp_path, dependencies):
-    """A copy of tools/check.sh in a scratch project whose pyproject.toml has ``dependencies = [<dependencies>]``,
-    run on a passing test there."""
-    (tmp_path / "tools").mkdir()
+def _check_beside(tmp_path, dependencies, *, assign=" = ", test_extra='"pytest>=7"', python=sys.executable):
+    """A copy of tools/check.sh in a scratch project whose pyproject.toml has ``dependencies<assign>[<dependencies>]``
+    and ``test = [<test_extra>]``, run by ``python`` on a passing test there."""
+    (tmp_path / "tools").mkdir(parents=True)
     shutil.copy(CHECK, tmp_path / "tools" / "check.sh")
     (tmp_path / "pyproject.toml").write_text(
-        f'[project]\nname = "scratch"\ndependencies = [{dependencies}]\n\n'
-        '[project.optional-dependencies]\ntest = ["pytest>=7"]\n')
+        f'[project]\nname = "scratch"\ndependencies{assign}[{dependencies}]\n\n'
+        f'[project.optional-dependencies]\ntest = [{test_extra}]\n')
     (tmp_path / "test_scratch.py").write_text("def test_scratch():\n    pass\n")
-    return _check(sys.executable, "test_scratch.py", script=tmp_path / "tools" / "check.sh")
+    return _check(python, "test_scratch.py", script=tmp_path / "tools" / "check.sh")
 
 
 def test_a_dependency_is_checked_as_its_distribution_when_its_module_is_named_otherwise(tmp_path):
@@ -56,17 +56,40 @@ def test_a_missing_distribution_after_one_with_extras_is_named_with_its_requirem
 
 
 def test_a_dependency_list_over_lines_with_comments_is_read_whole(tmp_path):
-    # A comment holding ] and a quote, single quotes, and spaces in a requirement and before a comma: the missing
-    # distributions after them are named, and their requirements are given as written, with extras, minimum versions
-    # and a marker, whose ; must not split the message.
+    # `dependencies=[` without spaces; a comment holding ] and a quote; a single-quoted missing requirement with a
+    # leading space, between installed ones; a space before a comma; and a marker holding a ; and escaped quotes
+    # around a #. Each missing distribution is named, and its requirement is given as written, quoted for the shell.
     run = _check_beside(tmp_path, '\n    "numpy>=1.22",  # arrays ] that don\'t end the list\n'
-                                  "    'pandas >= 1.5' ,\n    \"no-such-distribution [x] >= 1\",\n"
-                                  "    \"no-such-marked>=2; python_version >= '3'\",\n")
+                                  "    ' no-such-single >= 1',\n    'pandas >= 1.5' ,\n"
+                                  '    "no-such-distribution [x] >= 1",\n'
+                                  '    "no-such-marked>=2; python_version >= \'3\' and os_name != \\"#\\"",\n'
+                                  '    "pytest>=7",\n', assign="=")
     assert run.returncode == 1
-    assert "lacks no-such-distribution no-such-marked, which the package needs." in run.stderr
-    want = "'no-such-distribution [x] >= 1' \"no-such-marked>=2; python_version >= '3'\")"
+    assert "lacks no-such-single no-such-distribution no-such-marked, which the package needs." in run.stderr
+    want = ("' no-such-single >= 1' 'no-such-distribution [x] >= 1' "
+            """'no-such-marked>=2; python_version >= '"'"'3'"'"' and os_name != "#"')""")
     assert f"{sys.executable} -m pip install {want}" in run.stderr
     assert "passed" not in run.stdout
+
+
+def test_a_dependency_list_it_cannot_read_stops_the_run(tmp_path):
+    # A bare word is not a TOML string: the read stops there, before the missing requirement after it, and says so.
+    run = _check_beside(tmp_path, 'numpy, "no-such-after>=1"')
+    assert run.returncode == 1
+    assert f"check.sh: {sys.executable} exited with status 1" in run.stderr
+    assert "passed" not in run.stdout
+
+
+def test_a_missing_module_of_the_extra_is_named_with_its_requirement_as_written(tmp_path):
+    # This interpreter without site-packages (-S) lacks pytest. The extra's requirement has a space before its version
+    # and a marker holding quotes, which the shell needs escaped.
+    bare = tmp_path / "bare-python"
+    bare.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n')
+    bare.chmod(0o755)
+    run = _check_beside(tmp_path / "project", "", test_extra='"pytest >= 7; python_version >= \'3\'"', python=bare)
+    assert run.returncode == 1
+    assert "lacks pytest, from the test extra." in run.stderr
+    assert f"""{sys.executable} -m pip install 'pytest >= 7; python_version >= '"'"'3'"'"'')""" in run.stderr
 
 
 def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_path):

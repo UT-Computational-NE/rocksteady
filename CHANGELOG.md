@@ -172,8 +172,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   run, and the mutant's run until it started its child; it is now 20 s,
   with every pytest start-up in its project 3 s slower. It takes about
   30 s (#147).
-- `tools/check.sh` stops before pytest, naming the modules and the
-  install command, when its interpreter lacks one of the package's
+- `tools/check.sh` stops before pytest, naming them and the install
+  command, when its interpreter lacks one of the package's
   dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
   interpreter that exits non-zero, which ended the script without a message
   of its own, and a `PYTHON` that is not executable, which it called
@@ -184,10 +184,13 @@ Upgrading from 0.5.1. Behaviour changes to check:
   `dateutil`) counts as installed, and a dotted name is not imported. Its
   read of `pyproject.toml`'s `dependencies` survives a requirement with
   extras (`"pkg[x]>=1"`), whose `]` ended the list early, and a list over
-  several lines with comments. The install command gives each missing
-  requirement as written there, with its extras, version and marker;
-  markers are not evaluated, so a requirement whose marker is false still
-  counts as needed (#153).
+  several lines with comments, single-quoted strings or escaped quotes. A
+  list it cannot read stops the run. The install command gives each
+  missing requirement as written there, with its extras, version and
+  marker, quoted for the shell (as it does the extra's, which may now
+  have a space before the version). Markers are not evaluated, so a
+  requirement whose marker is false still counts as needed, and an
+  installed dependency's extras are not checked (#153).
 - mypy also checks the bodies of functions without annotations
   (`check_untyped_defs`); the one finding needed a `cast`, with no
   behaviour change (#98).
