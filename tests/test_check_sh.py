@@ -4,6 +4,7 @@ or when the interpreter is not executable or exits non-zero (#90); runs a select
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -17,17 +18,27 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python, *args, pythonpath=None, path_first=None, script=CHECK):
+def _check(python, *args, pythonpath=None, path_first=None, script=CHECK, timeout=60):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
     env["PYTHON"] = str(python)
     if pythonpath is not None:
         env["PYTHONPATH"] = str(pythonpath)
     if path_first is not None:
         env["PATH"] = str(path_first) + os.pathsep + env["PATH"]
-    return subprocess.run(["bash", script, *args], env=env, capture_output=True, text=True, timeout=60)
+    # In its own process group, which a timeout ends whole: killing bash alone would leave its python running.
+    with subprocess.Popen(["bash", script, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          start_new_session=True) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
 
-def _check_beside(tmp_path, dependencies, *, assign=" = ", test_extra='"pytest>=7"', python=sys.executable):
+def _check_beside(tmp_path, dependencies, *, assign=" = ", test_extra='"pytest>=7"', python=sys.executable,
+                  timeout=60):
     """A copy of tools/check.sh in a scratch project whose pyproject.toml has ``dependencies<assign>[<dependencies>]``
     and ``test = [<test_extra>]``, run by ``python`` on a passing test there."""
     (tmp_path / "tools").mkdir(parents=True)
@@ -36,7 +47,7 @@ def _check_beside(tmp_path, dependencies, *, assign=" = ", test_extra='"pytest>=
         f'[project]\nname = "scratch"\ndependencies{assign}[{dependencies}]\n\n'
         f'[project.optional-dependencies]\ntest = [{test_extra}]\n')
     (tmp_path / "test_scratch.py").write_text("def test_scratch():\n    pass\n")
-    return _check(python, "test_scratch.py", script=tmp_path / "tools" / "check.sh")
+    return _check(python, "test_scratch.py", script=tmp_path / "tools" / "check.sh", timeout=timeout)
 
 
 def test_a_dependency_is_checked_as_its_distribution_when_its_module_is_named_otherwise(tmp_path):
@@ -78,6 +89,15 @@ def test_a_dependency_list_it_cannot_read_stops_the_run(tmp_path):
     assert run.returncode == 1
     assert f"check.sh: {sys.executable} exited with status 1" in run.stderr
     assert "passed" not in run.stdout
+
+
+def test_a_list_it_cannot_read_after_many_comments_holding_a_hash_stops_the_run_promptly(tmp_path):
+    # Each comment ends only at its line's end, not at any # inside it: a read that could end it at either would try
+    # every combination of the 40 before giving up on the bare word, and would not stop within the timeout.
+    lines = "".join(f'\n    "numpy>=1.22",  # see #{i}' for i in range(40))
+    run = _check_beside(tmp_path, lines + "\n    numpy,\n", timeout=20)
+    assert run.returncode == 1
+    assert f"check.sh: {sys.executable} exited with status 1" in run.stderr
 
 
 def test_a_missing_module_of_the_extra_is_named_with_its_requirement_as_written(tmp_path):

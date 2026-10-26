@@ -47,8 +47,10 @@ out="$("$py" -c 'import importlib.metadata as md, importlib.util as u, re, shlex
 text = open("pyproject.toml").read()
 rest = text[re.search(r"^dependencies\s*=\s*\[", text, re.M).end():]
 basic, literal = r"\"((?:[^\"\\]|\\.)*)\"", r"\x27([^\x27]*)\x27"  # TOML strings, with and without escapes
-listed = re.match(r"(?:\s|,|#[^\n]*|" + basic + "|" + literal + r")*(?=\])", rest).group(0)
-wanted = [re.sub(r"\\(.)", r"\1", b) or s for b, s in re.findall("#[^\n]*|" + basic + "|" + literal, listed) if b or s]
+comment = r"#[^\n]*(?![^\n])"  # to the end of its line, never to a # inside it, so a failed read cannot backtrack
+listed = re.match(r"(?:\s|,|" + comment + "|" + basic + "|" + literal + r")*(?=\])", rest).group(0)
+found = re.findall(comment + "|" + basic + "|" + literal, listed)
+wanted = [re.sub(r"\\(.)", r"\1", b) or s for b, s in found if b or s]
 def name(req):
     return re.match(r"\s*([\w.-]+)", req).group(1)
 def installed(req):
