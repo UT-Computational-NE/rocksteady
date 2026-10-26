@@ -237,6 +237,20 @@ def _in_0d(value):
     return held
 
 
+class _Wrapped(np.ndarray):
+    """An array type whose items are 0-d arrays of its own type, as an astropy ``Quantity``'s are."""
+
+    def __getitem__(self, key):
+        return np.asarray(super().__getitem__(key)).view(type(self))
+
+
+class _WithAUnit(_Wrapped):
+    """One that float() refuses, as it refuses a ``Quantity`` in seconds."""
+
+    def __float__(self):
+        raise TypeError("only dimensionless scalar quantities can be converted to Python scalars")
+
+
 _NUMBERS = [pytest.param(7200, id="int"), pytest.param(7200.0, id="float"), pytest.param(np.int64(7200), id="np.int64"),
             pytest.param(np.float64(7200.0), id="np.float64"), pytest.param(True, id="bool"),
             pytest.param(np.True_, id="np.bool_")]
@@ -291,7 +305,8 @@ def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
 
 @pytest.mark.parametrize("per", _NUMBERS + [pytest.param(np.array(7200.0), id="0-d float"),
                                              pytest.param(_in_0d(np.array(7200)), id="0-d in 0-d int"),
-                                             pytest.param(np.ma.array(7200.0), id="unmasked 0-d np.ma float")])
+                                             pytest.param(np.ma.array(7200.0), id="unmasked 0-d np.ma float"),
+                                             pytest.param(np.array(7200.0).view(_Wrapped), id="0-d _Wrapped float")])
 def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
     step = float(per) / 2
@@ -302,8 +317,9 @@ def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
 
 
-@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600), np.array(3600.0), _in_0d(np.array(3600))],
-                         ids=["int", "float", "np.int64", "0-d float", "0-d in 0-d int"])
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600), np.array(3600.0), _in_0d(np.array(3600)),
+                                    np.array(3600.0).view(_Wrapped)],
+                         ids=["int", "float", "np.int64", "0-d float", "0-d in 0-d int", "0-d _Wrapped float"])
 def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
     t = np.arange(6) * 3600.0
@@ -339,6 +355,9 @@ _TIMES = [
     pytest.param(np.array(pd.Period("1970-01-01", "D"), dtype=object), id="0-d object pd.Period"),
     pytest.param(np.ma.array(np.timedelta64(3600, "ns")), id="unmasked 0-d np.ma np.timedelta64 ns"),
     pytest.param(np.ma.array(np.datetime64(3600, "ns")), id="unmasked 0-d np.ma np.datetime64 ns"),
+    pytest.param(np.ma.array(pd.Timedelta(1, "h"), dtype=object), id="unmasked 0-d np.ma object pd.Timedelta"),
+    pytest.param(np.array(np.timedelta64(3600, "ns")).view(_Wrapped), id="0-d _Wrapped np.timedelta64 ns"),
+    pytest.param(np.array(np.timedelta64(1, "h")).view(_Wrapped), id="0-d _Wrapped np.timedelta64 h"),
     pytest.param(_in_0d(np.array(np.timedelta64(3600, "ns"))), id="0-d in 0-d np.timedelta64 ns"),
 ]
 
@@ -382,6 +401,7 @@ _MISSING_IN_0D = [
     pytest.param(np.array(pd.NaT, dtype=object), id="0-d pd.NaT"),
     pytest.param(np.array(pd.NA, dtype=object), id="0-d pd.NA"),
     pytest.param(np.ma.array(np.timedelta64("NaT", "ns")), id="unmasked 0-d np.ma np.timedelta64 NaT"),
+    pytest.param(np.array(np.datetime64("NaT", "ns")).view(_Wrapped), id="0-d _Wrapped np.datetime64 NaT"),
     pytest.param(np.ma.masked, id="np.ma.masked", marks=_FLOAT_OF_MASKED),
     pytest.param(np.ma.array(7200.0, mask=True), id="masked 0-d array", marks=_FLOAT_OF_MASKED),
 ]
@@ -505,9 +525,10 @@ def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
 
 
 @pytest.mark.parametrize("value", [pytest.param(np.array([7200.0, 3600.0]), id="1-d of two"),
-                                   pytest.param(np.array([[7200.0, 3600.0]]), id="2-d of two")])
-def test_an_array_of_more_than_0_d_is_not_read_as_the_period_or_origin_of_numeric_times(value):
-    # Only a 0-d array is read as the value it holds; float() refuses one of two numbers, as before.
+                                   pytest.param(np.array([[7200.0, 3600.0]]), id="2-d of two"),
+                                   pytest.param(np.array(7200.0).view(_WithAUnit), id="0-d _WithAUnit")])
+def test_an_array_float_refuses_is_not_read_as_the_period_or_origin_of_numeric_times(value):
+    # float() refuses an array of two numbers, and one of a type that refuses it; neither is read as its values.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     with pytest.raises(TypeError):

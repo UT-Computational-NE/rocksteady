@@ -224,17 +224,25 @@ def _seconds(x, name: str) -> float:
     ``x``, the ``name`` argument of numeric times, as a float of seconds,
     with ``pd.NaT``, ``pd.NA`` and a numpy NaT (``np.datetime64`` or
     ``np.timedelta64``, any unit) as NaN (``float()`` takes none of them).
-    A 0-d array, a masked one included, is read as the value it holds,
-    through any 0-d arrays nested in it; a masked value is NaN, as
-    ``float()`` reads it. A time that is not NaT (numpy, pandas, including
-    a ``Period`` or a ``DateOffset``, or standard library, any unit or
-    none) is refused: numeric times are seconds, and a time is never read
-    as a number of them.
+    A 0-d numpy array, a masked one included, is read as the value it
+    holds, through any 0-d arrays nested in it; a masked value is NaN, as
+    ``float()`` reads it. Another 0-d array type (an astropy ``Quantity``,
+    say) is left to ``float()`` unless it holds a numpy time, which is read
+    as that time. A time that is not NaT (numpy, pandas, including a
+    ``Period`` or a ``DateOffset``, or standard library, any unit or none)
+    is refused: numeric times are seconds, and a time is never read as a
+    number of them.
     """
     import pandas as pd
 
     v = x
-    while isinstance(v, np.ndarray) and v.ndim == 0 and v is not np.ma.masked:  # np.ma.masked[()] is np.ma.masked
+    while isinstance(v, np.ndarray) and v.ndim == 0:
+        if type(v) not in (np.ndarray, np.ma.MaskedArray):
+            # Indexing another array type may give back another 0-d array of that type (np.ma.masked[()] is
+            # np.ma.masked), so it is read as a plain array only when it holds a time; otherwise float() reads it.
+            if v.dtype.kind not in "mM":
+                break
+            v = np.asarray(v)
         v = v[()]
     if v is pd.NaT or v is pd.NA or (isinstance(v, (np.datetime64, np.timedelta64)) and np.isnat(v)):
         return math.nan
