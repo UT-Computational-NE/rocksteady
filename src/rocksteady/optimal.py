@@ -141,7 +141,9 @@ model cost before any subtype's condition, so it stays exact with subtypes:
 a longer segment never costs less, whichever subtype could take it.
 """
 
+import datetime
 import math
+import warnings
 from dataclasses import dataclass, field, replace
 from numbers import Real
 from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol,
@@ -267,18 +269,15 @@ def _aware_without_a_whole_date(text: str) -> bool:
     Whether ``text`` is an aware time without a whole date (year, month and
     day). pandas dates ``"07:00+00:00"`` today, so the instant, and with it
     the wall-clock time in another zone, depends on the season; it dates
-    ``"7am UTC"`` in year 1 (pandas 1.5 refuses it), and ``"2026-03
+    ``"7am UTC"`` in year 1 (pandas 1.5 cannot hold it), and ``"2026-03
     07:00+00:00"`` on the 1st. A string dateutil cannot read is left to
     pandas.
     """
-    import datetime
-    import warnings
-
     from dateutil import parser
 
     try:
-        with warnings.catch_warnings():  # an unknown zone name, which pandas refuses itself
-            warnings.simplefilter("ignore")
+        with warnings.catch_warnings():  # a zone name it does not know, which pandas then refuses or warns about
+            warnings.simplefilter("ignore", parser.UnknownTimezoneWarning)
             # Defaults that differ in year, month and day, in leap years and in months of 31 days, so that any
             # date the text gives is valid beside either.
             first = parser.parse(text, default=datetime.datetime(2000, 1, 1))
@@ -1740,9 +1739,10 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         record's season, ``"2026-03-02 07:00+00:00"`` starts them on 01:00's
         grid and ``"2026-07-01 07:00+00:00"`` (daylight saving time) on
         02:00's. Beside a naive index, it keeps its own clock. An aware
-        string needs a whole date (year, month and day), or raises
-        ``ValueError``: pandas dates ``"07:00+00:00"`` today, so its periods
-        would depend on the season it runs in. With numeric times, a finite
+        string needs a whole date (year, month and day), beside either
+        index, or raises ``ValueError``: pandas dates ``"07:00+00:00"``
+        today, so beside an aware index its periods would depend on the
+        season it runs in. With numeric times, a finite
         number of seconds (NaN, infinite, ``pd.NaT``, ``pd.NA``, or a NaT
         ``np.datetime64`` or ``np.timedelta64`` of any unit raises
         ``ValueError``). Default: the Unix epoch, i.e. midnight for days.

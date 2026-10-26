@@ -391,21 +391,32 @@ def test_a_period_origin_is_read_on_the_wall_clock(origin):
     assert list(result.counts.index) == starts
 
 
-@pytest.mark.parametrize("origin", ["2026-07-01 07:00+00:00", pd.Timestamp("2026-07-01 07:00", tz="UTC")],
-                         ids=["str", "Timestamp"])
-def test_an_aware_period_origin_is_converted_at_its_own_instant_whatever_the_records_season(origin):
-    # 07:00 UTC on 1 July is 02:00 in Chicago (daylight saving time, UTC-5), so four-hour periods start at 22:00 and
-    # 02:00 beside a March record, and hourly samples from midnight fall [2, 4]. Converted on the record's date
-    # (01:00, UTC-6) they would give [1, 4, 1], and read on its own clock (07:00) [3, 3].
-    idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
+@pytest.mark.parametrize("day, origin, counts, starts, segments", [
+    # 07:00 UTC on 1 July is 02:00 in Chicago (daylight saving time, UTC-5): beside a March record, four-hour periods
+    # start at 22:00 and 02:00. Converted on the record's date (01:00, UTC-6) it would give [1, 4, 1].
+    pytest.param("2026-03-02", "2026-07-01 07:00+00:00", [2, 4], ["2026-03-01 22:00", "2026-03-02 02:00"],
+                 [(0, 2), (2, 6)], id="summer str beside March"),
+    pytest.param("2026-03-02", pd.Timestamp("2026-07-01 07:00", tz="UTC"), [2, 4],
+                 ["2026-03-01 22:00", "2026-03-02 02:00"], [(0, 2), (2, 6)], id="summer Timestamp beside March"),
+    # 07:00 UTC on 2 March is 01:00 in Chicago (standard time, UTC-6): beside a July record, periods start at 21:00,
+    # 01:00 and 05:00. Converted on the record's date (02:00, UTC-5) it would give [2, 4].
+    pytest.param("2026-07-02", "2026-03-02 07:00+00:00", [1, 4, 1],
+                 ["2026-07-01 21:00", "2026-07-02 01:00", "2026-07-02 05:00"], [(0, 1), (1, 5), (5, 6)],
+                 id="winter str beside July"),
+])
+def test_an_aware_period_origin_is_converted_at_its_own_instant_in_either_season(day, origin, counts, starts,
+                                                                                 segments):
+    # Hourly samples from midnight in Chicago. Read on its own clock (07:00), either origin would give [3, 3].
+    idx = pd.date_range(day, periods=6, freq="1h", tz="America/Chicago")
     segs = [Segment(i, i + 1, ST) for i in range(6)]
-    starts = [pd.Timestamp("2026-03-01 22:00"), pd.Timestamp("2026-03-02 02:00")]
-    counts = count_by_period(segs, idx, "4h", period_origin=origin)
-    assert counts["steady"].tolist() == [2, 4]
-    assert list(counts.index) == starts
+    starts = [pd.Timestamp(s) for s in starts]
+    table = count_by_period(segs, idx, "4h", period_origin=origin)
+    assert table["steady"].tolist() == counts
+    assert list(table.index) == starts
+    # The cap binds per period: one segment in each.
     result = optimal_segments(idx, np.arange(6.0), {"steady": 0}, per="4h", period_origin=origin,
                               max_counts={"steady": 1}, method="exact")
-    assert [(s.start, s.stop) for s in result.segments] == [(0, 2), (2, 6)]
+    assert [(s.start, s.stop) for s in result.segments] == segments
     assert list(result.counts.index) == starts
 
 
@@ -451,8 +462,8 @@ def test_a_period_origin_pandas_reads_as_nat_is_refused_by_name(origin):
 @pytest.mark.parametrize("origin", ["07:00+00:00", "1:00-06:00", "7am UTC", "T07:00Z", "Mar 2 07:00+00:00",
                                     "2026-03 07:00+00:00"])
 def test_an_aware_period_origin_without_a_whole_date_is_refused_by_name(origin, tz):
-    # pandas dates a time without a date today, so its periods would shift with the season it runs in, or in year 1
-    # (pandas 1.5 cannot), and a month without a day on the 1st.
+    # Refused beside either index. pandas dates a time without a date today (beside an aware index, its periods would
+    # shift with the season it runs in) or in year 1 (pandas 1.5 cannot), and a month without a day on the 1st.
     idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz=tz)
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     named = (r"an aware period_origin needs a whole date \(e\.g\. '2026-03-02 07:00\+00:00'\), "
@@ -461,6 +472,20 @@ def test_an_aware_period_origin_without_a_whole_date_is_refused_by_name(origin, 
         count_by_period(segs, idx, "4h", period_origin=origin)
     with pytest.raises(ValueError, match=named):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per="4h", period_origin=origin)
+
+
+@pytest.mark.skipif(int(pd.__version__.split(".")[0]) < 3,
+                    reason="pandas before 3.0 drops a zone name it does not know, with a warning of its own")
+@pytest.mark.parametrize("origin", ["2026-03-02 07:00 CST", "07:00 CST"])
+def test_a_zone_name_pandas_does_not_know_in_the_period_origin_is_left_to_pandas(origin):
+    # pandas refuses it with its own error and no warning, with or without a date, so no warning comes before it.
+    idx = pd.date_range("2026-03-02", periods=6, freq="1h", tz="America/Chicago")
+    with pytest.raises(ValueError) as pandas_error:
+        pd.Timestamp(origin)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=f"^{re.escape(str(pandas_error.value))}$"):
+            count_by_period([Segment(i, i + 1, ST) for i in range(6)], idx, "4h", period_origin=origin)
 
 
 def test_count_tables_without_segments_or_columns_are_empty():
