@@ -11,7 +11,7 @@ license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{ name = "Nicholas Luciano" }]
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.22", "pandas>=1.5"]
+dependencies = ["numpy>=1.22", "pandas>=1.5", "python-dateutil>=2.8.1"]
 keywords = ["steady state", "steady-state detection", "time series", "process monitoring",
             "drift", "autocorrelation", "metrology"]
 classifiers = [
