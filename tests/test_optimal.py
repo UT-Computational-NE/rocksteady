@@ -1621,6 +1621,40 @@ def test_the_pruning_bound_keeps_a_slow_models_segment_without_valid_samples():
     assert pruned.segments == full.segments and pruned.objective == full.objective
 
 
+def test_the_pruning_bound_keeps_a_slow_models_segment_of_the_fewest_samples_it_can_fit():
+    # first_order fits 5 samples or more. Constant fits first make a transient of [3, 7), 4 samples; the
+    # steady durations then leave only [2, 7), 5 samples.
+    t = np.arange(13.0)
+    y = np.r_[[0.0] * 3, 4.0 * (1 - np.exp(-np.arange(1.0, 5.0) / 1.5)), [4.0] * 6]
+    y = y + np.random.default_rng(1).normal(0, 0.01, 13)
+    models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 0.5, "tau_max": 50.0}}
+    kw = dict(method="subset", candidates=[0, 2, 3, 7, 13], penalty=0.1, initial=["steady"], final=["steady"],
+              transitions={"steady": ["transient"], "transient": ["steady"]}, max_duration_s={"steady": 6.0})
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"])
+    assert [(s.start, s.state.value) for s in pruned.segments] == [(0, "steady"), (2, "transient"), (7, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_a_model_that_cannot_fit_long_segments_is_searched_without_a_bound():
+    # Constant fits first make one transient of the whole record, which this model cannot fit. Kept off
+    # segments that long or shorter, they find none, though the model fits [0, 3).
+    def short_only(t, y):
+        r = fit_poly(t, y, 0)
+        return r if np.isfinite(y).sum() <= 3 else dataclasses.replace(r, residuals=np.full(len(y), np.nan))
+
+    rs.registry.fit_models.register("short_only", short_only)
+    try:
+        r = optimal_segments(np.arange(8.0), np.zeros(8), {"steady": 0, "transient": "short_only"},
+                             method="subset", candidates=[0, 3, 8], initial=["transient"],
+                             penalty={"steady": 1.0, "transient": 0.1})
+    finally:
+        rs.registry.fit_models.unregister("short_only")
+    assert r.info["upper_bound"] == math.inf
+    assert [(s.start, s.state.value) for s in r.segments] == [(0, "transient"), (3, "steady")]
+
+
 def test_a_record_only_too_short_segments_could_cover_is_infeasible():
     # The one segment initial and final allow has 4 samples, too few for first_order.
     t = np.arange(4.0)
