@@ -3,8 +3,11 @@ or when the interpreter is not executable or exits non-zero (#90); runs a select
 (#93) and lints (#106)."""
 
 import os
+import shutil
+import signal
 import subprocess
 import sys
+import sysconfig
 
 import pytest
 
@@ -15,14 +18,98 @@ pytestmark = pytest.mark.skipif(not os.path.exists(CHECK) or sys.platform == "wi
                                 reason="tools/check.sh is not in the sdist, and needs bash")
 
 
-def _check(python, *args, pythonpath=None, path_first=None):
+def _check(python, *args, pythonpath=None, path_first=None, script=CHECK, timeout=60):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}  # a PYTHONPATH could undo -S below
     env["PYTHON"] = str(python)
     if pythonpath is not None:
         env["PYTHONPATH"] = str(pythonpath)
     if path_first is not None:
         env["PATH"] = str(path_first) + os.pathsep + env["PATH"]
-    return subprocess.run(["bash", CHECK, *args], env=env, capture_output=True, text=True, timeout=60)
+    # In its own process group, which a timeout ends whole: killing bash alone would leave its python running.
+    with subprocess.Popen(["bash", script, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          start_new_session=True) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+def _check_beside(tmp_path, dependencies, *, assign=" = ", test_extra='"pytest>=7"', python=sys.executable,
+                  timeout=60):
+    """A copy of tools/check.sh in a scratch project whose pyproject.toml has ``dependencies<assign>[<dependencies>]``
+    and ``test = [<test_extra>]``, run by ``python`` on a passing test there."""
+    (tmp_path / "tools").mkdir(parents=True)
+    shutil.copy(CHECK, tmp_path / "tools" / "check.sh")
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname = "scratch"\ndependencies{assign}[{dependencies}]\n\n'
+        f'[project.optional-dependencies]\ntest = [{test_extra}]\n')
+    (tmp_path / "test_scratch.py").write_text("def test_scratch():\n    pass\n")
+    return _check(python, "test_scratch.py", script=tmp_path / "tools" / "check.sh", timeout=timeout)
+
+
+def test_a_dependency_is_checked_as_its_distribution_when_its_module_is_named_otherwise(tmp_path):
+    run = _check_beside(tmp_path, '"numpy>=1.22", "python-dateutil>=2.8"')  # python-dateutil's module is dateutil
+    assert run.returncode == 0, run.stderr
+    assert "1 passed" in run.stdout
+
+
+def test_a_missing_distribution_after_one_with_extras_is_named_with_its_requirement(tmp_path):
+    # Two missing distributions, one with extras and one with a dotted name, each after a requirement with extras.
+    run = _check_beside(tmp_path, '"numpy>=1.22", "pandas[excel]>=1.5", "no-such-distribution[x]>=1", '
+                                  '"no.such.distribution>=2"')
+    assert run.returncode == 1
+    assert "lacks no-such-distribution no.such.distribution, which the package needs." in run.stderr
+    assert f"{sys.executable} -m pip install 'no-such-distribution[x]>=1' 'no.such.distribution>=2')" in run.stderr
+    assert "passed" not in run.stdout
+
+
+def test_a_dependency_list_over_lines_with_comments_is_read_whole(tmp_path):
+    # `dependencies=[` without spaces; a comment holding ] and a quote; a single-quoted missing requirement with a
+    # leading space, between installed ones; a space before a comma; and a marker holding a ; and escaped quotes
+    # around a #. Each missing distribution is named, and its requirement is given as written, quoted for the shell.
+    run = _check_beside(tmp_path, '\n    "numpy>=1.22",  # arrays ] that don\'t end the list\n'
+                                  "    ' no-such-single >= 1',\n    'pandas >= 1.5' ,\n"
+                                  '    "no-such-distribution [x] >= 1",\n'
+                                  '    "no-such-marked>=2; python_version >= \'3\' and os_name != \\"#\\"",\n'
+                                  '    "pytest>=7",\n', assign="=")
+    assert run.returncode == 1
+    assert "lacks no-such-single no-such-distribution no-such-marked, which the package needs." in run.stderr
+    want = ("' no-such-single >= 1' 'no-such-distribution [x] >= 1' "
+            """'no-such-marked>=2; python_version >= '"'"'3'"'"' and os_name != "#"')""")
+    assert f"{sys.executable} -m pip install {want}" in run.stderr
+    assert "passed" not in run.stdout
+
+
+def test_a_dependency_list_it_cannot_read_stops_the_run(tmp_path):
+    # A bare word is not a TOML string: the read stops there, before the missing requirement after it, and says so.
+    run = _check_beside(tmp_path, 'numpy, "no-such-after>=1"')
+    assert run.returncode == 1
+    assert f"check.sh: {sys.executable} exited with status 1" in run.stderr
+    assert "passed" not in run.stdout
+
+
+def test_a_list_it_cannot_read_after_many_comments_holding_a_hash_stops_the_run_promptly(tmp_path):
+    # Each comment ends only at its line's end, not at any # inside it: a read that could end it at either would try
+    # every combination of the 40 before giving up on the bare word, and would not stop within the timeout.
+    lines = "".join(f'\n    "numpy>=1.22",  # see #{i}' for i in range(40))
+    run = _check_beside(tmp_path, lines + "\n    numpy,\n", timeout=20)
+    assert run.returncode == 1
+    assert f"check.sh: {sys.executable} exited with status 1" in run.stderr
+
+
+def test_a_missing_module_of_the_extra_is_named_with_its_requirement_as_written(tmp_path):
+    # This interpreter without site-packages (-S) lacks pytest. The extra's requirement has a space before its version
+    # and a marker holding quotes, which the shell needs escaped.
+    bare = tmp_path / "bare-python"
+    bare.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n')
+    bare.chmod(0o755)
+    run = _check_beside(tmp_path / "project", "", test_extra='"pytest >= 7; python_version >= \'3\'"', python=bare)
+    assert run.returncode == 1
+    assert "lacks pytest, from the test extra." in run.stderr
+    assert f"""{sys.executable} -m pip install 'pytest >= 7; python_version >= '"'"'3'"'"'')""" in run.stderr
 
 
 def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_path):
@@ -129,8 +216,18 @@ def test_a_python_that_exits_non_zero_after_the_version_check_is_named_and_stops
 
 @pytest.mark.parametrize("args", [(), ("tests/test_check_sh.py",)], ids=["full run", "selection"])
 def test_an_interpreter_without_the_packages_dependencies_is_named_and_stops_the_checks(tmp_path, args):
-    (tmp_path / "sitecustomize.py").write_text("import sys\nsys.modules['numpy'] = None\n")  # numpy cannot be found
-    run = _check(sys.executable, *args, pythonpath=tmp_path)
+    # This interpreter without site-packages (-S), on a path holding everything installed there but numpy, so that
+    # numpy's distribution is missing as well as its module.
+    site = tmp_path / "site"
+    site.mkdir()
+    for lib in {sysconfig.get_paths()["purelib"], sysconfig.get_paths()["platlib"]}:
+        for entry in os.listdir(lib):
+            if not entry.lower().startswith("numpy") and not (site / entry).exists():
+                (site / entry).symlink_to(os.path.join(lib, entry))
+    bare = tmp_path / "bare-python"
+    bare.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n')
+    bare.chmod(0o755)
+    run = _check(bare, *args, pythonpath=site)
     assert run.returncode == 1
     # A selection needs only pytest; a full run may lack the dev extra too (CI's test jobs install the test extra).
     end = "." if args else ""
