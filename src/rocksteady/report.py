@@ -2,7 +2,8 @@
 Reports: fits and comparisons over a record, by state and by segment.
 
 - ``fit_report``: each signal against its piecewise fit (``e = fit - data``),
-  per state, plus per-segment statistics and fitted parameters.
+  per state (or, with ``by="subtype"``, per state and subtype), plus
+  per-segment statistics and fitted parameters.
 - ``compare_report``: one series against another (``e = a - b``), per state
   and per segment.
 - ``batch.fit_report``: run a detector (or take its labels), split the
@@ -17,7 +18,8 @@ plain-text tables::
 
 ``Report.provenance`` records how the tables were made (software version,
 time origin and sample spacing, the normalized model spec and parameter
-order per signal and state, the uncertainty methods, NRMSE normalization,
+order per signal and state, and per subtype with a model of its own
+(``"subtypes"``), the uncertainty methods, NRMSE normalization,
 and, from ``batch.fit_report``, the detector's effective timing and
 validity policy). The DataFrames carry it in ``.attrs["rocksteady"]``, and
 ``Report.to_dict()`` / ``to_json()`` export it with the tables and fits.
@@ -25,7 +27,7 @@ validity policy). The DataFrames carry it in ``.attrs["rocksteady"]``, and
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -33,7 +35,7 @@ from .fit import FitResult, PiecewiseFit, normalize_model, piecewise_fit, resolv
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment
 
-FIT_INTERVAL_COLUMNS = ["segment", "state", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
+FIT_INTERVAL_COLUMNS = ["segment", "state", "subtype", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
                         "n", "mean", "std", "tau_int_s", "n_eff", "u_mean", "rmse", "low_effective_sample", "flags"]
 _HIDDEN_PARAMS = {"lambda"}  # derived from tau; shown in DataFrames, not in the text table
 _TIME_PARAMS = {"tau", "T"}
@@ -188,18 +190,24 @@ def _column(values, name) -> np.ndarray:
         raise KeyError(f"no column {name!r} in values") from None
 
 
+def _model_label(name: str, opts: Mapping[str, Any]) -> str:
+    return f"poly {opts.get('order', 0)}" if name == "poly" else name
+
+
+def _own_models(spec) -> Mapping[str, Any]:
+    """The subtypes a spec gives models of their own (``"subtypes"``), or none."""
+    return spec.get("subtypes", {}) if isinstance(spec, Mapping) and "model" not in spec else {}
+
+
 def _models_title(spec, states: Sequence[str]) -> str:
-    parts = []
-    for st in [s for s in states if s != "all"]:
-        name, opts = resolve_model(spec, st)
-        label = f"poly {opts.get('order', 0)}" if name == "poly" else name
-        parts.append(f"{st} {label}")
-    return f"(models: {', '.join(parts)})"
+    parts = [f"{st} {_model_label(*resolve_model(spec, st))}" for st in states if st != "all"]
+    own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _own_models(spec)]
+    return f"(models: {', '.join(parts)}{'; ' + ', '.join(own) if own else ''})"
 
 
 def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=None, dt: Optional[float] = None,
                units: Optional[Mapping[str, str]] = None, states: Sequence[str] = STATES,
-               nrmse: str = "mean") -> Report:
+               nrmse: str = "mean", by: str = "state") -> Report:
     """
     Each signal against its piecewise fit, by state and by segment.
 
@@ -211,7 +219,12 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         From ``rocksteady.segments`` or ``segments_from``.
     models : mapping
         ``{signal: model spec}``; see ``rocksteady.fit``. Example:
-        ``{"power": {"steady": 0, "transient": "exp"}, "Tran": 1}``.
+        ``{"power": {"steady": 0, "transient": "exp"}, "Tran": 1}``. A
+        spec keyed by state may give subtypes their own models, as
+        ``{"steady": 0, "transient": "exp", "subtypes": {"pulse": 1}}``
+        (``OptimalSegmentation.models`` is such a spec): a segment whose
+        ``subtype`` it lists is fitted with that model, any other with its
+        state's.
     t : array, optional
         Sample times in seconds. Default: from a ``DatetimeIndex``, else
         the row number times ``dt``.
@@ -222,6 +235,11 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
     states : sequence
         Rows of the state table.
     nrmse : "mean", "range", "std" or "none"
+    by : "state" (default) or "subtype"
+        With ``"subtype"``, each state's row of the state table is followed
+        by one row per subtype its segments carry, sorted by name
+        (``metrics.stats_by_state``). The table of segments has a
+        ``subtype`` column either way.
     """
     validate_models(models)
     t, dt, origin = _times(values, t, dt)
@@ -230,12 +248,13 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
     for name, spec in models.items():
         y = _column(values, name)
         pw = piecewise_fit(t, y, segs, spec)
-        by_state = stats_by_state(pw.fitted, y, segs, dt=dt, states=states, nrmse=nrmse, t=t)
+        by_state = stats_by_state(pw.fitted, y, segs, dt=dt, states=states, nrmse=nrmse, t=t, by=by)
         rows = []
         for i, (s, r) in enumerate(zip(segs, pw.results)):
             ss = signal_stats(y[s.slice], r, dt=dt, t=t[s.slice])
             e = r.residuals[np.isfinite(r.residuals)]
-            rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
+            rows.append({"segment": i, "state": s.state.value, "subtype": s.subtype, "forced": s.forced,
+                         "start": s.start, "stop": s.stop,
                          "t_start_s": t[s.start], "t_end_s": t[s.stop - 1], "model": r.label, "t_ref_s": r.t_ref,
                          "n": ss.n, "mean": ss.mean, "std": ss.std, "tau_int_s": ss.tau_int_s,
                          "n_eff": ss.n_eff, "u_mean": ss.u_mean,
@@ -246,18 +265,25 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
                          **{f"u_{k}": v for k, v in r.u.items()}})
         import pandas as pd
 
-        blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state,
-                                   pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS),
+        per_segment = pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS)
+        # None, not NaN, for none: pandas 3 would infer a string column, with NaN for None.
+        per_segment["subtype"] = pd.Series([s.subtype for s in segs], index=per_segment.index, dtype=object)
+        blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state, per_segment,
                                    units.get(name), pw, pw.results, origin))
     fit_states = [s for s in states if s != "all"]
     order: Dict[str, Dict[str, List[str]]] = {}
     for b in blocks:
+        own = _own_models(models[b.name])
         for s, r in zip(segs, b.fit_results):
-            order.setdefault(b.name, {}).setdefault(s.state.value, list(r.params))
+            key = s.subtype if s.subtype is not None and s.subtype in own else s.state.value  # whose model fitted it
+            order.setdefault(b.name, {}).setdefault(key, list(r.params))
     prov = _provenance("fit_report", origin, dt, nrmse, states, units)
     prov.update({
         "error": "e = fit - data",
-        "models": {name: {st: normalize_model(spec, st) for st in fit_states} for name, spec in models.items()},
+        "models": {name: {**{st: normalize_model(spec, st) for st in fit_states},
+                          **({"subtypes": {sub: normalize_model(spec, subtype=sub) for sub in _own_models(spec)}}
+                             if _own_models(spec) else {})}
+                   for name, spec in models.items()},
         "parameter_order": order,
         "parameter_reference": "params are stated at t_ref (poly: segment centre; first_order, exp: first valid "
                                "sample); FitResult.evaluation is the stable form for fit.evaluate",
@@ -347,16 +373,18 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], left: Sequence[
 
 
 def _state_table(df) -> str:
+    """One row per state; by subtype, each subtype's row indented under its state's."""
     dec = _decimals(np.concatenate([df[c].to_numpy(float) for c in ("std", "mae", "rmse")]))
-    header = ["state", "n", "time", "bias", "std", "MAE", "RMSE", "max|e|", "NRMSE", "r", "u(bias)",
+    header = [df.index.name or "state", "n", "time", "bias", "std", "MAE", "RMSE", "max|e|", "NRMSE", "r", "u(bias)",
               "tau_int", "N_eff"]
     rows = []
-    for state, r in df.iterrows():
+    for name, r in df.iterrows():
+        label = str(name) if name in STATES else f"  {name}"  # a subtype's row
         if r["n"] == 0:
-            rows.append([str(state), "0"] + [""] * (len(header) - 2))
+            rows.append([label, "0"] + [""] * (len(header) - 2))
             continue
         rows.append([
-            str(state), f"{int(r['n']):,}", _duration(r["duration_s"]), _fmt(r["bias"], dec, signed=True),
+            label, f"{int(r['n']):,}", _duration(r["duration_s"]), _fmt(r["bias"], dec, signed=True),
             _fmt(r["std"], dec), _fmt(r["mae"], dec), _fmt(r["rmse"], dec), _fmt(r["max_abs"], dec),
             f"{r['nrmse']:.2%}" if np.isfinite(r["nrmse"]) else "",
             f"{r['r']:.4f}" if np.isfinite(r["r"]) else "—",
@@ -416,6 +444,8 @@ def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
                   "parameters"]
     else:
         header = ["#", "state", "start", "end", "n", "bias", "std", "RMSE", "r", "tau_int", "N_eff", "u(bias)"]
+    # A subtype column only when some segment has a subtype, so that a table without any keeps its layout.
+    subtyped = "subtype" in df.columns and bool(df["subtype"].notna().any())
     rows = []
     multi_day = len(df) > 0 and float(df["t_end_s"].max()) >= 86400.0
     for i, r in df.reset_index(drop=True).iterrows():
@@ -433,7 +463,13 @@ def _interval_table(df, fits: Sequence[FitResult], origin) -> str:
                          _fmt(r["bias"], dec, signed=True), _sig(r["std"]), _sig(r["rmse"]),
                          f"{r['r']:.4f}" if np.isfinite(r["r"]) else "—", _duration(r["tau_int_s"]), n_eff,
                          _sig(r["u_bias"], 2)])
-    return _table(header, rows, left=(1, 5, 12) if is_fit else (1,))
+        if subtyped:
+            rows[-1].insert(2, r["subtype"] if isinstance(r["subtype"], str) else "")
+    left: Tuple[int, ...] = (1, 5, 12) if is_fit else (1,)
+    if subtyped:
+        header.insert(2, "subtype")
+        left = tuple(c + (c >= 2) for c in left) + (2,)
+    return _table(header, rows, left=left)
 
 
 __all__ = ["Report", "SignalReport", "fit_report", "compare_report"]

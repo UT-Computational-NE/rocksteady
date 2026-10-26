@@ -145,6 +145,50 @@ def test_stats_by_state_and_segment():
     assert list(per["n"]) == [50, 200, 100, 150]
 
 
+ST, TR, IN = rs.State.STEADY, rs.State.TRANSIENT, rs.State.INDETERMINATE
+# Constant references, so that each pooled bias is a weighted mean of the levels: hot (first) and cold, a pulse,
+# and a transient and an indeterminate segment without a subtype.
+SUBTYPED = [rs.Segment(0, 10, ST, subtype="hot"), rs.Segment(10, 15, TR, subtype="pulse"),
+            rs.Segment(15, 25, ST, subtype="cold"), rs.Segment(25, 30, ST, subtype="cold"),
+            rs.Segment(30, 32, IN), rs.Segment(32, 34, TR)]
+LEVELS = [5.0, 2.0, 1.0, 3.0, 7.0, 4.0]
+
+
+def _subtyped_reference():
+    return np.concatenate([np.full(len(s), v) for s, v in zip(SUBTYPED, LEVELS)])
+
+
+def test_stats_by_subtype_follow_each_state_with_its_subtypes_by_name():
+    b = _subtyped_reference()
+    table = stats_by_state(np.zeros(34), b, SUBTYPED, dt=1.0, by="subtype")
+    assert table.index.name == "subtype"
+    assert list(table.index) == ["all", "steady", "cold", "hot", "transient", "pulse", "indeterminate"]
+    assert table["n"].tolist() == [34, 25, 15, 10, 7, 5, 2]
+    np.testing.assert_allclose(table["bias"], [-107 / 34, -3.0, -25 / 15, -5.0, -18 / 7, -2.0, -7.0], rtol=1e-12)
+    by_state = stats_by_state(np.zeros(34), b, SUBTYPED, dt=1.0)
+    assert by_state.index.name == "state" and list(by_state.index) == ["all", "steady", "transient", "indeterminate"]
+    per = stats_by_segment(np.zeros(34), b, SUBTYPED, dt=1.0)
+    assert per["subtype"].tolist() == ["hot", "pulse", "cold", "cold", None, None]
+
+
+def test_stats_by_subtype_keep_only_the_states_asked_for():
+    b = _subtyped_reference()
+    table = stats_by_state(np.zeros(34), b, SUBTYPED, dt=1.0, by="subtype", states=("transient", "all"))
+    assert list(table.index) == ["transient", "pulse", "all"]
+
+
+def test_stats_by_subtype_refuse_a_subtype_named_like_a_row():
+    for name in ("all", "transient"):
+        segs = [rs.Segment(0, 10, ST, subtype=name)]
+        with pytest.raises(ValueError, match=f"subtype {name!r}"):
+            stats_by_state(np.zeros(10), np.ones(10), segs, dt=1.0, by="subtype")
+    two = [rs.Segment(0, 5, ST, subtype="x"), rs.Segment(5, 10, TR, subtype="x")]
+    with pytest.raises(ValueError, match="subtype 'x' is carried by segments of two states"):
+        stats_by_state(np.zeros(10), np.ones(10), two, dt=1.0, by="subtype")
+    with pytest.raises(ValueError, match="by must be"):
+        stats_by_state(np.zeros(10), np.ones(10), [rs.Segment(0, 10, ST)], dt=1.0, by="segment")
+
+
 def _var_mean_ar1(n, phi):
     """Variance of the mean of n AR(1) samples with unit innovations (Zhang 2006, eq. 7)."""
     return (n - 2 * phi - n * phi**2 + 2 * phi ** (n + 1)) / (n**2 * (1 - phi) ** 2) / (1 - phi**2)

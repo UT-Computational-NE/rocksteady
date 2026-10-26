@@ -39,10 +39,9 @@ conditions.
 Level, peak and rise are computed from the segment's finite samples, the
 same values you would compute to classify a segment after the fact; a
 segment with no finite sample meets none of them. An event condition reads
-the mask alone, whether or not the signal is finite there. A subtype has no
-model of its own: its segments are fitted with its state's model. So a
-subtype changes which segments the optimiser may choose, not how it fits
-them.
+the mask alone, whether or not the signal is finite there. Conditions
+change which segments the optimiser may choose, not how it fits them; a
+subtype's own model (below) changes that.
 
 An event mask is a boolean array with one value per sample. It flags the
 samples at which an event occurred: the heater switched, a rod moved. Pass
@@ -69,24 +68,24 @@ any other subtype.
 
 States for which you declare no subtypes behave as before, and their
 segments have `subtype=None`. A call with no `subtypes`, `events`,
-`initial` or `final` returns the segments, objective and counts that 0.5.0
-returned, for any call that both accept (*Changed* in the CHANGELOG lists
+`initial`, `final` or `overflow_penalty` returns the segments, objective
+and counts that 0.5.0 returned, for any call that both accept (*Changed* in the CHANGELOG lists
 the calls that 0.5.0 accepted and that are now refused).
 
 ### How constraints combine on a state and its subtypes
 
 | Constraint | With a state and its subtypes |
 |---|---|
-| `max_counts` | Both caps bind. A state's cap counts all of its segments, whatever their subtype, so `{"steady": 3, "hot": 1}` allows at most three steady segments a period, and at most one of them hot. A segment counts against every period it touches, by subtype as by state. |
+| `max_counts` | Both caps bind. A state's cap counts all of its segments, whatever their subtype, so `{"steady": 3, "hot": 1}` allows at most three steady segments a period, and at most one of them hot. A segment counts against every period it touches, by subtype as by state. `overflow_penalty` makes a cap soft (see *Soft caps*). |
 | `transitions` | A state's name stands for all of its subtypes. The allowed pairs are the union over all entries, so `"drift": ["steady"]` lets a drift be followed by any steady subtype. |
 | `initial`, `final` | As for `transitions`: a state's name stands for all of its subtypes. |
 | `min_duration_s`, `max_duration_s` | Both bind: a segment's duration must lie within its state's bounds and its subtype's. A subtype that no duration can satisfy is refused. |
-| `penalty` | A subtype's penalty replaces its state's. With `"bic"`, or when the mapping does not name it, a subtype takes its state's. A higher penalty makes a subtype rarer. |
+| `penalty` | A subtype's penalty replaces its state's. When the mapping does not name it, a subtype takes its state's. With `"bic"`, a subtype takes its state's, unless it has a model of its own: then it takes that model's (more parameters, a higher penalty). A higher penalty makes a subtype rarer. |
 
 Subtypes of one state may overlap: two of them can accept the same segment.
-The optimiser chooses by total cost. Two subtypes that accept a segment and
-carry the same penalty cost exactly the same, so declaration order breaks
-the tie. Precisely, among segmentations of equal objective the optimiser
+The optimiser chooses by total cost. Two subtypes that accept a segment,
+carry the same penalty and fit it with the same model cost exactly the
+same, so declaration order breaks the tie. Precisely, among segmentations of equal objective the optimiser
 takes the least sum, over segments, of each subtype's position among its
 state's subtypes. So no segment could, on its own, take an earlier-declared
 subtype that accepts it, at the same penalty, without breaking a
@@ -100,6 +99,30 @@ Overlap is how a transient's subtype can follow from its neighbours. A
 heat-up and a cool-down can have the same conditions (the heater switched)
 and be told apart by `transitions` alone: a heat-up goes from cold to hot, a
 cool-down from hot to cold.
+
+### A subtype's own model
+
+A subtype fits its segments with its state's model unless you give it one:
+`rs.Subtype("transient", model=2, max_rise_s=60)` fits a pulse with a
+parabola among transients fitted with a line, say. The spec is one model, as
+in {py:mod}`rocksteady.fit`, not keyed by state. The optimiser then costs
+each of the subtype's segments with that model, so a segment can take the
+subtype because its model fits it better, even over a subtype declared
+first. A model is not a condition: `classify_segments` ignores it.
+
+The reports fit segments by their subtype in the same way. A model spec
+keyed by state may list subtypes under `"subtypes"`:
+
+```python
+{"steady": 0, "transient": 1, "subtypes": {"pulse": 2}}
+```
+
+A segment whose `subtype` is listed there is fitted with that model, and any
+other with its state's. `res.models` is that spec for the optimiser's
+signal, so `fit_report(values, res.segments, {"power": res.models})` fits
+each segment as the optimiser did. State keys are still checked, so a
+mistyped state name is refused, and a name under `"subtypes"` that is a
+state's is refused too.
 
 ### The first and last segments
 
@@ -194,6 +217,27 @@ period
 `print(res)` lists the counts by subtype, `res.subtypes` holds the declared
 subtypes, and `res.info["events"]` holds the masks.
 
+The reports can pool segments by subtype too. With `by="subtype"`,
+{py:func}`~rocksteady.report.fit_report` and
+{py:func}`~rocksteady.metrics.stats_by_state` follow each state's row with
+one row per subtype its segments carry, sorted by name;
+{py:func}`~rocksteady.optimal.count_by_period` follows each state's column
+with its subtypes' columns, counting as `res.counts` does; and
+{py:func}`~rocksteady.optimal.compare_segments` labels each sample with its
+segment's subtype, so two subtyped segmentations (the optimiser's and
+`classify_segments`' on the detector's) can be compared subtype by subtype.
+A state whose segments carry no subtype keeps a single row, column or
+label, as before. These work on segments from any source; a subtype named
+like a state (or like `"all"` in a table, `"none"` in a comparison), or
+carried by segments of two states, is refused. A report's table of segments
+has a `subtype` column whether or not `by="subtype"`.
+
+```{literalinclude} ../examples/subtypes.py
+:language: python
+:start-after: "# [report]"
+:end-before: "# [report]"
+```
+
 ### Subtypes for segments you already have
 
 `rs.classify_segments` gives subtypes to segments from anywhere else (the
@@ -207,15 +251,18 @@ subtypes and your constraints then share one definition.
 ```
 
 It runs the optimiser's dynamic program with the breakpoints and states
-fixed and no count caps, durations or penalties: those constrain the
-optimiser's choice of segments, not what a subtype means. It respects
-`transitions`, `initial` and `final`, so a transient between cold and hot is
-typed a heat-up here too, and ties go by the same least sum of positions as
-in the optimiser. On the optimiser's own segments, given the same
-`transitions`, `initial` and `final`, it returns the optimiser's subtypes
-when the call's caps, durations and penalties name states only. A cap on a
-subtype can make the optimiser put a segment in a catch-all that `classify_segments`,
-without caps, gives to the capped subtype. It returns new segments with
+fixed and no count caps, durations, penalties or subtypes' own models:
+those constrain or cost the optimiser's choice of segments, not what a
+subtype means. It respects `transitions`, `initial` and `final`, so a
+transient between cold and hot is typed a heat-up here too, and ties go by
+the same least sum of positions as in the optimiser. On the optimiser's own
+segments, given the same `transitions`, `initial` and `final`, it returns
+the optimiser's subtypes when the call's caps, durations and penalties name
+states only and no subtype has a model of its own. A cap on a subtype can
+make the optimiser put a segment in a catch-all that `classify_segments`,
+without caps, gives to the capped subtype; a subtype's own model can win a
+segment in the optimiser that `classify_segments` gives to a subtype
+declared before it. It returns new segments with
 `subtype` set; boundaries and states are unchanged.
 
 ### Mistakes refused up front
@@ -232,7 +279,11 @@ before a long run. A `ValueError` names each of these:
 - a range that is not two numbers in order (`lo < hi` when both are given);
 - a negative `max_rise_s`, or a `rise_fraction` outside (0, 1] or without
   `max_rise_s`;
-- a subtype whose duration bounds, with its state's, leave no duration.
+- a subtype whose duration bounds, with its state's, leave no duration;
+- a subtype's `model` that is keyed by state, names no registered model or
+  has options its model does not take;
+- an `overflow_penalty` naming what `max_counts` does not cap, or a cost
+  that is not a finite number of at least 0.
 
 ### Methods, pruning and infeasible calls
 
@@ -242,13 +293,14 @@ its subtype's conditions or the constraints fail. It then types its final
 segments again by the same program, so ties go the same way for every
 method.
 Pruning is as exact with subtypes as without: it is decided on a
-segment's model cost before any condition, so whatever subtype could take a
-segment changes nothing about it. Without subtypes, it is exact for least
+segment's model cost before any condition, for each model in use (a
+state's, and each subtype's own), so whatever subtype could take a segment
+changes nothing about it. Without subtypes, it is exact for least
 squares once a model is fitted in full, except that the exponential models'
 default time-constant bounds scale with the span; give explicit bounds, or
 `prune=False`, for a strict guarantee (*Segment costs* in {doc}`methods`).
 
-Constraints stay hard. When the conditions and constraints leave no
+When the conditions and the hard constraints leave no
 segmentation, the `ValueError` names the earliest time after which none can
 continue, the period containing it, and the caps and transitions in force
 (and `initial` and `final`, when given). In a long batch run, that points to the unusual day. See *Infeasible
@@ -256,6 +308,36 @@ constraints* in {doc}`methods`, which also says what such a call costs.
 When `classify_segments` finds no choice of subtypes, its `ValueError`
 names the earliest segment boundary after which none can continue, and the
 `transitions`, `initial` and `final` in force.
+
+### Soft caps
+
+Every cap is hard by default. On an unusual day whose data cannot fit them,
+a hard cap distorts the segmentation (two heat-ups merged into one long
+segment) or leaves none, which stops a batch run over months of records.
+`overflow_penalty={name: cost}` makes the caps of those names soft: each
+segment beyond the cap in a period adds `cost` to the objective, counted as
+the cap counts (once against every period a segment touches). The other
+caps stay hard. The overflow per period is not capped; the cost limits it,
+so choose it against the SSE a segment saves. `transitions`, `initial`,
+`final` and durations stay hard.
+
+```{literalinclude} ../examples/subtypes.py
+:language: python
+:start-after: "# [soft]"
+:end-before: "# [soft]"
+```
+
+`res.overflow` is indexed as `res.counts` is, with a column per
+soft-capped name holding the segments beyond its cap in each period, and
+`res.info["overflow_cost"]` is what they added to the objective
+(`objective = SSE + penalties + overflow cost`). `print(res)` names the
+caps that overflowed, so a batch run can flag the days to look at.
+
+The search stays exact: past the cap every further segment costs the same,
+so the program counts a soft cap only up to the cap and needs no more count
+layers than a hard one. A cheap overflow can make the cheap constant fits
+that bound the search choose segments a slower model cannot fit, and the
+search then runs without pruning, exactly but no faster.
 
 ### A sketch of a reactor's scheme
 

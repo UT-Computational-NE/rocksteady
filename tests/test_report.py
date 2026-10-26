@@ -63,6 +63,48 @@ def test_fit_report_states_intervals_and_parameters():
         rep["nope"]
 
 
+ST, TR = rs.State.STEADY, rs.State.TRANSIENT
+# Hot first and cold, a pulse with a model of its own, and a transient with its state's.
+SUBTYPED = [rs.Segment(0, 40, ST, subtype="hot"), rs.Segment(40, 80, TR, subtype="pulse"),
+            rs.Segment(80, 120, ST, subtype="cold"), rs.Segment(120, 160, TR)]
+SUBTYPE_MODELS = {"y": {"steady": 0, "transient": 3, "subtypes": {"pulse": 2}}}
+
+
+def _subtyped_values():
+    t = np.arange(160.0)
+    return pd.DataFrame({"y": np.sin(t / 9.0) + np.random.default_rng(4).normal(0, 0.01, 160)})
+
+
+def test_fit_report_fits_a_subtype_with_its_own_model_and_reports_by_subtype():
+    vals = _subtyped_values()
+    rep = fit_report(vals, SUBTYPED, SUBTYPE_MODELS, by="subtype")["y"]
+    assert rep.by_interval["model"].tolist() == ["poly 0", "poly 2", "poly 0", "poly 3"]
+    assert rep.by_interval["subtype"].tolist() == ["hot", "pulse", "cold", None]
+    pulse = rs.fit.fit_poly(np.arange(40.0, 80.0), vals["y"].to_numpy()[40:80], 2)
+    assert rep.by_interval.loc[1, "rmse"] == pytest.approx(np.sqrt(np.mean(pulse.residuals ** 2)), rel=1e-12)
+    assert list(rep.by_state.index) == ["all", "steady", "cold", "hot", "transient", "pulse", "indeterminate"]
+    assert rep.by_state["n"].tolist() == [160, 80, 40, 40, 80, 40, 0]
+    assert rep.by_state.loc["pulse", "rmse"] == pytest.approx(rep.by_interval.loc[1, "rmse"], rel=1e-12)
+    assert "(models: steady poly 0, transient poly 3, indeterminate poly 3; pulse poly 2)" in rep.title
+    text = rep.to_string()
+    assert "\n  subtype " in text and "\n    cold " in text and "\n  steady " in text
+    assert " hot " in text.split("intervals")[1]  # the interval table has a subtype column
+
+
+def test_fit_report_records_each_subtypes_model_and_parameters():
+    rep = fit_report(_subtyped_values(), SUBTYPED, SUBTYPE_MODELS)
+    p = rep.provenance
+    assert p["models"]["y"]["subtypes"]["pulse"] == {"model": "poly", "order": 2, "uncertainty": "ar1"}
+    assert p["models"]["y"]["transient"]["order"] == 3
+    assert p["parameter_order"]["y"] == {"steady": ["level"], "pulse": ["level", "slope", "curvature"],
+                                         "transient": ["level", "slope", "curvature", "d3"]}
+    assert list(rep["y"].by_state.index) == ["all", "steady", "transient", "indeterminate"]
+    assert "subtype" not in rep.to_string().split("intervals")[0]
+    plain = fit_report(_subtyped_values(), [rs.Segment(0, 160, ST)], {"y": 0})
+    assert "subtypes" not in plain.provenance["models"]["y"]
+    assert "subtype" not in plain.to_string()
+
+
 def test_order_zero_on_one_plateau_has_no_correlation():
     vals = pd.DataFrame({"y": 5.0 + np.random.default_rng(2).normal(0, 0.1, 400)})
     rep = fit_report(vals, rs.segments(["steady"] * 400), {"y": 0}, dt=1.0)
