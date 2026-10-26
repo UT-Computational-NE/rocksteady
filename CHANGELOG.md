@@ -167,21 +167,25 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - A Ctrl-C or SIGTERM during `tools/mutate.py`'s restore of a file waits
   until the file is back, whatever thread takes the signal (#172). The
   restore blocked both with a signal mask, which holds a signal in the
-  calling thread only; a signal sent to the process could go to another
-  thread that did not block it, whose handler had the main thread raise at
-  once, in the middle of the write. The tool's own process has one thread,
-  but `test_a_signal_during_the_restore_waits_for_it_to_finish` ran the
+  calling thread only. A signal sent to the process could go to another
+  thread that did not block it, and the main thread then ran the handler
+  at its next signal check (on CPython 3.10, its next GIL re-take or
+  explicit check), mask or not: in the middle of the write, leaving the
+  file empty, or after the restore, so that it raised nothing there. The
+  tool's own process has one thread, but
+  `test_a_signal_during_the_restore_waits_for_it_to_finish` ran the
   restore in pytest's, beside numpy's OpenBLAS threads (3 on CI's runner).
   It failed there now and then, and on 3 of 3 runs with python-dateutil
-  2.8.1 in `min-deps`; why that version made it fail every time was not
-  traced. The restore now holds the signals with Python handlers, which run
-  in the main thread whichever thread takes the signal, and once the file
-  is back it sends the held signals again in turn, the first whose handler
-  raises ending the restore. Like `signal.signal`, it now runs in the main
-  thread only. The test runs a thread of its own that does not block the
-  signal and waits until a thread has taken it (by `signal.set_wakeup_fd`),
-  so the old restore fails it every time; it covers SIGTERM as well as
-  Ctrl-C.
+  2.8.1 in `min-deps`; why that version made it fail every time, and why
+  no interrupt surfaced later in those runs, was not traced. The restore
+  now holds the signals with Python handlers, which run in the main
+  thread, and once the file is back sends the held signals again in the
+  order they came, the first whose handler raises ending the restore. A
+  signal that comes while it swaps the handlers in still lets it write the
+  file. It must be called from the main thread. The test now runs a
+  thread of its own that does not block the signal and waits until some
+  thread has taken it, so the old restore fails it every time; it covers
+  SIGTERM too.
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
