@@ -234,16 +234,22 @@ def _write_in_place(path, data):
 
 
 def _restore(path, original, stat):
-    """Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done."""
-    mask = getattr(signal, "pthread_sigmask", None)  # POSIX
-    if mask:
-        mask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    """
+    Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done. They are held
+    by their Python handlers, not blocked: a signal mask holds a signal in one thread only, and a signal sent to
+    the process goes to any thread that does not block it, whose C handler then has the main thread raise at once.
+    """
+    held = []
+    handlers = {sig: signal.signal(sig, lambda signum, frame: held.append(signum))
+                for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         _write_in_place(path, original)
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     finally:
-        if mask:
-            mask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+        for sig in held:
+            signal.raise_signal(sig)  # to this thread, which runs its handler before raise_signal returns
 
 
 def _verdict(code, output, limit):
