@@ -238,6 +238,7 @@ def _restore(path, original, stat):
     Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done. They are held
     by their Python handlers, not blocked: a signal mask holds a signal in one thread only, and a signal sent to
     the process goes to any thread that does not block it, whose C handler then has the main thread raise at once.
+    Like ``signal.signal``, it runs in the main thread only.
     """
     held = []
     handlers = {sig: signal.signal(sig, lambda signum, frame: held.append(signum))

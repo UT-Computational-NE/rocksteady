@@ -365,15 +365,15 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["Ctrl-C", "SIGTERM"])
 def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatch, sig):
     """
-    A second Ctrl-C between the truncating open and the write would leave the file empty. The signal goes to the
-    process, as the terminal's does, while another thread is running, so either thread may take it.
+    A second Ctrl-C (or SIGTERM) between the truncating open and the write would leave the file empty. The signal
+    goes to the process, as the terminal's does, while another thread is running, so either thread may take it.
     """
     tool = _load_tool()
     path = tmp_path / "calc.py"
     path.write_text("mutated\n")
     real_open = open
-    wakeup, woken = os.pipe()  # Python writes the signal's number to ``woken`` once a thread has taken it
-    os.set_blocking(woken, False)
+    read_end, write_end = os.pipe()  # Python writes the signal's number to write_end once a thread has taken it
+    os.set_blocking(write_end, False)
     stop = threading.Event()
     other = threading.Thread(target=stop.wait)  # started before the restore, so it does not block the signal
     other.start()
@@ -382,23 +382,24 @@ def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatc
         handle = real_open(file, mode, *args, **kwargs)
         if "w" in mode:
             os.kill(os.getpid(), sig)  # lands between the truncation and the write
-            taken = select.select([wakeup], [], [], 10)[0] and os.read(wakeup, 1)
-            assert taken == bytes([sig]), "no thread took the signal within 10 s"
+            taken = select.select([read_end], [], [], 10)[0] and os.read(read_end, 1)
+            assert taken == bytes([sig]), f"no thread took signal {sig} within 10 s: {taken!r}"
         return handle
 
     monkeypatch.setattr(tool, "open", interrupted_open, raising=False)
     handler = signal.signal(signal.SIGTERM, tool._ended)  # as tools/mutate.py's main sets it
-    previous = signal.set_wakeup_fd(woken)
+    previous = signal.set_wakeup_fd(write_end)
     try:
-        with pytest.raises(tool._Ended if sig == signal.SIGTERM else KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt) as raised:
             tool._restore(str(path), CALC.encode(), os.stat(path))
     finally:
         signal.set_wakeup_fd(previous)
         signal.signal(signal.SIGTERM, handler)
         stop.set()
         other.join()
-        os.close(wakeup)
-        os.close(woken)
+        os.close(read_end)
+        os.close(write_end)
+    assert raised.type is (tool._Ended if sig == signal.SIGTERM else KeyboardInterrupt)
     assert path.read_text() == CALC
 
 
