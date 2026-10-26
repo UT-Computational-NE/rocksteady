@@ -434,25 +434,29 @@ def test_signals_held_during_the_restore_are_sent_again_in_the_order_they_came(t
     assert path.read_text() == CALC
 
 
-def test_a_signal_before_the_restore_holds_them_all_still_restores_the_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("after_first", [True, False], ids=["just after Ctrl-C's swap", "at SIGTERM's swap"])
+def test_a_signal_before_the_restore_holds_them_all_still_restores_the_file(tmp_path, monkeypatch, after_first):
     """
-    A SIGTERM after Ctrl-C's handler is swapped, before SIGTERM's: it raises at the next handler swap (Python runs
-    pending handlers first), and the file and Ctrl-C's own handler are still put back.
+    A SIGTERM handled while the restore swaps its handlers in: just after Ctrl-C's swap returns, or at the start
+    of SIGTERM's. The file and Ctrl-C's own handler are still put back.
     """
     tool = _load_tool()
     path = tmp_path / "calc.py"
     path.write_text("mutated\n")
     swaps = []
 
-    class Signal:  # the signal module, with SIGTERM arriving between the first two handler swaps
+    class Signal:  # the signal module, with a SIGTERM handled during the handler swaps
         def __getattr__(self, name):
             return getattr(signal, name)
 
         def signal(self, sig, handler):
             swaps.append(sig)
-            if len(swaps) == 2:
+            if not after_first and len(swaps) == 2:
                 signal.raise_signal(signal.SIGTERM)
-            return signal.signal(sig, handler)
+            before = signal.signal(sig, handler)
+            if after_first and len(swaps) == 1:
+                signal.raise_signal(signal.SIGTERM)
+            return before
 
     monkeypatch.setattr(tool, "signal", Signal())
     ctrl_c = signal.getsignal(signal.SIGINT)

@@ -245,8 +245,9 @@ def _restore(path, original, stat):
     previous = {}
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
-            previous[sig] = signal.signal(sig, lambda signum, frame: held.append(signum))
-    finally:  # a signal before its handler is swapped raises at the next swap, so the write is in a finally
+            previous[sig] = signal.getsignal(sig)  # stored before the swap, which a signal can follow at once
+            signal.signal(sig, lambda signum, frame: held.append(signum))
+    finally:  # a signal that comes before its handler is swapped raises here, so the write is in a finally
         try:
             _write_in_place(path, original)
             os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
