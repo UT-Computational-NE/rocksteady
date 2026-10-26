@@ -391,26 +391,28 @@ def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatc
     def interrupted_open(file, mode="r", *args, **kwargs):
         handle = real_open(file, mode, *args, **kwargs)
         if "w" in mode:
-            _dump("before kill")
             os.kill(os.getpid(), signal.SIGINT)  # lands between the truncation and the write
-            _dump("after kill")
+            kill_t.append(time.monotonic())
         return handle
 
     monkeypatch.setattr(tool, "open", interrupted_open, raising=False)
     raised = False
+    kill_t = []
     try:
         tool._restore(str(path), CALC.encode(), os.stat(path))
     except KeyboardInterrupt:
         raised = True
-    _dump(f"after restore raised={raised} content_ok={path.read_text() == CALC}")
+    end_t = time.monotonic()
+    late = "n/a"
     if not raised:
+        late = "none in 2 s"
         try:
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
+            while time.monotonic() < end_t + 2:
                 pass
-            _dump("no late KeyboardInterrupt in 2 s")
         except KeyboardInterrupt:
-            _dump("late KeyboardInterrupt")
+            late = f"{(time.monotonic() - end_t) * 1e6:.0f} us after the restore"
+    since = f"{(end_t - kill_t[0]) * 1e6:.0f} us" if kill_t else "no return from kill"
+    _dump(f"after restore kill->end={since} raised={raised} content_ok={path.read_text() == CALC} late={late}")
     assert raised
     assert path.read_text() == CALC
 
