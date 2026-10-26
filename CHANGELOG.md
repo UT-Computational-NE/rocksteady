@@ -266,10 +266,30 @@ Upgrading from 0.5.1. Behaviour changes to check:
   through `count_by_period` and a capped `optimal_segments` (#159). On
   pandas 3, a zone name pandas does not know (`"07:00 CST"`) is pinned to
   get pandas' own error, with no warning before it.
-- CI's `min-deps` job prints the python-dateutil it gets. It does not
-  pin 2.8.1, the oldest that `pyproject.toml` allows: on CI's runner, with
-  2.8.1, `test_a_signal_during_the_restore_waits_for_it_to_finish` in
-  `tests/test_mutate.py` fails every time (#159, #172).
+- CI's `min-deps` job pins python-dateutil 2.8.1, the oldest that
+  `pyproject.toml` allows, and prints it (#159, #172).
+- A Ctrl-C or SIGTERM during `tools/mutate.py`'s restore of a file waits
+  until the file is back, whatever thread takes the signal (#172). The
+  restore blocked both with a signal mask, which holds a signal in the
+  calling thread only. A signal sent to the process could go to another
+  thread that did not block it, and the main thread then ran the handler
+  at its next signal check (on CPython 3.10, its next GIL re-take or
+  explicit check), mask or not: in the middle of the write, leaving the
+  file empty, or after the restore, so that it raised nothing there. The
+  tool's own process has one thread, but
+  `test_a_signal_during_the_restore_waits_for_it_to_finish` ran the
+  restore in pytest's, beside numpy's OpenBLAS threads (3 on CI's runner).
+  It failed there now and then, and on 3 of 3 runs with python-dateutil
+  2.8.1 in `min-deps`; why that version made it fail every time, and why
+  no interrupt surfaced later in those runs, was not traced. The restore
+  now holds the signals with Python handlers, which run in the main
+  thread, and once the file is back sends the held signals again in the
+  order they came, the first whose handler raises ending the restore. A
+  signal that comes while it swaps the handlers in still lets it write the
+  file. It must be called from the main thread. The test now runs a
+  thread of its own that does not block the signal and waits until some
+  thread has taken it, so the old restore fails it every time; it covers
+  SIGTERM too.
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
