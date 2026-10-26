@@ -30,10 +30,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   nanoseconds, an `np.timedelta64` without a unit, or a 0-d array of one,
   as that many seconds: `per=np.timedelta64(3600, "ns")` gave hourly
   periods. Every other time (`np.timedelta64(1, "h")`, `pd.Timedelta`,
-  `pd.Timestamp`, `pd.Period`, a `pd.DateOffset`, a `datetime` object)
-  raised `float()`'s `TypeError`. So did a 0-d array of a NaT (numpy's or
-  `pd.NaT`) or of `pd.NA`, which now gets the `ValueError` of the value it
-  holds.
+  `pd.Timestamp`, `pd.Period`, a `pd.DateOffset`, or a `datetime`, `date`,
+  `time` or `timedelta`) raised `float()`'s `TypeError`. So did a 0-d
+  array of a NaT (numpy's or `pd.NaT`) or of `pd.NA`, which now gets the
+  `ValueError` of the value it holds.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -120,8 +120,7 @@ Upgrading from 0.5.1. Behaviour changes to check:
   the rest failed with `float()`'s `TypeError`. A 0-d array of a NaT
   (numpy's or `pd.NaT`) or of `pd.NA` is read as the value it holds, so it
   gets that value's `ValueError`; it failed with `float()`'s `TypeError`.
-  This
-  applies to `count_by_period`, `optimal_segments` and
+  This applies to `count_by_period`, `optimal_segments` and
   `OptimalSegmentation.counts` (#163).
 
 ### Documentation

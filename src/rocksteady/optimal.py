@@ -224,16 +224,17 @@ def _seconds(x, name: str) -> float:
     ``x``, the ``name`` argument of numeric times, as a float of seconds,
     with ``pd.NaT``, ``pd.NA`` and a numpy NaT (``np.datetime64`` or
     ``np.timedelta64``, any unit) as NaN (``float()`` takes none of them).
-    A 0-d array is read as the scalar it holds (through any 0-d arrays
-    nested in it). A time that is not NaT
-    (numpy, pandas, including a ``Period`` or a ``DateOffset``, or standard
-    library, any unit or none) is refused: numeric times are seconds, and a
-    time is never read as a number of them.
+    A 0-d array, a masked one included, is read as the value it holds,
+    through any 0-d arrays nested in it; a masked value is NaN, as
+    ``float()`` reads it. A time that is not NaT (numpy, pandas, including
+    a ``Period`` or a ``DateOffset``, or standard library, any unit or
+    none) is refused: numeric times are seconds, and a time is never read
+    as a number of them.
     """
     import pandas as pd
 
     v = x
-    while isinstance(v, np.ndarray) and v.ndim == 0:
+    while isinstance(v, np.ndarray) and v.ndim == 0 and v is not np.ma.masked:  # np.ma.masked[()] is np.ma.masked
         v = v[()]
     if v is pd.NaT or v is pd.NA or (isinstance(v, (np.datetime64, np.timedelta64)) and np.isnat(v)):
         return math.nan
