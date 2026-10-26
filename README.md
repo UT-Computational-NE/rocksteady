@@ -25,10 +25,10 @@ pip install "rocksteady @ git+https://github.com/UT-Computational-NE/rocksteady.
 ```
 
 Python 3.10 or later, with numpy, pandas and python-dateutil; all three
-are installed with the package. The streaming detector (`Detector.update` and its components)
-needs numpy alone and does not import pandas. The batch, statistics and
-report layers (`batch`, `metrics`, `report`) return DataFrames and use
-pandas.
+are installed with the package. The streaming detector
+(`Detector.update` and its components) needs numpy alone and does not
+import pandas. The batch, statistics and report layers (`batch`,
+`metrics`, `report`) return DataFrames and use pandas.
 
 ## Quickstart
 

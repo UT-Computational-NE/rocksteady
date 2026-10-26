@@ -44,17 +44,20 @@ Upgrading from 0.5.1. Behaviour changes to check:
   Chicago) does. The conversion is at the origin's own instant, so its date
   decides the hour: `"2026-07-01 07:00+00:00"` is 02:00 in Chicago
   (daylight saving time) and starts them on 02:00's grid, even beside a
-  March record (#159). An origin in the index's own zone with a whole date
-  (see the next item), or a naive one, gives the same periods as in 0.5.1;
-  beside a naive index, an aware origin still keeps its own clock.
+  March record (#159). An origin in the index's own zone (that zone, not
+  a fixed offset such as `-06:00`, which is Chicago's only in winter) with
+  a whole date (see the next item), or a naive one, gives the same periods
+  as in 0.5.1; beside a naive index, an aware origin still keeps its own
+  clock.
 - **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` refuse an aware
   `period_origin` string without a whole date (year, month and day), such
   as `"07:00+00:00"`, `"7am UTC"` or `"2026-03 07:00+00:00"`, with a
   `ValueError` that names it (#159). 0.5.1 read it on its own clock, on
-  the date pandas gave it: today, year 1 or the 1st of the month (before
-  pandas 3.0, a string pandas dates in year 1 raised
-  `OutOfBoundsDatetime`). Converted to the index's zone, as an aware
+  the date pandas gave it: today, year 1 or the 1st of the month. Before
+  pandas 3.0, 0.5.1 raised `OutOfBoundsDatetime` on a string dated in
+  year 1: pandas 1.5 cannot parse it, and on pandas 2.x 0.5.1 could not
+  cast it to nanoseconds. Converted to the index's zone, as an aware
   origin now is, today's date would make the periods depend on the season
   the code runs in. A naive string without a date (`"01:00"`) is still
   accepted.
@@ -92,14 +95,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   (23:00, 03:00, ...), not 01:00's. It is converted at its own instant, so
   07:00 UTC on a date in daylight saving time (02:00 in Chicago) starts
   them on 02:00's grid, whatever the record's season (#159). An origin in
-  the index's own zone with a whole date, or a naive one, gives the same
-  periods as before; beside a naive index, an aware origin still keeps its
-  own clock (#144).
+  the index's own zone (not a fixed offset that matches it in one season)
+  with a whole date, or a naive one, gives the same periods as before;
+  beside a naive index, an aware origin still keeps its own clock (#144).
 - An aware `period_origin` string without a whole date (year, month and
   day) is refused with a `ValueError` that names it, beside an aware or a
   naive index: pandas dates `"07:00+00:00"` today, `"7am UTC"` in year 1
   (pandas 1.5 cannot hold it) and `"2026-03 07:00+00:00"` on the 1st
-  (#159).
+  (#159). A zone name dateutil does not know is left to pandas, which
+  refuses it (pandas 3) or drops it with a warning and reads the time as
+  naive; the machine's own zone name (`"07:00 CST"` on a machine in
+  Chicago) counts as aware, and without a date is refused.
 - `python-dateutil` (2.8.1 or later) is a declared dependency; pandas
   already required it. `optimal.py` uses it to tell an aware string
   without a whole date (#159).
@@ -206,7 +212,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   30 s (#147).
 - `tools/check.sh` stops before pytest, naming them and the install
   command, when its interpreter lacks one of the package's
-  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  dependencies (those `pyproject.toml` lists: numpy, pandas and, since
+  #159, python-dateutil). It names an
   interpreter that exits non-zero, which ended the script without a message
   of its own, and a `PYTHON` that is not executable, which it called
   missing (#90).

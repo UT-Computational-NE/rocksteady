@@ -271,12 +271,15 @@ def _aware_without_a_whole_date(text: str) -> bool:
     the wall-clock time in another zone, depends on the season; it dates
     ``"7am UTC"`` in year 1 (pandas 1.5 cannot hold it), and ``"2026-03
     07:00+00:00"`` on the 1st. A string dateutil cannot read is left to
-    pandas.
+    pandas. dateutil reads the machine's own zone name (CST in Chicago) as
+    local time, so such a string counts as aware.
     """
     from dateutil import parser
 
     try:
-        with warnings.catch_warnings():  # a zone name it does not know, which pandas then refuses or warns about
+        # A zone name dateutil does not know warns; pandas then refuses it or warns itself. catch_warnings swaps the
+        # process-wide filters, so another thread's warnings could be filtered too during these two parses.
+        with warnings.catch_warnings():
             warnings.simplefilter("ignore", parser.UnknownTimezoneWarning)
             # Defaults that differ in year, month and day, in leap years and in months of 31 days, so that any
             # date the text gives is valid beside either.
@@ -1764,7 +1767,10 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         string needs a whole date (year, month and day), beside either
         index, or raises ``ValueError``: pandas dates ``"07:00+00:00"``
         today, so beside an aware index its periods would depend on the
-        season it runs in. With numeric times, a finite
+        season it runs in. A zone name dateutil does not know is left to
+        pandas, which refuses it (pandas 3) or reads the time as naive; the
+        machine's own zone name (CST in Chicago) counts as aware. With
+        numeric times, a finite
         number of seconds (NaN, infinite, ``pd.NaT``, ``pd.NA``, or a NaT
         ``np.datetime64`` or ``np.timedelta64`` of any unit raises
         ``ValueError``). Default: the Unix epoch, i.e. midnight for days.
