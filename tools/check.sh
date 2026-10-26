@@ -40,26 +40,30 @@ info="$("$py" -c 'import sys; print(sys.version.split()[0], sys.executable)')" |
 exe="${info#* }"
 echo "check.sh: $py is Python ${info%% *} at $exe"
 # The distributions of the package's dependencies that are not installed (pyproject.toml's `dependencies`, a list of
-# quoted requirements, which may have extras and comments; markers are not evaluated), a ;, the modules of the extra
-# that cannot be found, a ;, then the missing requirements as written there, quoted for the shell.
-missing="$("$py" -c 'import importlib.metadata as md, importlib.util as u, re, sys
+# TOML strings, which may have extras and comments; neither markers nor an installed one's extras are checked), a ;,
+# the modules of the extra that cannot be found, a ;, then the missing requirements as written there, quoted for the
+# shell. A list it cannot read stops the run.
+out="$("$py" -c 'import importlib.metadata as md, importlib.util as u, re, shlex, sys
 text = open("pyproject.toml").read()
 rest = text[re.search(r"^dependencies\s*=\s*\[", text, re.M).end():]
-items = re.match(r"(?:\s|,|#[^\n]*|\"[^\"]*\"|\x27[^\x27]*\x27)*(?=\])", rest).group(0)
-reqs = [d or s for d, s in re.findall(r"#[^\n]*|\"([^\"]*)\"|\x27([^\x27]*)\x27", items) if d or s]
+basic, literal = r"\"((?:[^\"\\]|\\.)*)\"", r"\x27([^\x27]*)\x27"  # TOML strings, with and without escapes
+listed = re.match(r"(?:\s|,|#[^\n]*|" + basic + "|" + literal + r")*(?=\])", rest).group(0)
+wanted = [re.sub(r"\\(.)", r"\1", b) or s for b, s in re.findall("#[^\n]*|" + basic + "|" + literal, listed) if b or s]
+def name(req):
+    return re.match(r"\s*([\w.-]+)", req).group(1)
 def installed(req):
     try:
-        md.distribution(re.match(r"\s*([\w.-]+)", req).group(1))
+        md.distribution(name(req))
     except md.PackageNotFoundError:
         return False
     return True
-reqs = [r for r in reqs if not installed(r)]
-print(" ".join(re.match(r"\s*([\w.-]+)", r).group(1) for r in reqs), end=";")
+absent = [r for r in wanted if not installed(r)]
+print(" ".join(name(r) for r in absent), end=";")
 print(" ".join(m for m in sys.argv[1:] if u.find_spec(m) is None), end=";")
-print(" ".join(repr(r) for r in reqs))
+print(" ".join(shlex.quote(r) for r in absent))
 ' "${needs[@]}")" || crashed $?
-missing_deps="${missing%%;*}" missing="${missing#*;}"
-missing_extra="${missing%%;*}" dep_reqs="${missing#*;}"  # requirements last: a marker may hold a ;
+missing_deps="${out%%;*}" out="${out#*;}"
+missing_extra="${out%%;*}" deps_install="${out#*;}"  # requirements last: a marker may hold a ;
 missing="${missing_deps}${missing_deps:+${missing_extra:+ }}${missing_extra}"
 if [ -n "$missing" ]; then
   what="${missing_deps:+$missing_deps, which the package needs}"
@@ -68,14 +72,14 @@ if [ -n "$missing" ]; then
   # `pip install -e ".[$extra]"`: run from a worktree, that would point the environment's editable install at the
   # worktree, for every session using the environment. A fresh environment needs that install once, from the main
   # checkout.
-  reqs="$("$py" -c 'import re, sys
+  extra_install="$("$py" -c 'import re, shlex, sys
 text = open("pyproject.toml").read()
 for dist in sys.argv[1:]:
-    m = re.search(r"\"(" + re.escape(dist) + r"(?:[<>=!~][^\"]*)?)\"", text)
-    print(repr(m.group(1) if m else dist), end=" ")' ${missing_extra//_/-})" || crashed $?
-  reqs="${dep_reqs}${dep_reqs:+${reqs:+ }}${reqs% }"
+    m = re.search(r"\"(" + re.escape(dist) + r"\s*(?:[<>=!~][^\"]*)?)\"", text)
+    print(shlex.quote(m.group(1) if m else dist), end=" ")' ${missing_extra//_/-})" || crashed $?
+  install="${deps_install}${deps_install:+${extra_install:+ }}${extra_install% }"
   echo "check.sh: $py ($exe) lacks $what. Install them into it" \
-       "($exe -m pip install $reqs), or set PYTHON to an interpreter that has them. A fresh environment is set" \
+       "($exe -m pip install $install), or set PYTHON to an interpreter that has them. A fresh environment is set" \
        "up with pip install -e \".[dev]\" from the main checkout, not a worktree." >&2
   exit 1
 fi
