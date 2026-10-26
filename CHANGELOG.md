@@ -162,8 +162,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   through `count_by_period` and a capped `optimal_segments` (#159). On
   pandas 3, a zone name pandas does not know (`"07:00 CST"`) is pinned to
   get pandas' own error, with no warning before it.
-- CI's `min-deps` job installs python-dateutil 2.8.1, the oldest that
-  `pyproject.toml` allows (#159).
+- CI's `min-deps` job prints the python-dateutil it gets. It does not
+  pin 2.8.1, the oldest that `pyproject.toml` allows: on CI's runner, with
+  2.8.1, `test_a_signal_during_the_restore_waits_for_it_to_finish` in
+  `tests/test_mutate.py` fails every time (#159, #172).
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
