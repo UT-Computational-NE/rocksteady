@@ -215,17 +215,44 @@ def _is_missing(x) -> bool:
     return x is pd.NA or (isinstance(x, np.timedelta64) and bool(np.isnat(x)))
 
 
-def _seconds(x) -> float:
+# Times other than pandas' own, which _seconds adds when it imports pandas. pandas' Timestamp and Timedelta are
+# datetime and timedelta subclasses.
+_TIME_TYPES = (np.datetime64, np.timedelta64, datetime.date, datetime.time, datetime.timedelta)
+
+
+def _seconds(x, name: str) -> float:
     """
-    ``x`` as a float of seconds, with ``pd.NaT``, ``pd.NA`` and a numpy NaT
-    (``np.datetime64`` or ``np.timedelta64``, any unit) as NaN (``float()``
-    takes none of them).
+    ``x``, the ``name`` argument of numeric times, as a float of seconds,
+    with ``pd.NaT``, ``pd.NA`` and a numpy NaT (``np.datetime64`` or
+    ``np.timedelta64``, any unit) as NaN (``float()`` takes none of them).
+    A 0-d numpy array, a masked one included, is read as the value it
+    holds, through any 0-d arrays nested in it; a masked value is NaN, as
+    ``float()`` reads it. Another 0-d array type (an astropy ``Quantity``,
+    say) is left to ``float()`` unless it holds a numpy time, which is read
+    as that time. A time that is not NaT (numpy, pandas, including a
+    ``Period`` or a ``DateOffset``, or standard library, any unit or none)
+    is refused: numeric times are seconds, and a time is never read as a
+    number of them.
     """
     import pandas as pd
 
-    if x is pd.NaT or x is pd.NA or (isinstance(x, (np.datetime64, np.timedelta64)) and np.isnat(x)):
+    v = x
+    while isinstance(v, np.ndarray) and v.ndim == 0:
+        if type(v) not in (np.ndarray, np.ma.MaskedArray):
+            # Indexing another array type may give back another 0-d array of that type (np.ma.masked[()] is
+            # np.ma.masked), so it is read as a plain array only when it holds a time; otherwise float() reads it.
+            if v.dtype.kind not in "mM":
+                break
+            v = np.asarray(v)
+        held = v[()]
+        if held is v:  # a 0-d object array that holds itself: float() refuses it
+            break
+        v = held
+    if v is pd.NaT or v is pd.NA or (isinstance(v, (np.datetime64, np.timedelta64)) and np.isnat(v)):
         return math.nan
-    return float(x)
+    if isinstance(v, _TIME_TYPES + (pd.Period, pd.offsets.BaseOffset)):
+        raise ValueError(f"with numeric times, {name} must be a number of seconds, not a time, got {x!r}")
+    return float(v)
 
 
 def _origin_seconds(period_origin) -> float:
@@ -237,7 +264,7 @@ def _origin_seconds(period_origin) -> float:
     """
     if period_origin is None:
         return 0.0
-    origin = _seconds(period_origin)
+    origin = _seconds(period_origin, "period_origin")
     if not math.isfinite(origin):
         raise ValueError(f"period_origin must be a finite number of seconds, got {period_origin!r}")
     return origin
@@ -337,7 +364,7 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         return np.maximum.accumulate(ids) if len(ids) else ids
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
-    step = _seconds(per)
+    step = _seconds(per, "per")
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
@@ -372,12 +399,13 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``, as does an aware string without a
     whole date for ``period_origin``); with numeric times, both are
-    seconds, ``period_origin`` must be finite, and a ``per`` and
-    ``period_origin`` that give a sample a period number,
-    ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
-    ``ValueError``: from 2**53 on, a float no longer holds every whole
-    number. With a ``per``, an infinite time raises ``ValueError``: it
-    falls in no period.
+    seconds, ``period_origin`` must be finite, a time as either (numpy,
+    pandas or standard library, any unit or none, also in a 0-d array)
+    raises ``ValueError``, and a ``per`` and ``period_origin`` that give a
+    sample a period number, ``(t - period_origin) / per``, of 2**53 or more
+    in magnitude raise ``ValueError``: from 2**53 on, a float no longer
+    holds every whole number. With a ``per``, an infinite time raises
+    ``ValueError``: it falls in no period.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -1725,7 +1753,13 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         The period the counts apply to. None: the whole record. With a
         DatetimeIndex, a string or Timedelta with a unit (a number, a
         string or numpy timedelta without a unit, or one pandas reads as
-        NaT, raises ``ValueError``); with numeric times, a number of seconds.
+        NaT, raises ``ValueError``); with numeric times, a number of seconds
+        (a time raises ``ValueError``, whatever its unit, and is never read
+        as a number of seconds: an ``np.datetime64`` or ``np.timedelta64``
+        of any unit or none, a ``pd.Timestamp``, ``pd.Timedelta``,
+        ``pd.Period`` or ``pd.DateOffset``, or a standard-library
+        ``datetime``, ``date``, ``time`` or ``timedelta``, each also in a
+        0-d array).
     max_counts : mapping, optional
         ``{state or subtype: maximum segments per period}``. A state's cap
         counts all of its segments, whatever their subtype, and both caps
@@ -1770,14 +1804,15 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         season it runs in. A zone name dateutil does not know is left to
         pandas, which refuses it (pandas 3) or reads the time as naive; the
         machine's own zone name (CST in Chicago) counts as aware. With
-        numeric times, a finite
-        number of seconds (NaN, infinite, ``pd.NaT``, ``pd.NA``, or a NaT
-        ``np.datetime64`` or ``np.timedelta64`` of any unit raises
-        ``ValueError``). Default: the Unix epoch, i.e. midnight for days.
-        With numeric times, a ``per`` and ``period_origin`` that give a
-        sample a period number, ``(t - period_origin) / per``, of 2**53 or
-        more in magnitude raise ``ValueError``: from 2**53 on, a float no
-        longer holds every whole number.
+        numeric times, a finite number of seconds (NaN, infinite,
+        ``pd.NaT``, ``pd.NA``, a NaT ``np.datetime64`` or
+        ``np.timedelta64`` of any unit, or a time as for ``per``, raises
+        ``ValueError``; a 0-d array is read as the value it holds).
+        Default: the Unix epoch, i.e. midnight for days. With numeric
+        times, a ``per`` and ``period_origin`` that give a sample a period
+        number, ``(t - period_origin) / per``, of 2**53 or more in
+        magnitude raise ``ValueError``: from 2**53 on, a float no longer
+        holds every whole number.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).

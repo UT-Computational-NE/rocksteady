@@ -36,6 +36,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   its own period. `count_by_period` with a `per` also refuses an infinite
   time, naming it (`optimal_segments` already refused one); 0.5.1 counted
   that sample in a period of its own, far from the times.
+- **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
+  and `OptimalSegmentation.counts` refuse a time as `per` or
+  `period_origin`, whatever its unit, with a `ValueError` that names it
+  (#163): numeric times are seconds, and a time is never read as a number
+  of them. 0.5.1 read an `np.timedelta64` or `np.datetime64` in
+  nanoseconds, an `np.timedelta64` without a unit, or a 0-d array of one,
+  as that many seconds: `per=np.timedelta64(3600, "ns")` gave hourly
+  periods. Every other time (`np.timedelta64(1, "h")`, `pd.Timedelta`,
+  `pd.Timestamp`, `pd.Period`, a `pd.DateOffset`, or a `datetime`, `date`,
+  `time` or `timedelta`) raised `float()`'s `TypeError`. So did a 0-d
+  array of a NaT (numpy's or `pd.NaT`) or of `pd.NA`, which now gets the
+  `ValueError` of the value it holds.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -154,6 +166,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   `count_by_period` and `optimal_segments`. `count_by_period` with a `per`
   also refuses an infinite time, naming it; it counted that sample in a
   period of its own, far from the times (#155).
+- With numeric times, a time as `per` or `period_origin` gets "with
+  numeric times, per (or period_origin) must be a number of seconds, not a
+  time", naming the value, whatever its unit: an `np.datetime64` or
+  `np.timedelta64` of any unit or none, a `pd.Timestamp`, `pd.Timedelta`,
+  `pd.Period` or `pd.DateOffset`, or a `datetime`, `date`, `time` or
+  `timedelta`, each also in a 0-d array. A numpy time in nanoseconds, or
+  an `np.timedelta64` without a unit, was read as that many seconds, and
+  the rest failed with `float()`'s `TypeError`. A 0-d array of a NaT
+  (numpy's or `pd.NaT`) or of `pd.NA` is read as the value it holds, so it
+  gets that value's `ValueError`; it failed with `float()`'s `TypeError`.
+  This applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#163).
 
 ### Documentation
 
@@ -168,6 +192,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   first nor last, beside items that decide the other way (or with a case at
   each end), so that neither the other check (`all(...)` for `any(...)`),
   the first item nor the last can stand in for it (#146, #156).
+- `docs/agents/coding-standards.md`: a loop over a caller's value ends on
+  every input; a test feeds it each form that gives back itself or its own
+  kind (a masked value, an array type whose items are its own type, a
+  container that holds itself) (#163).
 - `docs/agents/coding-standards.md`: a test that pins an offset, an origin,
   a phase or a zone uses one the code's fallback cannot reach by accident:
   not a whole number of periods from the default, and not already in the

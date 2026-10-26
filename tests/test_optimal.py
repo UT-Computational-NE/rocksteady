@@ -231,6 +231,27 @@ def test_a_period_string_pandas_cannot_read_is_refused_by_name():
         count_by_period([Segment(0, 24, ST)], idx, "bogus")
 
 
+def _in_0d(value):
+    """A 0-d object array holding ``value``, which may itself be an array."""
+    held = np.empty((), dtype=object)
+    held[()] = value
+    return held
+
+
+class _Wrapped(np.ndarray):
+    """An array type whose items are 0-d arrays of its own type, as an astropy ``Quantity``'s are."""
+
+    def __getitem__(self, key):
+        return np.asarray(super().__getitem__(key)).view(type(self))
+
+
+class _WithAUnit(_Wrapped):
+    """One that float() refuses, as it refuses a ``Quantity`` in seconds."""
+
+    def __float__(self):
+        raise TypeError("only dimensionless scalar quantities can be converted to Python scalars")
+
+
 _NUMBERS = [pytest.param(7200, id="int"), pytest.param(7200.0, id="float"), pytest.param(np.int64(7200), id="np.int64"),
             pytest.param(np.float64(7200.0), id="np.float64"), pytest.param(True, id="bool"),
             pytest.param(np.True_, id="np.bool_")]
@@ -283,7 +304,10 @@ def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
 
 
-@pytest.mark.parametrize("per", _NUMBERS)
+@pytest.mark.parametrize("per", _NUMBERS + [pytest.param(np.array(7200.0), id="0-d float"),
+                                             pytest.param(_in_0d(np.array(7200)), id="0-d in 0-d int"),
+                                             pytest.param(np.ma.array(7200.0), id="unmasked 0-d np.ma float"),
+                                             pytest.param(np.array(7200.0).view(_Wrapped), id="0-d _Wrapped float")])
 def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
     step = float(per) / 2
@@ -294,7 +318,9 @@ def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
 
 
-@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600)], ids=["int", "float", "np.int64"])
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600), np.array(3600.0), _in_0d(np.array(3600)),
+                                    np.array(3600.0).view(_Wrapped)],
+                         ids=["int", "float", "np.int64", "0-d float", "0-d in 0-d int", "0-d _Wrapped float"])
 def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
     t = np.arange(6) * 3600.0
@@ -303,34 +329,89 @@ def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     assert counts.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
 
 
-_NUMPY_TIMES_FLOAT_READS = [
+_TIMES = [
+    # Each kind of time, in ns, in a coarser unit and without one, as a scalar, in a 0-d array, a masked one included,
+    # and in a 0-d array nested in another.
     pytest.param(np.timedelta64(3600, "ns"), id="np.timedelta64 ns"),
+    pytest.param(np.timedelta64(1, "h"), id="np.timedelta64 h"),
     pytest.param(_without_a_unit(np.timedelta64, 3600), id="generic np.timedelta64"),
     pytest.param(np.datetime64(3600, "ns"), id="np.datetime64 ns"),
+    pytest.param(np.datetime64(3600, "s"), id="np.datetime64 s"),
+    pytest.param(np.array(np.timedelta64(3600, "ns")), id="0-d np.timedelta64 ns"),
+    pytest.param(np.array(np.timedelta64(1, "h")), id="0-d np.timedelta64 h"),
+    pytest.param(np.array(_without_a_unit(np.timedelta64, 3600)), id="0-d generic np.timedelta64"),
+    pytest.param(np.array(np.datetime64(3600, "ns")), id="0-d np.datetime64 ns"),
+    pytest.param(np.array(np.datetime64(3600, "s")), id="0-d np.datetime64 s"),
+    pytest.param(pd.Timedelta(1, "h"), id="pd.Timedelta"),
+    pytest.param(pd.Timestamp(3600, unit="s"), id="pd.Timestamp"),
+    pytest.param(datetime.timedelta(hours=1), id="datetime.timedelta"),
+    pytest.param(datetime.datetime(1970, 1, 1, 1), id="datetime.datetime"),
+    pytest.param(datetime.date(1970, 1, 2), id="datetime.date"),
+    pytest.param(datetime.time(1), id="datetime.time"),
+    pytest.param(pd.Period("1970-01-01", "D"), id="pd.Period"),
+    pytest.param(pd.offsets.Hour(1), id="pd.offsets.Hour"),
+    pytest.param(pd.DateOffset(hours=1), id="pd.DateOffset"),
+    pytest.param(np.array(pd.Timedelta(1, "h"), dtype=object), id="0-d object pd.Timedelta"),
+    pytest.param(np.array(pd.offsets.Hour(1), dtype=object), id="0-d object pd.offsets.Hour"),
+    pytest.param(np.array(pd.Period("1970-01-01", "D"), dtype=object), id="0-d object pd.Period"),
+    pytest.param(np.ma.array(np.timedelta64(3600, "ns")), id="unmasked 0-d np.ma np.timedelta64 ns"),
+    pytest.param(np.ma.array(np.datetime64(3600, "ns")), id="unmasked 0-d np.ma np.datetime64 ns"),
+    pytest.param(np.ma.array(pd.Timedelta(1, "h"), dtype=object), id="unmasked 0-d np.ma object pd.Timedelta"),
+    pytest.param(np.array(np.timedelta64(3600, "ns")).view(_Wrapped), id="0-d _Wrapped np.timedelta64 ns"),
+    pytest.param(np.array(np.timedelta64(1, "h")).view(_Wrapped), id="0-d _Wrapped np.timedelta64 h"),
+    pytest.param(_in_0d(np.array(np.timedelta64(3600, "ns"))), id="0-d in 0-d np.timedelta64 ns"),
 ]
 
 
-@pytest.mark.parametrize("value", _NUMPY_TIMES_FLOAT_READS)
-def test_a_numpy_time_that_is_not_nat_gives_numeric_times_the_periods_of_its_float(value):
-    # float() reads each as 3600, and none is a NaT, so each keeps the periods of 3600 seconds.
+@pytest.mark.parametrize("per", _TIMES)
+def test_a_time_as_the_period_of_numeric_times_is_refused_by_name(per):
+    # Numeric times are seconds, and a time is never read as a number of them, whatever its unit.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
-    by_origin = count_by_period(segs, t, 7200, period_origin=value)
-    assert by_origin["steady"].tolist() == [1, 2, 2, 1]
-    assert by_origin.index.tolist() == [-3600.0, 3600.0, 10800.0, 18000.0]
-    by_per = count_by_period(segs, t, value)
-    assert by_per["steady"].tolist() == [1, 1, 1, 1, 1, 1]
-    assert by_per.index.tolist() == [0.0, 3600.0, 7200.0, 10800.0, 14400.0, 18000.0]
-    fit = optimal_segments(t, np.zeros(6), {"steady": 0}, per=value, period_origin=value, method="exact")
-    assert fit.counts.index.tolist() == [0.0, 3600.0, 7200.0, 10800.0, 14400.0, 18000.0]
+    named = rf"with numeric times, per must be a number of seconds, not a time, got {re.escape(repr(per))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, per)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=per)
 
 
-_NUMPY_NATS = [np.datetime64("NaT", "ns"), np.timedelta64("NaT", "s"), _without_a_unit(np.timedelta64, "NaT")]
-_NUMPY_NAT_IDS = ["np.datetime64 NaT ns", "np.timedelta64 NaT s", "generic np.timedelta64 NaT"]
+@pytest.mark.parametrize("origin", _TIMES)
+def test_a_time_as_the_period_origin_of_numeric_times_is_refused_by_name(origin):
+    # As for per: numeric times are seconds, and a time is never read as a number of them, whatever its unit.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    named = rf"with numeric times, period_origin must be a number of seconds, not a time, got {re.escape(repr(origin))}$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period(segs, t, 7200, period_origin=origin)
+    with pytest.raises(ValueError, match=named):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
 
 
-@pytest.mark.parametrize("origin", [np.nan, float("nan"), np.inf, -np.inf, pd.NaT, pd.NA] + _NUMPY_NATS,
-                         ids=["np.nan", "float nan", "inf", "-inf", "pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
+# numpy warns as float() reads a masked value as NaN.
+_FLOAT_OF_MASKED = pytest.mark.filterwarnings("ignore:.*converting a masked element to nan:UserWarning")
+_NUMPY_NATS = [
+    pytest.param(np.datetime64("NaT", "ns"), id="np.datetime64 NaT ns"),
+    pytest.param(np.timedelta64("NaT", "s"), id="np.timedelta64 NaT s"),
+    pytest.param(_without_a_unit(np.timedelta64, "NaT"), id="generic np.timedelta64 NaT"),
+]
+# A 0-d array of a missing value is read as the value it holds; a masked value keeps float()'s reading, NaN.
+_MISSING_IN_0D = [
+    pytest.param(np.array(np.datetime64("NaT", "ns")), id="0-d np.datetime64 NaT ns"),
+    pytest.param(np.array(np.timedelta64("NaT", "s")), id="0-d np.timedelta64 NaT s"),
+    pytest.param(np.array(_without_a_unit(np.timedelta64, "NaT")), id="0-d generic np.timedelta64 NaT"),
+    pytest.param(np.array(pd.NaT, dtype=object), id="0-d pd.NaT"),
+    pytest.param(np.array(pd.NA, dtype=object), id="0-d pd.NA"),
+    pytest.param(np.ma.array(np.timedelta64("NaT", "ns")), id="unmasked 0-d np.ma np.timedelta64 NaT"),
+    pytest.param(np.array(np.datetime64("NaT", "ns")).view(_Wrapped), id="0-d _Wrapped np.datetime64 NaT"),
+    pytest.param(np.ma.masked, id="np.ma.masked", marks=_FLOAT_OF_MASKED),
+    pytest.param(np.ma.array(7200.0, mask=True), id="masked 0-d array", marks=_FLOAT_OF_MASKED),
+]
+
+
+@pytest.mark.parametrize("origin", [pytest.param(np.nan, id="np.nan"), pytest.param(float("nan"), id="float nan"),
+                                    pytest.param(np.inf, id="inf"), pytest.param(-np.inf, id="-inf"),
+                                    pytest.param(pd.NaT, id="pd.NaT"), pytest.param(pd.NA, id="pd.NA")]
+                         + _NUMPY_NATS + _MISSING_IN_0D)
 def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused_by_name(origin):
     # An origin that is not a finite number of seconds would put every sample in one period; the error names it.
     t = np.arange(6) * 3600.0
@@ -432,7 +513,8 @@ def test_the_first_infinite_time_is_the_one_refused_by_name(t, first):
         count_by_period([Segment(i, i + 1, ST) for i in range(6)], np.array(t), 7200)
 
 
-@pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
+@pytest.mark.parametrize("per", [pytest.param(pd.NaT, id="pd.NaT"), pytest.param(pd.NA, id="pd.NA")]
+                         + _NUMPY_NATS + _MISSING_IN_0D)
 def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
@@ -441,6 +523,34 @@ def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
         count_by_period(segs, t, per)
     with pytest.raises(ValueError, match=named):
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=per)
+
+
+def _holding_itself():
+    """A 0-d object array whose one item is the array itself."""
+    held = np.empty((), dtype=object)
+    held[()] = held
+    return held
+
+
+@pytest.mark.parametrize("value, error", [
+    pytest.param(np.array([7200.0, 3600.0]), TypeError, id="1-d of two"),
+    pytest.param(np.array([[7200.0, 3600.0]]), TypeError, id="2-d of two"),
+    pytest.param(np.array(7200.0).view(_WithAUnit), TypeError, id="0-d _WithAUnit"),
+    pytest.param(_holding_itself(), RecursionError, id="0-d holding itself"),
+])
+def test_an_array_float_refuses_is_not_read_as_the_period_or_origin_of_numeric_times(value, error):
+    # float() refuses an array of two numbers, one of a type that refuses it, and one that holds itself (it recurses);
+    # none is read as its values.
+    t = np.arange(6) * 3600.0
+    segs = [Segment(i, i + 1, ST) for i in range(6)]
+    with pytest.raises(error):
+        count_by_period(segs, t, value)
+    with pytest.raises(error):
+        count_by_period(segs, t, 7200, period_origin=value)
+    with pytest.raises(error):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=value)
+    with pytest.raises(error):
+        optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=value)
 
 
 _CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
