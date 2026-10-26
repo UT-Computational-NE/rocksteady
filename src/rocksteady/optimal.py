@@ -665,6 +665,10 @@ class _Costs:
     def is_fast(self, st: str) -> bool:
         return self.fast[st] is not None
 
+    def n_valid(self, ps, q: int):
+        """Valid samples of ``[p, q)`` for a start ``p`` or an array of starts ``ps``."""
+        return (self.N[q] - self.N[ps]).astype(np.int64)
+
     def _direct(self, order: int, p: int, q: int) -> float:
         """Constant or linear least-squares SSE of ``[p, q)``, computed on the segment itself."""
         self.n_direct += 1
@@ -1564,14 +1568,18 @@ class _Problem:
                             self.period_origin)
 
     def _model_costs(self, key: str, okd: np.ndarray, starts: np.ndarray, q: int, dur: np.ndarray, surrogate: bool,
-                     ub: float, prune: bool) -> np.ndarray:
+                     ub: float, prune: bool, min_valid: Mapping[str, int]) -> np.ndarray:
         """Costs of ``[starts[j], q)`` under model ``key`` (a state's or a subtype's) where ``okd``; infinite elsewhere."""
         k = len(okd)
         if self.costs.is_fast(key):
             return np.where(okd, self.costs.vector(key, starts[:k], q), math.inf)
         if surrogate:  # cheap constant-fit costs, only to find a feasible solution
             # Only a model that is not fast has a surrogate, and only _Costs has such models.
-            return np.where(okd, _poly0(cast(_Costs, self.costs), starts[:k], q), math.inf)
+            costs = cast(_Costs, self.costs)
+            # Not on segments too short for the model; one without valid samples costs 0 under any model.
+            valid = costs.n_valid(starts[:k], q)
+            long_enough = (valid >= min_valid.get(key, 0)) | (valid == 0)
+            return np.where(okd & long_enough, _poly0(costs, starts[:k], q), math.inf)
         C = np.full(k, math.inf)
         max_d, min_pen = self.model_max_d[key], self.model_min_pen[key]
         for j in range(k - 1, -1, -1):  # growing segments: costs never decrease, so stop at the bound
@@ -1599,25 +1607,50 @@ class _Problem:
 
     def pruning_bound_or_raise(self, B: np.ndarray) -> float:
         """
-        A bound on the optimal objective for pruning, or the infeasibility
-        ``ValueError`` when no segmentation exists: the true cost of the
-        optimal segmentation under cheap constant-fit costs. Every segment a
-        model can fit has a finite constant fit, so that is a relaxation: when
-        it fails, so does the true problem, which gets stuck no later. The
-        error then needs the true costs only on the candidates up to there.
-        """
-        table, k = self._forward(B, surrogate=True, ub=math.inf, prune=False)
-        if table is None:
-            _, k = self._forward(B[: k + 1], surrogate=False, ub=math.inf, prune=False)
-            raise ValueError(self._infeasible(B, k))
-        bounds, opts = self._backtrack(B, *table)
-        return self.total(bounds, opts)[0] * (1 + 1e-9) + 1e-12
+        A bound on the optimal objective for pruning (infinite when none is
+        found), or the infeasibility ``ValueError`` when no segmentation
+        exists: the true cost of the optimal segmentation under cheap
+        constant-fit costs. Every segment a model can fit has a finite constant
+        fit, so that is a relaxation: when it fails, so does the true problem,
+        which gets stuck no later. The error then needs the true costs only on
+        the candidates up to there.
 
-    def _forward(self, B: np.ndarray, *, surrogate: bool, ub: float, prune: bool):
+        A slow model cannot fit a segment with too few valid samples, so the
+        constant fits can choose a segmentation whose true cost is infinite.
+        Then each such model is kept off segments with at least one valid
+        sample and no more than the most in one it could not fit, and the
+        constant fits choose again, until the true cost is finite (the bound)
+        or no segmentation remains (no bound: infinite, and no error, since
+        the true problem may still have a segmentation).
+        """
+        costs = cast(_Costs, self.costs)  # only _Costs has models that are not fast
+        min_valid: Dict[str, int] = {}  # of a slow model: the fewest valid samples it may fit
+        while True:
+            table, k = self._forward(B, surrogate=True, ub=math.inf, prune=False, min_valid=min_valid)
+            if table is None and not min_valid:
+                _, k = self._forward(B[: k + 1], surrogate=False, ub=math.inf, prune=False)
+                raise ValueError(self._infeasible(B, k))
+            if table is None:
+                return math.inf
+            bounds, opts = self._backtrack(B, *table)
+            unfit = False
+            for i, o in enumerate(opts):
+                p, q = bounds[i], bounds[i + 1]
+                if not math.isfinite(self.cost(o, p, q)):
+                    key = self.options[o].model_key
+                    min_valid[key] = max(min_valid.get(key, 0), int(costs.n_valid(p, q)) + 1)
+                    unfit = True
+            if not unfit:
+                return self.total(bounds, opts)[0] * (1 + 1e-9) + 1e-12
+
+    def _forward(self, B: np.ndarray, *, surrogate: bool, ub: float, prune: bool,
+                 min_valid: Optional[Mapping[str, int]] = None):
         """
         The program's table over breakpoints ``B``, ``(F, R, bp_j, bp_o, bp_l)``
         (None when no segmentation reaches ``B[-1]``), and the index of the
-        latest candidate a segmentation reaches.
+        latest candidate a segmentation reaches. With ``surrogate``, a slow
+        model is kept off segments with fewer valid samples than ``min_valid``
+        gives it.
         """
         m, O, L = len(B), self.O, self.L
         F = np.full((m, O, L), math.inf)
@@ -1649,7 +1682,7 @@ class _Problem:
                 okd_any = okds[0] if len(okds) == 1 else np.any(okds, axis=0)
                 if not okd_any.any():
                     continue
-                C_model = self._model_costs(key, okd_any, starts, q, dur, surrogate, ub, prune)
+                C_model = self._model_costs(key, okd_any, starts, q, dur, surrogate, ub, prune, min_valid or {})
                 for o, okd in zip(members, okds):
                     if not okd.any():
                         continue

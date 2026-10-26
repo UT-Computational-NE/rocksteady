@@ -340,8 +340,10 @@ caps that overflowed, so a batch run can flag the days to look at.
 The search stays exact: past the cap every further segment costs the same,
 so the program counts a soft cap only up to the cap and needs no more count
 layers than a hard one. A cheap overflow can make the cheap constant fits
-that bound the search choose segments a slower model cannot fit, and the
-search then runs without pruning, exactly but no faster.
+that bound the search choose segments too short for a slower model to fit;
+they then choose again, with that model kept off segments that short, so
+with the built-in models the search is still pruned whenever a
+segmentation the models can fit exists.
 
 ### A sketch of a reactor's scheme
 

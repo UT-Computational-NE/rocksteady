@@ -467,6 +467,14 @@ never decreases as it grows. The exponential models' default search bounds
 scale with the span; give explicit bounds, or `prune=False`, for a strict
 guarantee.
 
+The feasible solution is the optimum under cheap constant fits, costed with
+the real models; `info["upper_bound"]` is its total, raised slightly against
+rounding. When it holds a segment too short for its model to fit, the model
+is kept off segments with that many valid samples or fewer (but at least
+one), and the constant fits choose again. For models that fail only on too
+few samples, as the built-in ones do, the bound is then finite whenever a
+segmentation the models can fit exists.
+
 Optimal breakpoints for $K - 1$ segments are not, in general, a subset of
 those for $K$. Fitting $y = t$ with constants splits at $1/2$ for two
 segments and at $1/3, 2/3$ for three. That is why `"subset"` (choosing among

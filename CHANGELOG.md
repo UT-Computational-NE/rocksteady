@@ -190,6 +190,14 @@ Upgrading from 0.5.1. Behaviour changes to check:
   `classify_segments`' error does the same, and without subtypes it says
   the segments "do not satisfy the transitions" instead of naming a choice
   of subtypes and their conditions (#137).
+- `optimal_segments` prunes where it used to run unpruned: when the cheap
+  constant fits that bound the search chose a segment too short for a slow
+  model (`first_order`, `exp`) to fit, `info["upper_bound"]` was infinite.
+  The model is now kept off segments that short and the constant fits
+  choose again, so with the built-in models the bound is finite whenever a
+  segmentation the models can fit exists. Results do not change; `n_fits`
+  can fall. A cheap `overflow_penalty` made this likelier, and it happened
+  without soft caps too (#175).
 
 ### Fixed
 
