@@ -31,7 +31,15 @@ Model specs
 For one signal, a model spec is an ``int`` (polynomial order), a model
 name, or ``{"model": name, **options}``. It may be keyed by state, for
 example ``{"steady": 0, "transient": 3}``. A missing ``"indeterminate"``
-entry falls back to ``"transient"``.
+entry falls back to ``"transient"``. A spec keyed by state may also give
+subtypes their own models under ``"subtypes"``, for example ``{"steady":
+0, "transient": "exp", "subtypes": {"pulse": 1}}``: a segment whose
+``subtype`` is listed there is fitted with that model, and any other
+segment with its state's (``optimal.Subtype`` names a segment's subtype).
+The names there are not checked against the segments: a name that no
+segment carries, such as a subtype absent from this record or a
+misspelling, changes nothing, so a misspelt subtype's segments are fitted
+with their state's model.
 
 Parameter uncertainty
 ---------------------
@@ -71,7 +79,7 @@ everything needed to do so later.
 
 from dataclasses import dataclass, field
 from math import factorial
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union, cast
 
 import numpy as np
 
@@ -84,6 +92,7 @@ ModelSpec = Union[int, str, Mapping[str, Any]]
 UNCERTAINTY_METHODS = ("ar1", "ar1_time", "iid")
 
 _STATE_KEYS = {s.value for s in State}
+_SUBTYPES_KEY = "subtypes"  # in a spec keyed by state: {subtype: model spec}
 
 
 # ---------------------------------------------------------------------------
@@ -323,14 +332,16 @@ def evaluate(model: str, evaluation: Mapping[str, Any], t) -> np.ndarray:
     return fn(evaluation, np.atleast_1d(np.asarray(t, dtype=float)))
 
 
-def normalize_model(spec: ModelSpec, state: Union[State, str, None] = None) -> Dict[str, Any]:
+def normalize_model(spec: ModelSpec, state: Union[State, str, None] = None,
+                    subtype: Optional[str] = None) -> Dict[str, Any]:
     """
     A model spec as ``{"model": name, **options}`` with every option of the
-    provider filled in with its default, for the record of a result.
+    provider filled in with its default, for the record of a result
+    (``state`` and ``subtype`` as in ``resolve_model``).
     """
     import inspect
 
-    name, opts = resolve_model(spec, state)
+    name, opts = resolve_model(spec, state, subtype)
     params = list(inspect.signature(registry.fit_models.get(name)).parameters.values())[2:]
     full = {p.name: p.default for p in params
             if p.default is not inspect.Parameter.empty and p.kind is not inspect.Parameter.VAR_KEYWORD}
@@ -682,15 +693,48 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
 # ---------------------------------------------------------------------------
 
 
-def resolve_model(spec: ModelSpec, state: Union[State, str, None] = None) -> Tuple[str, Dict[str, Any]]:
+def _keyed_by_state(spec: Any) -> bool:
+    """Whether a model spec is keyed by state (a mapping without ``"model"``), rather than one model."""
+    return isinstance(spec, Mapping) and "model" not in spec
+
+
+def _subtype_specs(spec: ModelSpec) -> Mapping[str, ModelSpec]:
+    """
+    The ``"subtypes"`` entry of a spec keyed by state, checked: subtype
+    names (none a state's) mapped to specs of one model each, not keyed by
+    state. Empty for a spec of one model.
+    """
+    if not _keyed_by_state(spec):
+        return {}
+    own = cast(Mapping[str, Any], spec).get(_SUBTYPES_KEY, {})
+    if not isinstance(own, Mapping):
+        raise ValueError(f"a model spec's {_SUBTYPES_KEY!r} must be a mapping {{subtype: model spec}}, got {own!r}")
+    for name, sub in own.items():
+        _v.name(name, f"a subtype's name in a model spec's {_SUBTYPES_KEY!r}")
+        if name in _STATE_KEYS:
+            raise ValueError(f"model spec {_SUBTYPES_KEY!r} names {name!r}, which is a state; give a state's model "
+                             "beside 'subtypes'")
+        if _keyed_by_state(sub):
+            raise ValueError(f"the model spec of subtype {name!r} must be one model, not keyed by state, got {sub!r}")
+    return own
+
+
+def resolve_model(spec: ModelSpec, state: Union[State, str, None] = None,
+                  subtype: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """
     ``(model name, options)`` for a model spec, picking the entry for
-    ``state`` when the spec is keyed by state.
+    ``state`` when the spec is keyed by state, or the entry for ``subtype``
+    when the spec lists it under ``"subtypes"``.
     """
-    if isinstance(spec, Mapping) and "model" not in spec:
-        keys = set(spec)
+    if _keyed_by_state(spec):
+        spec = cast(Mapping[str, Any], spec)
+        keys = set(spec) - {_SUBTYPES_KEY}
         if not keys or not keys <= _STATE_KEYS:
-            raise ValueError(f"a state-keyed model spec may only have keys {sorted(_STATE_KEYS)}, got {sorted(keys)}")
+            raise ValueError(f"a state-keyed model spec may only have keys {sorted(_STATE_KEYS)} and "
+                             f"{_SUBTYPES_KEY!r}, with at least one state, got {sorted(spec)}")
+        own = _subtype_specs(spec)
+        if subtype is not None and subtype in own:
+            return resolve_model(own[subtype])
         st = State(state).value if state is not None else None
         if st is None:
             raise ValueError("this model spec is keyed by state; a state is needed")
@@ -733,22 +777,34 @@ def check_model_options(name: str, options: Mapping[str, Any]) -> None:
 def validate_models(models: Mapping[str, ModelSpec],
                     states: Sequence[Union[State, str]] = tuple(State)) -> None:
     """
-    Check a ``{signal: spec}`` mapping before any data: every state resolves
-    to a registered model, and its options are valid (``check_model_options``).
-    Errors name the signal, the state, the model and the option.
+    Check a ``{signal: spec}`` mapping before any data: every state, and
+    every subtype a spec lists under ``"subtypes"``, resolves to a
+    registered model, and its options are valid (``check_model_options``).
+    Errors name the signal, the state or subtype, the model and the option.
     """
     for name, spec in models.items():
+        try:
+            own = _subtype_specs(spec)
+        except ValueError as exc:
+            raise ValueError(f"model for {name!r}: {exc}") from None
         for st in states:
             try:
                 model, opts = resolve_model(spec, st)
                 check_model_options(model, opts)
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"model for {name!r} in state {State(st).value!r}: {exc}") from None
+        for sub in own:
+            try:
+                model, opts = resolve_model(spec, subtype=sub)
+                check_model_options(model, opts)
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"model for {name!r} of subtype {sub!r}: {exc}") from None
 
 
-def fit_model(spec: ModelSpec, t: np.ndarray, y: np.ndarray, state: Union[State, str, None] = None) -> FitResult:
+def fit_model(spec: ModelSpec, t: np.ndarray, y: np.ndarray, state: Union[State, str, None] = None,
+              subtype: Optional[str] = None) -> FitResult:
     """Fit one segment with the model named by ``spec`` (see ``resolve_model``)."""
-    name, opts = resolve_model(spec, state)
+    name, opts = resolve_model(spec, state, subtype)
     return registry.fit_models.get(name)(np.asarray(t, dtype=float), np.asarray(y, dtype=float), **opts)
 
 
@@ -770,7 +826,8 @@ class PiecewiseFit:
 
 def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: ModelSpec) -> PiecewiseFit:
     """
-    Fit each segment with the model for its state.
+    Fit each segment with the model for its state, or for its subtype when
+    the spec gives the subtype one (``"subtypes"``).
 
     ``t`` and ``y`` are full-record arrays; ``segs`` index into them (for
     example from ``rocksteady.segments``). ``model`` is one signal's spec.
@@ -783,7 +840,7 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     fitted = np.full(len(y), np.nan)
     results = []
     for s in segs:
-        r = fit_model(model, t[s.slice], y[s.slice], s.state)
+        r = fit_model(model, t[s.slice], y[s.slice], s.state, s.subtype)
         fitted[s.slice] = r.fitted
         results.append(r)
     return PiecewiseFit(fitted, list(segs), results)

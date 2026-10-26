@@ -94,8 +94,53 @@ Upgrading from 0.5.1. Behaviour changes to check:
   last segments". Only a call with subtypes and also `initial` or `final`
   keeps 0.5.1's opening. Matching "no segmentation satisfies the
   constraints" or "these segments cannot be typed" still works.
+- The tables of segments gain a `subtype` column after `state` (`None` for
+  a segment without one): `report.fit_report`'s and `compare_report`'s
+  `by_interval`, `Report.by_interval` and `Report.to_dict()`, and
+  `metrics.stats_by_segment` (#58). Code that reads these columns by
+  position, or compares whole frames, needs updating. The printed table of
+  segments gains a `subtype` column only when some segment has a subtype.
+- A model spec keyed by state may have a `"subtypes"` key (#57), so the
+  `ValueError` for any other key reads "a state-keyed model spec may only
+  have keys ['indeterminate', 'steady', 'transient'] and 'subtypes', with
+  at least one state, got [...]"; 0.5.1's read "... may only have keys
+  ['indeterminate', 'steady', 'transient'], got [...]". Matching "a
+  state-keyed model spec may only have keys" still works.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
+
+### Added
+
+- `Subtype(model=...)`: a subtype fits its segments with a model of its
+  own instead of its state's, in `optimal_segments` (a pulse fitted with a
+  parabola among transients fitted with a line, say). With `"bic"`, such a
+  subtype takes its model's penalty. A model spec keyed by state may list
+  subtypes' models under `"subtypes"`, as `{"steady": 0, "transient": 1,
+  "subtypes": {"pulse": 2}}`, for `fit.piecewise_fit`, `fit.fit_model`,
+  `fit.resolve_model`, `fit.validate_models` and `report.fit_report`; the
+  new `OptimalSegmentation.models` is that spec for the optimiser's
+  signal, so `fit_report(values, res.segments, {signal: res.models})` fits
+  each segment as the optimiser did (#57).
+- Reports by subtype, `by="subtype"`: `report.fit_report` and
+  `metrics.stats_by_state` follow each state's row with one row per subtype
+  its segments carry, sorted by name; `optimal.count_by_period` follows
+  each state's column with its subtypes' columns, counting as
+  `OptimalSegmentation.counts` does; `compare_segments` labels each sample
+  with its segment's subtype, or its state when it has none. They take
+  segments from any source, and refuse a subtype carried by segments of
+  two states, or named like a state, like `"all"` (in `fit_report`,
+  `stats_by_state` and `count_by_period`) or like `"none"` (in
+  `compare_segments`) (#58).
+- Soft caps for `optimal_segments`: `overflow_penalty={name: cost}` lets
+  the caps of names in `max_counts` be exceeded, each segment beyond its
+  cap in a period (counted once against each period it touches) adding
+  `cost` to the objective, so an unusual day gets an extra
+  segment at a cost instead of a distorted segmentation or no result. The
+  search stays exact, with no more count layers than hard caps.
+  `OptimalSegmentation.overflow` holds the segments beyond each soft cap per
+  period, `info["overflow_cost"]` their cost, and `summary()` names the caps
+  that overflowed. Transitions, `initial`, `final` and durations stay hard
+  (#59).
 
 ### Changed
 

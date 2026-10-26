@@ -33,12 +33,13 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from . import _grouping as _g
+from ._grouping import ALL
 from .fit import FitResult
 from .states import Segment, State, check_segments
 from .stats import acf_tau
 
 NRMSE_NORMS = ("mean", "range", "std", "none")
-ALL = "all"
 STATES = (ALL,) + tuple(s.value for s in State)
 
 
@@ -236,23 +237,26 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
 
 def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt: float,
                    states: Sequence[str] = STATES, nrmse: str = "mean", max_lag_frac: float = 0.25,
-                   t: Optional[np.ndarray] = None):
+                   t: Optional[np.ndarray] = None, by: str = "state"):
     """
     ``error_stats`` per state: one row per entry of ``states`` ("all",
     "steady", "transient", "indeterminate"), pooling that state's segments.
-    Returns a DataFrame indexed by state. ``t``: see ``error_stats``.
+    With ``by="subtype"``, each state's row is followed by one row per
+    subtype its segments carry, sorted by name, pooling that subtype's
+    segments. Returns a DataFrame indexed by state (an index named
+    ``"subtype"`` with ``by="subtype"``). ``t``: see ``error_stats``.
     """
     import pandas as pd
 
     segs = check_segments(segs, len(np.asarray(a)))
     rows = {}
-    for st in states:
-        sel = [(s.start, s.stop) for s in segs if st == ALL or s.state == State(st)]
+    for name, members in _g.groups(segs, states, by):
+        sel = [(segs[i].start, segs[i].stop) for i in members]
         es = (error_stats(a, b, dt=dt, pieces=sel, nrmse=nrmse, max_lag_frac=max_lag_frac, t=t) if sel
               else _nan_error_stats())
-        rows[str(st)] = es.as_dict()
+        rows[name] = es.as_dict()
     out = pd.DataFrame.from_dict(rows, orient="index")
-    out.index.name = "state"
+    out.index.name = by
     return out
 
 
@@ -260,7 +264,7 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
                      nrmse: str = "mean", max_lag_frac: float = 0.25, t: Optional[np.ndarray] = None):
     """
     ``error_stats`` for each segment. Returns a DataFrame with the segment's
-    index, state, ``forced`` (an override forced some of its labels), start
+    index, state, subtype (None when it has none), ``forced`` (an override forced some of its labels), start
     and stop. ``t``: see ``error_stats``.
     """
     import pandas as pd
@@ -269,10 +273,12 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
     rows = []
     for i, s in enumerate(segs):
         es = error_stats(a, b, dt=dt, pieces=[(s.start, s.stop)], nrmse=nrmse, max_lag_frac=max_lag_frac, t=t)
-        rows.append({"segment": i, "state": s.state.value, "forced": s.forced, "start": s.start, "stop": s.stop,
-                     **es.as_dict()})
-    columns = ["segment", "state", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
-    return pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
+        rows.append({"segment": i, "state": s.state.value, "subtype": s.subtype, "forced": s.forced, "start": s.start,
+                     "stop": s.stop, **es.as_dict()})
+    columns = ["segment", "state", "subtype", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
+    out = pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
+    out["subtype"] = _g.subtype_column(segs, out.index)
+    return out
 
 
 __all__ = ["SignalStats", "ErrorStats", "signal_stats", "error_stats", "stats_by_state", "stats_by_segment",

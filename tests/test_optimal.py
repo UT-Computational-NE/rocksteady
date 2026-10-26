@@ -33,7 +33,7 @@ def _sse(spec, t, y, state):
 
 
 def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None, penalty=0.0, positions=None,
-           subtypes=None, max_d=None, initial=None, final=None, events=None):
+           subtypes=None, max_d=None, initial=None, final=None, events=None, overflow=None):
     """
     The best objective over every segmentation and every choice for each segment, by exhaustive depth-first
     search: a choice is a state without subtypes, or one subtype of a state that has some. It cuts a branch
@@ -41,9 +41,10 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     1e-9 * max(1, |best|) of the best objective, each as (bounds, choices); no optima when none satisfies the
     constraints.
 
-    Constraints name states or subtypes. A choice's durations are its state's and its own (both bind), and
-    its penalty is its own, else its state's. In ``transitions``, ``initial`` and ``final`` a state stands for
-    every choice of the state.
+    Constraints name states or subtypes. A choice's durations are its state's and its own (both bind), its
+    penalty is its own, else its state's, and its model is its subtype's, else its state's. In
+    ``transitions``, ``initial`` and ``final`` a state stands for every choice of the state. A cap named in
+    ``overflow`` ({name: cost}) is soft: each segment beyond it in a period costs ``overflow[name]``.
     """
     n = len(y)
     dt = float(np.median(np.diff(t)))
@@ -55,6 +56,8 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
         mine = [(k, s) for k, s in subtypes.items() if s.state.value == st]
         choices += [(k, st, s) for k, s in mine] or [(st, st, None)]
     caps = dict(max_counts or {})
+    soft = dict(overflow or {})
+    spec = {c: (s.model if s is not None and s.model is not None else models[st]) for c, st, s in choices}
     sse = {}
 
     def expand(names):
@@ -68,10 +71,10 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
     lo = {c: max((min_d or {}).get(k, 0.0) for k in (c, st)) for c, st, _ in choices}
     hi = {c: min((max_d or {}).get(k, math.inf) for k in (c, st)) for c, st, _ in choices}
 
-    def cost(st, p, q):
-        if (st, p, q) not in sse:
-            sse[(st, p, q)] = _sse(models[st], t[p:q], y[p:q], st)
-        return sse[(st, p, q)]
+    def cost(name, st, p, q):
+        if (name, p, q) not in sse:
+            sse[(name, p, q)] = _sse(spec[name], t[p:q], y[p:q], st)
+        return sse[(name, p, q)]
 
     def meets(sub, p, q):
         return sub is None or _meets_conditions(sub, t[p:q], y[p:q], _within(events, slice(p, q)))
@@ -94,13 +97,16 @@ def _brute(t, y, models, per=None, max_counts=None, transitions=None, min_d=None
                 if not meets(sub, p, q):
                     continue
                 new = dict(counts)
+                charge = 0.0
                 for key in {st, name}:
                     if key in caps:
                         for pp in range(pid[p], pid[q - 1] + 1):
                             new[(pp, key)] = new.get((pp, key), 0) + 1
-                if any(new[(pp, key)] > caps[key] for pp, key in new):
+                            if key in soft and new[(pp, key)] > caps[key]:
+                                charge += soft[key]
+                if any(new[(pp, key)] > caps[key] for pp, key in new if key not in soft):
                     continue
-                search(q, name, new, acc + cost(st, p, q) + pen[name], path + [(p, q, name)])
+                search(q, name, new, acc + cost(name, st, p, q) + pen[name] + charge, path + [(p, q, name)])
 
     search(0, None, {}, 0.0, [])
     if not found:
@@ -1151,6 +1157,361 @@ def test_counts_and_summary_show_subtypes():
     plain = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", penalty=1.0,
                              transitions={"steady": ["transient"], "transient": ["steady"]})
     assert "(steady 2, transient 1)" in plain.summary() and list(plain.counts.columns) == ["steady", "transient"]
+
+
+# Hot first and cold, a pulse, and a transient and an indeterminate segment without a subtype.
+SUBTYPED = [Segment(0, 10, ST, subtype="hot"), Segment(10, 15, TR, subtype="pulse"),
+            Segment(15, 25, ST, subtype="cold"), Segment(25, 30, ST, subtype="cold"),
+            Segment(30, 32, State.INDETERMINATE), Segment(32, 34, TR)]
+
+
+def test_counts_by_subtype_follow_each_state_with_its_subtypes_by_name():
+    t = np.arange(34.0)
+    counts = count_by_period(SUBTYPED, t, 20.0, by="subtype")
+    assert list(counts.columns) == ["indeterminate", "steady", "cold", "hot", "transient", "pulse"]
+    assert counts.loc[0.0].tolist() == [0, 2, 1, 1, 1, 1]  # cold [15, 25) touches both periods
+    assert counts.loc[20.0].tolist() == [1, 2, 2, 0, 1, 0]
+    assert list(count_by_period(SUBTYPED, t, 20.0).columns) == ["indeterminate", "steady", "transient"]
+    # By state, a column named for no state counts nothing, as before subtypes were counted.
+    named = count_by_period(SUBTYPED, t, 20.0, states=["steady", "cold"])
+    assert named["steady"].tolist() == [2, 2] and named["cold"].tolist() == [0, 0]
+    with pytest.raises(ValueError, match="by must be one of"):
+        count_by_period(SUBTYPED, t, 20.0, by="Subtype")
+    some = count_by_period(SUBTYPED, t, 20.0, by="subtype", states=["transient"])
+    assert list(some.columns) == ["transient", "pulse"] and some["pulse"].tolist() == [1, 0]
+
+
+def test_counts_and_comparisons_by_subtype_without_subtypes_or_segments_are_by_state():
+    t = np.arange(34.0)
+    plain = [dataclasses.replace(s, subtype=None) for s in SUBTYPED]
+    pd.testing.assert_frame_equal(count_by_period(plain, t, 20.0, by="subtype"), count_by_period(plain, t, 20.0))
+    assert count_by_period([], t, 20.0, by="subtype", states=["steady"]).shape == (0, 1)
+    other = [Segment(0, 20, ST), Segment(20, 34, TR)]
+    by_subtype, by_state = compare_segments(plain, other, by="subtype"), compare_segments(plain, other)
+    assert by_subtype["agreement"] == by_state["agreement"]
+    pd.testing.assert_frame_equal(by_subtype["confusion"], by_state["confusion"])
+
+
+def test_counts_by_subtype_match_the_optimisers_counts():
+    t, y = _two_plateaus()
+    subtypes = {"hot": rs.Subtype("steady", level=(2.5, None)), "cold": rs.Subtype("steady", level=(None, 2.5))}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", subtypes=subtypes, penalty=1.0,
+                         per=30.0, transitions={"steady": ["transient"], "transient": ["steady"]})
+    counts = count_by_period(r.segments, t, 30.0, by="subtype", states=["steady", "transient"])
+    assert list(counts.columns) == ["steady", "cold", "hot", "transient"]
+    pd.testing.assert_frame_equal(counts, r.counts[list(counts.columns)])
+
+
+def test_compare_segments_by_subtype_labels_each_sample_by_its_subtype_or_state():
+    other = [dataclasses.replace(s, subtype="hot") if s.subtype == "cold" and s.start == 25 else s for s in SUBTYPED]
+    other[1] = dataclasses.replace(other[1], subtype=None)
+    assert compare_segments(SUBTYPED, other)["agreement"] == 1.0
+    cmp = compare_segments(SUBTYPED, other, by="subtype")
+    assert cmp["agreement"] == pytest.approx(24 / 34, abs=1e-15)
+    conf = cmp["confusion"]
+    assert conf.loc["cold", "hot"] == 5 and conf.loc["pulse", "transient"] == 5 and conf.loc["cold", "cold"] == 10
+    assert sorted(conf.index) == ["cold", "hot", "indeterminate", "pulse", "transient"]
+    with pytest.raises(ValueError, match="subtype 'none'"):
+        compare_segments([Segment(0, 2, ST), Segment(2, 4, ST, subtype="none"), Segment(4, 5, TR)],
+                         [Segment(0, 5, ST)], by="subtype")
+    with pytest.raises(ValueError, match="by must be"):
+        compare_segments(SUBTYPED, other, by="segment")
+
+
+def _bump_day(rng, n=8):
+    """A plateau, a quadratic bump, a plateau: a bump a line fits badly and a parabola well."""
+    t = np.arange(float(n))
+    a, b = sorted(rng.choice(np.arange(1, n), 2, replace=False))
+    y = np.where((t >= a) & (t < b), 2.0 + (t - a) * (b - 1 - t), 0.0) + rng.normal(0, 0.2, n)
+    return t, y
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_exact_matches_brute_force_with_subtype_models(seed):
+    rng = np.random.default_rng(seed)
+    t, y = _bump_day(rng)
+    models = {"steady": 0, "transient": 1}
+    # A pulse with a model of its own between catch-alls with the state's model; and a drifting plateau.
+    subtypes = {"rise": rs.Subtype("transient", peak=(None, 1.0)), "pulse": rs.Subtype("transient", model=2),
+                "plain": rs.Subtype("transient"), "drift": rs.Subtype("steady", model=1, level=(1.0, None))}
+    subtypes["flat"] = rs.Subtype("steady")
+    kw = dict(penalty={"steady": 0.3, "transient": 0.5, "drift": 0.4}, max_counts={"transient": 2})
+    if seed % 2:
+        kw.update(per=4.0, max_counts={"transient": 1, "steady": 2})
+    want_cost, optima = _brute(t, y, models, per=kw.get("per"), max_counts=kw["max_counts"], penalty=kw["penalty"],
+                               subtypes=subtypes)
+    got = optimal_segments(t, y, models, method="exact", subtypes=subtypes, **kw)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    assert _segmentation(got) in optima
+    assert got.models == {"steady": 0, "transient": 1, "subtypes": {"pulse": 2, "drift": 1}}
+    report = rs.report.fit_report({"y": y}, got.segments, {"y": got.models}, t=t)
+    assert report["y"].by_interval["model"].tolist() == [
+        {"pulse": "poly 2", "drift": "poly 1", None: None}.get(s.subtype) or ("poly 0" if s.state == ST else "poly 1")
+        for s in got.segments]
+
+
+def _pulse_day(seed=3, n=120):
+    """A plateau, a parabolic pulse, a plateau."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(float(n))
+    y = np.where((t >= 40) & (t < 80), 0.01 * (t - 40) * (80 - t), 0.0) + rng.normal(0, 0.05, n)
+    return t, y
+
+
+def _objective_by_hand(t, y, result, models):
+    """Each segment's SSE under its subtype's model, else its state's, plus its penalty."""
+    total = 0.0
+    for s in result.segments:
+        sub = result.subtypes.get(s.subtype)
+        spec = sub.model if sub is not None and sub.model is not None else models[s.state.value]
+        r = fit_model(spec, t[s.slice], y[s.slice], s.state)
+        total += float(r.residuals @ r.residuals) + result.penalty[s.subtype or s.state.value]
+    return total
+
+
+@pytest.mark.parametrize("method", ["exact", "refine"])
+def test_a_pulse_takes_the_subtype_whose_own_model_fits_it_over_one_declared_first(method):
+    t, y = _pulse_day()
+    models = {"steady": 0, "transient": 1}
+    subtypes = {"plain": rs.Subtype("transient"), "pulse": rs.Subtype("transient", model=2)}
+    kw = dict(candidates=[0, 35, 45, 75, 85, 120], refine_s=10.0) if method == "refine" else dict(grid_s=5.0)
+    r = optimal_segments(t, y, models, method=method, subtypes=subtypes, penalty=1.0, max_counts={"transient": 1},
+                         transitions={"steady": ["transient"], "transient": ["steady"]}, **kw)
+    assert [s.subtype for s in r.segments] == [None, "pulse", None]
+    assert r.objective == pytest.approx(_objective_by_hand(t, y, r, models), rel=1e-12)
+
+
+@pytest.mark.parametrize("model", ["exp", "first_order"])
+def test_typing_refines_segments_again_fits_each_only_with_its_own_states_model(model):
+    t, y, _ = _startup_record()
+    models = {"steady": 0, "transient": model}
+    kw = dict(method="refine", candidates=list(range(0, len(y) + 1, 60)), refine_s=30.0)
+    plain = optimal_segments(t, y, models, **kw)
+    # A catch-all leaves the search as it was; typing the refined segments again needs no fit of its own.
+    typed = optimal_segments(t, y, models, subtypes={"any": rs.Subtype("steady")}, **kw)
+    assert [(s.start, s.stop) for s in typed.segments] == [(s.start, s.stop) for s in plain.segments]
+    assert typed.n_fits == plain.n_fits
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_a_state_whose_every_subtype_has_its_own_model_matches_brute_force(seed):
+    t, y = _bump_day(np.random.default_rng(seed))
+    models = {"steady": 0, "transient": 1}
+    subtypes = {"pulse": rs.Subtype("transient", model=2, peak=(1.0, None)), "low": rs.Subtype("transient", model=0)}
+    want_cost, optima = _brute(t, y, models, penalty=0.3, subtypes=subtypes)
+    got = optimal_segments(t, y, models, method="exact", penalty=0.3, subtypes=subtypes)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9) and _segmentation(got) in optima
+
+
+def test_a_subtypes_own_slow_model_is_pruned_like_a_states():
+    t, y, _ = _startup_record()
+    kw = dict(method="subset", candidates=list(range(0, len(y) + 1, 60)), max_counts={"transient": 2},
+              subtypes={"rise": rs.Subtype("transient", model="exp"), "other": rs.Subtype("transient")})
+    pruned = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
+    full = optimal_segments(t, y, {"steady": 0, "transient": 1}, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"]) and pruned.n_fits < full.n_fits
+    assert _segmentation(pruned) == _segmentation(full) and pruned.objective == full.objective
+
+
+def test_the_models_of_a_result_without_subtype_models_are_the_models_given():
+    t, y = _pulse_day()
+    models = {"steady": 0, "transient": 1}
+    plain = optimal_segments(t, y, models, method="exact", grid_s=10.0, subtypes={"any": rs.Subtype("transient")})
+    assert plain.models == models
+    own = optimal_segments(t, y, models, method="exact", grid_s=10.0,
+                           subtypes={"pulse": rs.Subtype("transient", model=2)})
+    with pytest.raises(ValueError, match=r"subtypes' models go in Subtype\(model=...\)"):
+        optimal_segments(t, y, own.models, method="exact", grid_s=10.0)
+
+
+def test_a_subtype_with_its_own_model_takes_that_models_bic_penalty():
+    t, y = _pulse_day()
+    subtypes = {"plain": rs.Subtype("transient"), "pulse": rs.Subtype("transient", model=2),
+                "own": rs.Subtype("transient", model=1)}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=10.0, subtypes=subtypes)
+    # sigma^2 (p + 1) ln n: a line has two parameters, a parabola three.
+    assert r.penalty["pulse"] / r.penalty["transient"] == pytest.approx(4 / 3, rel=1e-12)
+    assert r.penalty["plain"] == r.penalty["transient"] == r.penalty["own"]
+    given = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", grid_s=10.0, subtypes=subtypes,
+                             penalty={"transient": 2.0})
+    assert given.penalty["pulse"] == given.penalty["plain"] == 2.0
+
+
+def test_a_subtypes_model_is_checked_and_kept_out_of_its_hash():
+    for bad, match in [({"steady": 0}, "one model, not keyed by state"), ("spline", "unknown fit model"),
+                       ({"model": "poly", "degree": 2}, "degree"), (-1, ">= 0")]:
+        with pytest.raises(ValueError, match="Subtype model"):
+            rs.Subtype("transient", model=bad)
+        with pytest.raises(ValueError, match=match):
+            rs.Subtype("transient", model=bad)
+    spec = {"model": "first_order", "tau_max": 100.0}
+    a, b = rs.Subtype("transient", model=spec), rs.Subtype("transient", model=dict(spec))
+    spec["tau_max"] = 5.0
+    assert a == b and hash(a) == hash(b) and a.model == {"model": "first_order", "tau_max": 100.0}
+    assert a != rs.Subtype("transient") and hash(a) == hash(rs.Subtype("transient"))
+    assert dataclasses.replace(a, level=(0, 1)).model == a.model
+
+
+def test_classify_segments_ignores_a_subtypes_model():
+    t, y = _pulse_day()
+    segs = [Segment(0, 40, ST), Segment(40, 80, TR), Segment(80, 120, ST)]
+    subtypes = {"plain": rs.Subtype("transient"), "pulse": rs.Subtype("transient", model=2)}
+    assert [s.subtype for s in rs.classify_segments(t, y, segs, subtypes=subtypes)] == [None, "plain", None]
+
+
+# -- soft caps ------------------------------------------------------------------------
+
+
+def _soft_scheme(seed):
+    """Caps on states and subtypes, some soft (a cap of 0 among them), over periods that segments can span."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(8.0)
+    y = np.where(t < rng.integers(2, 6), 0.0, 3.0) + rng.normal(0, 0.3, 8)
+    y[rng.integers(0, 8)] += 2.0
+    subtypes = {"cold": rs.Subtype("steady", level=(None, 1.5)), "hot": rs.Subtype("steady", level=(1.5, None))}
+    caps = {"steady": int(rng.integers(0, 3)), "transient": int(rng.integers(0, 2)), "hot": int(rng.integers(0, 2))}
+    soft = {k: float(rng.choice([0.0, 0.2, 1.0, 5.0])) for k in caps if rng.random() < 0.7}
+    soft = soft or {"steady": 0.5}
+    return t, y, subtypes, caps, soft
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_exact_matches_brute_force_with_soft_caps(seed):
+    t, y, subtypes, caps, soft = _soft_scheme(seed)
+    models = {"steady": 0, "transient": 1}
+    want_cost, optima = _brute(t, y, models, per=3.0, max_counts=caps, penalty=0.3, subtypes=subtypes, overflow=soft)
+    got = optimal_segments(t, y, models, method="exact", per=3.0, max_counts=caps, penalty=0.3, subtypes=subtypes,
+                           overflow_penalty=soft)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9)
+    assert _segmentation(got) in optima
+
+
+def test_under_a_soft_cap_of_zero_a_segment_overflows_in_every_period_it_touches():
+    t = np.arange(9.0)
+    r = optimal_segments(t, np.zeros(9), {"steady": 0}, method="exact", per=3.0, max_counts={"steady": 0},
+                         overflow_penalty={"steady": 1.5}, penalty=0.0)
+    assert r.objective == 4.5 and r.info["overflow_cost"] == 4.5
+    assert r.overflow["steady"].tolist() == [1, 1, 1]
+    # One steady segment over the three periods costs 3, more than one uncapped transient.
+    either = optimal_segments(t, np.zeros(9), {"steady": 0, "transient": 0}, method="exact", per=3.0,
+                              max_counts={"steady": 0}, overflow_penalty={"steady": 1.0},
+                              penalty={"steady": 0.0, "transient": 2.5})
+    assert [s.state.value for s in either.segments] == ["transient"] and either.objective == 2.5
+
+
+def test_a_segment_starting_a_period_does_not_overflow_the_previous_periods_cap():
+    t = np.arange(6.0)
+    y = np.where(t < 3, 0.0, 5.0)
+    # One segment over both periods would leave an SSE of 37.5, less than an overflow.
+    r = optimal_segments(t, y, {"steady": 0}, method="exact", per=3.0, max_counts={"steady": 1},
+                         overflow_penalty={"steady": 100.0}, penalty=0.0)
+    assert r.objective == 0.0 and [s.start for s in r.segments] == [0, 3]
+    assert r.overflow["steady"].tolist() == [0, 0] and "beyond soft caps: none (cost 0)" in r.summary()
+
+
+def test_refine_moves_a_boundary_into_the_next_period_when_that_saves_an_overflow():
+    t = np.arange(12.0)
+    y = np.where(t < 5, 0.0, 4.0)  # the step at 5 puts both plateaus in the first period [0, 6)
+    kw = dict(per=6.0, max_counts={"steady": 1}, overflow_penalty={"steady": 20.0}, penalty=0.0)
+    exact = optimal_segments(t, y, {"steady": 0}, method="exact", **kw)
+    assert [s.start for s in exact.segments] == [0, 6] and exact.info["overflow_cost"] == 0.0
+    r = optimal_segments(t, y, {"steady": 0}, method="refine", candidates=[0, 5, 12], refine_s=2.0, **kw)
+    assert [s.start for s in r.segments] == [0, 6] and r.objective == pytest.approx(exact.objective, rel=1e-12)
+
+
+@pytest.mark.parametrize("cost", [0.05, 5.0])
+def test_pruning_stays_exact_with_soft_caps_and_subtype_models(cost):
+    t = np.arange(14.0)
+    y = np.where(t < 4, 0.0, 5.0 * (1 - np.exp(-(t - 4) / 2.0))) + np.random.default_rng(9).normal(0, 0.05, 14)
+    models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 0.5, "tau_max": 50.0}}
+    subtypes = {"rise": rs.Subtype("transient", model={"model": "exp", "T_min": 0.5, "T_max": 50.0}),
+                "other": rs.Subtype("transient")}
+    positions = [0, 2, 4, 6, 8, 11, 14]
+    kw = dict(max_counts={"steady": 2, "transient": 1}, overflow_penalty={"steady": cost}, penalty=0.1)
+    want_cost, optima = _brute(t, y, models, max_counts=kw["max_counts"], penalty=0.1, positions=positions,
+                               subtypes=subtypes, overflow=kw["overflow_penalty"])
+    for prune in (True, False):
+        got = optimal_segments(t, y, models, method="subset", candidates=positions, subtypes=subtypes, prune=prune,
+                               **kw)
+        assert got.objective == pytest.approx(want_cost, rel=1e-9) and _segmentation(got) in optima
+        if prune and cost == 5.0:  # here the cheap constant fits give the search a finite bound to prune by
+            assert math.isfinite(got.info["upper_bound"])
+
+
+def test_overflow_in_two_periods_and_of_two_soft_caps():
+    t = np.arange(24.0)
+    y = np.tile(np.repeat([0.0, 4.0, 0.0], 4), 2) + np.random.default_rng(2).normal(0, 0.01, 24)
+    pen = {"steady": 0.1, "transient": 50.0}
+    # Given in the other order from the count columns: the overflow columns follow the counts.
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                         max_counts={"steady": 1, "transient": 0},
+                         overflow_penalty={"transient": 60.0, "steady": 0.5}, penalty=pen)
+    assert r.overflow.columns.tolist() == ["steady", "transient"]
+    assert r.overflow["steady"].tolist() == [2, 2] and r.overflow["transient"].tolist() == [0, 0]
+    assert "beyond soft caps: steady +4 in 2 periods (cost 2)" in r.summary()
+    none = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                            max_counts={"steady": 1}, overflow_penalty={}, penalty=pen)
+    hard = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                            max_counts={"steady": 1}, penalty=pen)
+    assert none.objective == hard.objective and none.overflow.shape == (2, 0) and "soft caps" not in none.summary()
+
+
+@pytest.mark.parametrize("datetimes", [False, True])
+def test_each_periods_overflow_is_on_its_own_row(datetimes):
+    # Three plateaus in the first 12-sample period and two in the second: 2 and 1 beyond a cap of 1.
+    y = np.concatenate((np.repeat([0.0, 4.0, 0.0], 4), np.repeat([4.0, 0.0], 6)))
+    y = y + np.random.default_rng(3).normal(0, 0.01, 24)
+    t = pd.date_range("2026-03-02", periods=24, freq="1h") if datetimes else np.arange(24.0)
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per="12h" if datetimes else 12.0,
+                         max_counts={"steady": 1}, overflow_penalty={"steady": 0.5},
+                         penalty={"steady": 0.1, "transient": 50.0})
+    assert [s.start for s in r.segments] == [0, 4, 8, 12, 18]
+    assert r.overflow["steady"].tolist() == [2, 1] and r.overflow.index.equals(r.counts.index)
+    assert r.overflow.index[1] == (t[12] if datetimes else 12.0) and r.info["overflow_cost"] == 1.5
+
+
+def test_overflow_penalty_validation():
+    t, y = np.arange(10.0), np.zeros(10)
+    for bad, match in [({"transient": 1.0}, "overflow_penalty names 'transient', which max_counts does not cap"),
+                       ({"steady": -1.0}, "finite number >= 0"), ({"steady": math.inf}, "finite number >= 0"),
+                       ({"steady": math.nan}, "finite number >= 0"), ({"steady": True}, "finite number >= 0"),
+                       ({"steady": "1"}, "finite number >= 0"), ([("steady", 1.0)], "must be a mapping")]:
+        with pytest.raises(ValueError, match=match):
+            optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", max_counts={"steady": 1},
+                             overflow_penalty=bad)
+
+
+def test_an_infeasible_call_with_soft_caps_names_them():
+    t = np.arange(10.0)
+    msg = _infeasible_message(t, np.zeros(10), {"steady": 0, "transient": 1}, method="exact", penalty=0.0,
+                              max_counts={"steady": 1, "transient": 0}, overflow_penalty={"transient": 2.0},
+                              max_duration_s={"steady": 4.0, "transient": 0.5})
+    assert msg.endswith("In force: max_counts={'steady': 1, 'transient': 0}, overflow_penalty={'transient': 2.0}, "
+                        "transitions=any.")
+    plain = _infeasible_message(t, np.zeros(10), {"steady": 0}, method="exact", penalty=0.0,
+                                max_counts={"steady": 1}, max_duration_s={"steady": 4.0})
+    assert "overflow_penalty" not in plain
+
+
+def test_segments_beyond_a_soft_cap_cost_its_overflow_penalty_each():
+    t = np.arange(12.0)
+    y = np.repeat([0.0, 4.0, 0.0], 4) + np.random.default_rng(1).normal(0, 0.01, 12)
+    pen = {"steady": 0.1, "transient": 50.0}
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", max_counts={"steady": 1},
+                         overflow_penalty={"steady": 0.5}, penalty=pen)
+    assert [s.start for s in r.segments] == [0, 4, 8] and r.info["overflow_cost"] == 1.0
+    assert r.overflow.columns.tolist() == ["steady"] and r.overflow["steady"].tolist() == [2]
+    assert r.objective == pytest.approx(r.sse + 3 * 0.1 + 1.0, rel=1e-12)
+    assert "beyond soft caps: steady +2 in 1 period (cost 1)" in r.summary()
+    hard = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", max_counts={"steady": 1},
+                            penalty=pen)
+    assert len(hard.segments) == 1 and hard.overflow.shape == (1, 0) and "soft caps" not in hard.summary()
+    moved = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="refine", candidates=[0, 3, 9, 12],
+                             refine_s=2.0, max_counts={"steady": 1}, overflow_penalty={"steady": 0.5}, penalty=pen)
+    assert [s.start for s in moved.segments] == [0, 4, 8] and moved.objective == pytest.approx(r.objective, rel=1e-12)
+    dear = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", max_counts={"steady": 1},
+                            overflow_penalty={"steady": 1e6}, penalty=pen)
+    assert [s.state.value for s in dear.segments] == [s.state.value for s in hard.segments]
 
 
 def _subtype_scheme(scheme, rng):
