@@ -234,10 +234,25 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     )
 
 
-BY = ("state", "subtype")
+_BY = ("state", "subtype")
 
 
-def subtype_states(segs: Sequence[Segment], reserved: Sequence[str] = ()) -> Dict[str, str]:
+def _check_by(by: str) -> None:
+    if by not in _BY:
+        raise ValueError(f"by must be one of {_BY}, got {by!r}")
+
+
+def _subtype_column(segs: Sequence[Segment], index):
+    """
+    Each segment's subtype as a column (None, not NaN, for none: pandas 3
+    would infer a string column, with NaN for None).
+    """
+    import pandas as pd
+
+    return pd.Series([s.subtype for s in segs], index=index, dtype=object)
+
+
+def _subtype_states(segs: Sequence[Segment], reserved: Sequence[str] = ()) -> Dict[str, str]:
     """
     The state of each subtype the segments carry, ``{subtype: state}``. A
     subtype named like a state or one of ``reserved``, or carried by
@@ -258,7 +273,7 @@ def subtype_states(segs: Sequence[Segment], reserved: Sequence[str] = ()) -> Dic
     return out
 
 
-def groups(segs: Sequence[Segment], rows: Sequence[str], by: str = "state") -> List[Tuple[str, List[int]]]:
+def _groups(segs: Sequence[Segment], rows: Sequence[str], by: str = "state") -> List[Tuple[str, List[int]]]:
     """
     The rows of a table by state or by subtype, each with the positions in
     ``segs`` of the segments it pools. ``rows`` are ``"all"`` or states.
@@ -267,11 +282,10 @@ def groups(segs: Sequence[Segment], rows: Sequence[str], by: str = "state") -> L
     each subtype its segments carry, sorted by name, which pools that
     subtype's segments; a state whose segments carry none has only its own
     row. A subtype named like a state or ``"all"``, or carried by segments
-    of two states, is refused (``subtype_states``).
+    of two states, is refused (``_subtype_states``).
     """
-    if by not in BY:
-        raise ValueError(f"by must be one of {BY}, got {by!r}")
-    subtypes = subtype_states(segs, (ALL,)) if by == "subtype" else {}
+    _check_by(by)
+    subtypes = _subtype_states(segs, (ALL,)) if by == "subtype" else {}
     out = []
     for row in rows:
         out.append((str(row), [i for i, s in enumerate(segs) if row == ALL or s.state == State(row)]))
@@ -288,7 +302,7 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
     "steady", "transient", "indeterminate"), pooling that state's segments.
     With ``by="subtype"``, each state's row is followed by one row per
     subtype its segments carry, sorted by name, pooling that subtype's
-    segments (see ``groups``). Returns a DataFrame indexed by state (an
+    segments. Returns a DataFrame indexed by state (an
     index named ``"subtype"`` with ``by="subtype"``). ``t``: see
     ``error_stats``.
     """
@@ -296,7 +310,7 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
 
     segs = check_segments(segs, len(np.asarray(a)))
     rows = {}
-    for name, members in groups(segs, states, by):
+    for name, members in _groups(segs, states, by):
         sel = [(segs[i].start, segs[i].stop) for i in members]
         es = (error_stats(a, b, dt=dt, pieces=sel, nrmse=nrmse, max_lag_frac=max_lag_frac, t=t) if sel
               else _nan_error_stats())
@@ -323,10 +337,9 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
                      "stop": s.stop, **es.as_dict()})
     columns = ["segment", "state", "subtype", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
     out = pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
-    # None, not NaN, for none: pandas 3 would infer a string column, with NaN for None.
-    out["subtype"] = pd.Series([s.subtype for s in segs], index=out.index, dtype=object)
+    out["subtype"] = _subtype_column(segs, out.index)
     return out
 
 
 __all__ = ["SignalStats", "ErrorStats", "signal_stats", "error_stats", "stats_by_state", "stats_by_segment",
-           "finite_pieces", "split_at_time_gaps", "groups", "subtype_states", "STATES", "BY"]
+           "finite_pieces", "split_at_time_gaps", "STATES"]

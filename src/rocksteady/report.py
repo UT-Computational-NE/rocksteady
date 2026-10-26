@@ -31,8 +31,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .fit import FitResult, PiecewiseFit, normalize_model, piecewise_fit, resolve_model, validate_models
-from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
+from .fit import FitResult, PiecewiseFit, _subtype_specs, normalize_model, piecewise_fit, resolve_model, validate_models
+from .metrics import STATES, _subtype_column, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment
 
 FIT_INTERVAL_COLUMNS = ["segment", "state", "subtype", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
@@ -194,14 +194,9 @@ def _model_label(name: str, opts: Mapping[str, Any]) -> str:
     return f"poly {opts.get('order', 0)}" if name == "poly" else name
 
 
-def _own_models(spec) -> Mapping[str, Any]:
-    """The subtypes a spec gives models of their own (``"subtypes"``), or none."""
-    return spec.get("subtypes", {}) if isinstance(spec, Mapping) and "model" not in spec else {}
-
-
 def _models_title(spec, states: Sequence[str]) -> str:
     parts = [f"{st} {_model_label(*resolve_model(spec, st))}" for st in states if st != "all"]
-    own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _own_models(spec)]
+    own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _subtype_specs(spec)]
     return f"(models: {', '.join(parts)}{'; ' + ', '.join(own) if own else ''})"
 
 
@@ -266,14 +261,13 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         import pandas as pd
 
         per_segment = pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS)
-        # None, not NaN, for none: pandas 3 would infer a string column, with NaN for None.
-        per_segment["subtype"] = pd.Series([s.subtype for s in segs], index=per_segment.index, dtype=object)
+        per_segment["subtype"] = _subtype_column(segs, per_segment.index)
         blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state, per_segment,
                                    units.get(name), pw, pw.results, origin))
     fit_states = [s for s in states if s != "all"]
     order: Dict[str, Dict[str, List[str]]] = {}
     for b in blocks:
-        own = _own_models(models[b.name])
+        own = _subtype_specs(models[b.name])
         for s, r in zip(segs, b.fit_results):
             key = s.subtype if s.subtype is not None and s.subtype in own else s.state.value  # whose model fitted it
             order.setdefault(b.name, {}).setdefault(key, list(r.params))
@@ -281,8 +275,8 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
     prov.update({
         "error": "e = fit - data",
         "models": {name: {**{st: normalize_model(spec, st) for st in fit_states},
-                          **({"subtypes": {sub: normalize_model(spec, subtype=sub) for sub in _own_models(spec)}}
-                             if _own_models(spec) else {})}
+                          **({"subtypes": {sub: normalize_model(spec, subtype=sub) for sub in _subtype_specs(spec)}}
+                             if _subtype_specs(spec) else {})}
                    for name, spec in models.items()},
         "parameter_order": order,
         "parameter_reference": "params are stated at t_ref (poly: segment centre; first_order, exp: first valid "

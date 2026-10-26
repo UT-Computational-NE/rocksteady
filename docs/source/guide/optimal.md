@@ -317,8 +317,8 @@ segment) or leaves none, which stops a batch run over months of records.
 `overflow_penalty={name: cost}` makes the caps of those names soft: each
 segment beyond the cap in a period adds `cost` to the objective, counted as
 the cap counts (once against every period a segment touches). The other
-caps stay hard. The overflow per period is not capped; the cost limits it,
-so choose it against the SSE a segment saves. `transitions`, `initial`,
+caps stay hard. The overflow per period is not capped; only the cost keeps
+it in check, so choose it against the SSE a segment saves. `transitions`, `initial`,
 `final` and durations stay hard.
 
 ```{literalinclude} ../examples/subtypes.py

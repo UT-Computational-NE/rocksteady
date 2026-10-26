@@ -24,8 +24,9 @@ Constraints
 - ``per`` and ``max_counts``: at most ``max_counts[name]`` segments of a
   state or subtype per period (a day, a week, ...). A state's cap counts
   all of its segments, whatever their subtype. ``overflow_penalty={name:
-  cost}`` makes the caps of those names soft: each segment beyond one in a
-  period adds ``cost`` to the objective instead of being refused, and the
+  cost}`` makes the caps of those names soft: each segment beyond a name's
+  cap in a period (counted once against each period it touches) adds
+  ``cost`` to the objective instead of being refused, and the
   result's ``overflow`` says where. Past its cap every further segment costs
   the same, so the program counts a soft cap only up to the cap and the
   search stays exact. A segment counts once against
@@ -161,7 +162,7 @@ import numpy as np
 
 from . import _validate as _v
 from . import fit as _fit
-from .metrics import BY, groups, subtype_states
+from .metrics import _check_by, _groups, _subtype_states
 from .states import Segment, State, check_segments
 
 METHODS = ("subset", "refine", "exact")
@@ -329,7 +330,7 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     period start, one column per state (``states``, default: those present).
     With ``by="subtype"``, each state's column is followed by one column per
     subtype its segments carry, sorted by name, counting that subtype's
-    segments (``metrics.groups``), as ``OptimalSegmentation.counts`` counts
+    segments, as ``OptimalSegmentation.counts`` counts
     them. A segment counts once against every period one of its samples lies in.
     ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
@@ -343,7 +344,7 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     states = list(states) if states is not None else sorted({s.state.value for s in segs})
     if by == "state":
         return _count_table([(s.start, s.stop, (s.state.value,)) for s in segs], states, pid, idx, per, period_origin)
-    columns = groups(segs, states, by)
+    columns = _groups(segs, states, by)
     names: List[List[str]] = [[] for _ in segs]
     for name, members in columns:
         for i in members:
@@ -575,16 +576,20 @@ class _FixedCosts:
     """
     The costs of a fixed segmentation (``classify_segments``, and
     ``refine``'s result typed again): each given segment costs what
-    ``base`` says (0 without one) and any other range is infinite, so only
-    the given segments are ever costed. Without ``base``, a segment costs
+    ``base`` says (0 without one) under a model of its own state
+    (``state_of`` names each model's state), and any other range or model
+    is infinite, so only the given segments are ever costed, each only
+    with the models it could take. Without ``base``, a segment costs
     the same whichever of its state's subtypes it takes, so only the
     penalties and then the subtypes' ranks decide, as they do between equal
     objectives in the optimiser; with the optimiser's costs, a subtype's
     own model counts as well.
     """
 
-    def __init__(self, segments: Sequence[Segment], base: Optional[_SegmentCosts] = None):
-        self.start = {s.stop: s.start for s in segments}
+    def __init__(self, segments: Sequence[Segment], state_of: Mapping[str, str],
+                 base: Optional[_SegmentCosts] = None):
+        self.given = {s.stop: (s.start, State(s.state).value) for s in segments}
+        self.state_of = state_of
         self.base = base
 
     n_fits = 0  # fits are counted by the base's own program
@@ -595,13 +600,13 @@ class _FixedCosts:
     def vector(self, st: str, ps: np.ndarray, q: int) -> np.ndarray:
         ps = np.asarray(ps, dtype=np.int64)
         out = np.full(len(ps), math.inf)
-        given = np.flatnonzero(ps == self.start.get(q, -1))
+        given = np.flatnonzero(ps == self.given.get(q, (-1, None))[0])
         if len(given):
             out[given] = self.cost(st, int(ps[given[0]]), q)
         return out
 
     def cost(self, st: str, p: int, q: int) -> float:
-        if self.start.get(q, -1) != p:
+        if self.given.get(q) != (p, self.state_of[st]):
             return math.inf
         return self.base.cost(st, p, q) if self.base is not None else 0.0
 
@@ -706,14 +711,13 @@ def compare_segments(a: Sequence[Segment], b: Sequence[Segment], n: Optional[int
     """
     import pandas as pd
 
-    if by not in BY:
-        raise ValueError(f"by must be one of {BY}, got {by!r}")
+    _check_by(by)
     n = n if n is not None else max([s.stop for s in a] + [s.stop for s in b] + [0])
 
     def labels(segs):
         segs = check_segments(segs, n)
         if by == "subtype":
-            subtype_states(segs, ("none",))
+            _subtype_states(segs, ("none",))
         out = np.full(n, "none", dtype=object)
         for s in segs:
             out[s.slice] = s.subtype if by == "subtype" and s.subtype is not None else s.state.value
@@ -815,7 +819,7 @@ class Subtype:
         if self.events is not None:
             object.__setattr__(self, "events", _event_conditions(self.events))
         if self.model is not None:
-            if isinstance(self.model, Mapping) and "model" not in self.model:
+            if _fit._keyed_by_state(self.model):
                 raise ValueError(f"Subtype model must be a spec of one model, not keyed by state, got {self.model!r}")
             try:
                 _fit.check_model_options(*_fit.resolve_model(self.model))
@@ -1170,7 +1174,7 @@ class _Option:
     model: Optional[str] = None
 
     @property
-    def fit(self) -> str:
+    def model_key(self) -> str:
         """The key of its model in the program's costs: its subtype's or its state's name."""
         return self.model or self.state
 
@@ -1246,9 +1250,10 @@ class _Problem:
         # The options of each model: one cost per model (a state's, or a subtype's own), shared by its options.
         self.by_model: Dict[str, List[int]] = {}
         for o, opt in enumerate(self.options):
-            self.by_model.setdefault(opt.fit, []).append(o)
+            self.by_model.setdefault(opt.model_key, []).append(o)
         if fixed_segments is not None:
-            self.costs: _SegmentCosts = _FixedCosts(fixed_segments, costs)
+            state_of = {opt.model_key: opt.state for opt in self.options}
+            self.costs: _SegmentCosts = _FixedCosts(fixed_segments, state_of, costs)
         else:
             self.costs = costs if costs is not None else _Costs(ts, y, models, list(self.by_model))
         # Over a model's options: the longest duration allowed (where the cost scan stops), and the smallest
@@ -1320,7 +1325,7 @@ class _Problem:
         return bool(self.options[o].accepts(np.array([p]), q)[0])
 
     def cost(self, o: int, p: int, q: int) -> float:
-        return self.costs.cost(self.options[o].fit, p, q)
+        return self.costs.cost(self.options[o].model_key, p, q)
 
     def feasible(self, bounds: Sequence[int], opts: Sequence[int]) -> bool:
         """Check a full segmentation (boundaries incl. 0 and n; one option per segment) against the constraints."""
@@ -1370,30 +1375,30 @@ class _Problem:
         return _count_table(spans, [name for name, _ in self.columns], self.pid, self.idx, self.per,
                             self.period_origin)
 
-    def _model_costs(self, st: str, okd: np.ndarray, starts: np.ndarray, q: int, dur: np.ndarray, surrogate: bool,
+    def _model_costs(self, key: str, okd: np.ndarray, starts: np.ndarray, q: int, dur: np.ndarray, surrogate: bool,
                      ub: float, prune: bool) -> np.ndarray:
-        """Costs of ``[starts[j], q)`` under model ``st`` (a state's or a subtype's) where ``okd``; infinite elsewhere."""
+        """Costs of ``[starts[j], q)`` under model ``key`` (a state's or a subtype's) where ``okd``; infinite elsewhere."""
         k = len(okd)
-        if self.costs.is_fast(st):
-            return np.where(okd, self.costs.vector(st, starts[:k], q), math.inf)
+        if self.costs.is_fast(key):
+            return np.where(okd, self.costs.vector(key, starts[:k], q), math.inf)
         if surrogate:  # cheap constant-fit costs, only to find a feasible solution
             # Only a model that is not fast has a surrogate, and only _Costs has such models.
             return np.where(okd, _poly0(cast(_Costs, self.costs), starts[:k], q), math.inf)
         C = np.full(k, math.inf)
-        max_d, min_pen = self.model_max_d[st], self.model_min_pen[st]
+        max_d, min_pen = self.model_max_d[key], self.model_min_pen[key]
         for j in range(k - 1, -1, -1):  # growing segments: costs never decrease, so stop at the bound
             if dur[j] > max_d + 1e-9:
                 break
             if not okd[j]:
                 continue
-            c = self.costs.cost(st, int(starts[j]), q)
+            c = self.costs.cost(key, int(starts[j]), q)
             C[j] = c
             # Too short for the model is infinite but not monotone (a longer segment can be fitted);
             # only a finite cost above the bound, with the model fitted in full, ends the search.
             # Costs only grow with the segment once the model is fitted in full: a polynomial
             # fitted with a reduced order (too few samples) can fit a longer segment better.
             # The bound uses the model cost alone, before any condition, so pruning stays exact.
-            if prune and math.isfinite(c) and c + min_pen > ub and self.costs.full_model(st, int(starts[j]), q):
+            if prune and math.isfinite(c) and c + min_pen > ub and self.costs.full_model(key, int(starts[j]), q):
                 break
         return C
 
@@ -1813,12 +1818,6 @@ def _overflow_table(counts, prob: "_Problem", soft: Mapping[str, float]):
     return out
 
 
-def _report_models(models: Mapping[str, Any], subtypes: Mapping[str, Subtype]) -> Dict[str, Any]:
-    """The model spec ``report.fit_report`` takes for the optimiser's fits: the states', then the subtypes' own."""
-    own = {k: sub.model for k, sub in subtypes.items() if sub.model is not None}
-    return {**dict(models), **({"subtypes": own} if own else {})}
-
-
 def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: Optional[Mapping[str, int]] = None,
                      transitions: Optional[Mapping[str, Sequence[str]]] = None,
                      min_duration_s: Optional[Mapping[str, float]] = None,
@@ -1910,12 +1909,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         single mask. ``info["events"]`` holds the masks used.
     overflow_penalty : mapping, optional
         ``{state or subtype: cost}`` for names in ``max_counts``: their caps
-        are soft, and each segment beyond one in a period adds the cost to
+        are soft, and each segment beyond its cap in a period adds the cost to
         the objective, counted as the cap counts (once against each period
         the segment touches). A period whose data cannot fit the caps then
         gets more segments at a cost rather than a distorted segmentation or
-        no result. The overflow per period is not capped; the cost limits
-        it. A cost of 0 lets the cap be passed freely. ``overflow`` on the
+        no result. The overflow per period is not capped; only the cost
+        keeps it in check. A cost of 0 lets the cap be passed freely. ``overflow`` on the
         result holds the segments beyond each soft cap per period, and
         ``info["overflow_cost"]`` what they cost.
 
@@ -1955,7 +1954,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     soft = _checked_overflow(overflow_penalty, max_counts)
     masks = _event_masks(events, n, subtypes)
     # The model of each state, and of each subtype with one of its own: the keys of the program's costs.
-    fits = {**{st: models[st] for st in states}, **{k: sub.model for k, sub in subtypes.items() if sub.model is not None}}
+    own_models = {k: sub.model for k, sub in subtypes.items() if sub.model is not None}
+    fits = {**{st: models[st] for st in states}, **own_models}
     # Penalty per state, then per subtype: a subtype's own replaces its state's, which it takes otherwise.
     own: Mapping[str, float] = {}
     if isinstance(penalty, str):
@@ -2024,7 +2024,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             "overflow_cost": prob.overflow_cost(bounds, opts)}
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
-                               int(len(B)), prob.costs.n_fits, info, subtypes, _report_models(models, subtypes),
+                               int(len(B)), prob.costs.n_fits, info, subtypes,
+                               {**dict(models), **({"subtypes": own_models} if own_models else {})},
                                overflow)
 
 

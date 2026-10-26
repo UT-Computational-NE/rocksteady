@@ -84,12 +84,14 @@ Upgrading from 0.5.1. Behaviour changes to check:
   each state's column with its subtypes' columns, counting as
   `OptimalSegmentation.counts` does; `compare_segments` labels each sample
   with its segment's subtype, or its state when it has none. They take
-  segments from any source, and refuse a subtype named like a state (or
-  `"all"`, or `"none"` in `compare_segments`) or carried by segments of two
-  states (#58).
+  segments from any source, and refuse a subtype carried by segments of
+  two states, or named like a state, like `"all"` (in `fit_report`,
+  `stats_by_state` and `count_by_period`) or like `"none"` (in
+  `compare_segments`) (#58).
 - Soft caps for `optimal_segments`: `overflow_penalty={name: cost}` lets
-  the caps of names in `max_counts` be exceeded, each segment beyond one in
-  a period adding `cost` to the objective, so an unusual day gets an extra
+  the caps of names in `max_counts` be exceeded, each segment beyond its
+  cap in a period (counted once against each period it touches) adding
+  `cost` to the objective, so an unusual day gets an extra
   segment at a cost instead of a distorted segmentation or no result. The
   search stays exact, with no more count layers than hard caps.
   `OptimalSegmentation.overflow` holds the segments beyond each soft cap per

@@ -875,6 +875,17 @@ def test_counts_by_subtype_follow_each_state_with_its_subtypes_by_name():
     assert list(some.columns) == ["transient", "pulse"] and some["pulse"].tolist() == [1, 0]
 
 
+def test_counts_and_comparisons_by_subtype_without_subtypes_or_segments_are_by_state():
+    t = np.arange(34.0)
+    plain = [dataclasses.replace(s, subtype=None) for s in SUBTYPED]
+    pd.testing.assert_frame_equal(count_by_period(plain, t, 20.0, by="subtype"), count_by_period(plain, t, 20.0))
+    assert count_by_period([], t, 20.0, by="subtype", states=["steady"]).shape == (0, 1)
+    other = [Segment(0, 20, ST), Segment(20, 34, TR)]
+    by_subtype, by_state = compare_segments(plain, other, by="subtype"), compare_segments(plain, other)
+    assert by_subtype["agreement"] == by_state["agreement"]
+    pd.testing.assert_frame_equal(by_subtype["confusion"], by_state["confusion"])
+
+
 def test_counts_by_subtype_match_the_optimisers_counts():
     t, y = _two_plateaus()
     subtypes = {"hot": rs.Subtype("steady", level=(2.5, None)), "cold": rs.Subtype("steady", level=(None, 2.5))}
@@ -895,7 +906,8 @@ def test_compare_segments_by_subtype_labels_each_sample_by_its_subtype_or_state(
     assert conf.loc["cold", "hot"] == 5 and conf.loc["pulse", "transient"] == 5 and conf.loc["cold", "cold"] == 10
     assert sorted(conf.index) == ["cold", "hot", "indeterminate", "pulse", "transient"]
     with pytest.raises(ValueError, match="subtype 'none'"):
-        compare_segments([Segment(0, 5, ST, subtype="none")], [Segment(0, 5, ST)], by="subtype")
+        compare_segments([Segment(0, 2, ST), Segment(2, 4, ST, subtype="none"), Segment(4, 5, TR)],
+                         [Segment(0, 5, ST)], by="subtype")
     with pytest.raises(ValueError, match="by must be"):
         compare_segments(SUBTYPED, other, by="segment")
 
@@ -961,6 +973,18 @@ def test_a_pulse_takes_the_subtype_whose_own_model_fits_it_over_one_declared_fir
                          transitions={"steady": ["transient"], "transient": ["steady"]}, **kw)
     assert [s.subtype for s in r.segments] == [None, "pulse", None]
     assert r.objective == pytest.approx(_objective_by_hand(t, y, r, models), rel=1e-12)
+
+
+@pytest.mark.parametrize("model", ["exp", "first_order"])
+def test_typing_refines_segments_again_fits_each_only_with_its_own_states_model(model):
+    t, y, _ = _startup_record()
+    models = {"steady": 0, "transient": model}
+    kw = dict(method="refine", candidates=list(range(0, len(y) + 1, 60)), refine_s=30.0)
+    plain = optimal_segments(t, y, models, **kw)
+    # A catch-all leaves the search as it was; typing the refined segments again needs no fit of its own.
+    typed = optimal_segments(t, y, models, subtypes={"any": rs.Subtype("steady")}, **kw)
+    assert [(s.start, s.stop) for s in typed.segments] == [(s.start, s.stop) for s in plain.segments]
+    assert typed.n_fits == plain.n_fits
 
 
 def test_a_subtype_with_its_own_model_takes_that_models_bic_penalty():
@@ -1073,8 +1097,26 @@ def test_pruning_stays_exact_with_soft_caps_and_subtype_models(cost):
         got = optimal_segments(t, y, models, method="subset", candidates=positions, subtypes=subtypes, prune=prune,
                                **kw)
         assert got.objective == pytest.approx(want_cost, rel=1e-9) and _segmentation(got) in optima
-        if prune and cost == 5.0:  # here the cheap constant fits find a bound, so the search prunes
+        if prune and cost == 5.0:  # here the cheap constant fits give the search a finite bound to prune by
             assert math.isfinite(got.info["upper_bound"])
+
+
+def test_overflow_in_two_periods_and_of_two_soft_caps():
+    t = np.arange(24.0)
+    y = np.tile(np.repeat([0.0, 4.0, 0.0], 4), 2) + np.random.default_rng(2).normal(0, 0.01, 24)
+    pen = {"steady": 0.1, "transient": 50.0}
+    # Given in the other order from the count columns: the overflow columns follow the counts.
+    r = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                         max_counts={"steady": 1, "transient": 0},
+                         overflow_penalty={"transient": 60.0, "steady": 0.5}, penalty=pen)
+    assert r.overflow.columns.tolist() == ["steady", "transient"]
+    assert r.overflow["steady"].tolist() == [2, 2] and r.overflow["transient"].tolist() == [0, 0]
+    assert "beyond soft caps: steady +4 in 2 periods (cost 2)" in r.summary()
+    none = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                            max_counts={"steady": 1}, overflow_penalty={}, penalty=pen)
+    hard = optimal_segments(t, y, {"steady": 0, "transient": 1}, method="exact", per=12.0,
+                            max_counts={"steady": 1}, penalty=pen)
+    assert none.objective == hard.objective and none.overflow.shape == (2, 0) and "soft caps" not in none.summary()
 
 
 def test_overflow_penalty_validation():

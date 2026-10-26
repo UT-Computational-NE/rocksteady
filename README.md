@@ -423,7 +423,7 @@ detector's criteria.
 | Constraint | Meaning |
 |---|---|
 | `per`, `max_counts` | at most N segments of a state or subtype per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
-| `overflow_penalty` | makes the caps it names soft: each segment beyond one in a period costs this much instead of being refused; `res.overflow` says where. |
+| `overflow_penalty` | makes the caps it names soft: each segment beyond its cap in a period, counted once against every period it touches, costs this much instead of being refused; `res.overflow` says where. |
 | `transitions` | which state or subtype may follow which; default any. A state's name stands for all of its subtypes. This constrains the sequence of segments only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
 | `initial`, `final` | the states or subtypes the record's first and last segments may take; default any |
 | `min_duration_s`, `max_duration_s` | per state or subtype; a subtype's and its state's both bind. A minimum above the maximum is refused. |

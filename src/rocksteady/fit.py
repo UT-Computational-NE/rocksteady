@@ -75,7 +75,7 @@ everything needed to do so later.
 
 from dataclasses import dataclass, field
 from math import factorial
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union, cast
 
 import numpy as np
 
@@ -689,13 +689,20 @@ def fit_exp(t: np.ndarray, y: np.ndarray, T_min: Optional[float] = None, T_max: 
 # ---------------------------------------------------------------------------
 
 
-def _subtype_specs(spec: Mapping[str, Any]) -> Mapping[str, ModelSpec]:
+def _keyed_by_state(spec: Any) -> bool:
+    """Whether a model spec is keyed by state (a mapping without ``"model"``), rather than one model."""
+    return isinstance(spec, Mapping) and "model" not in spec
+
+
+def _subtype_specs(spec: ModelSpec) -> Mapping[str, ModelSpec]:
     """
     The ``"subtypes"`` entry of a spec keyed by state, checked: subtype
     names (none a state's) mapped to specs of one model each, not keyed by
-    state.
+    state. Empty for a spec of one model.
     """
-    own = spec.get(_SUBTYPES_KEY, {})
+    if not _keyed_by_state(spec):
+        return {}
+    own = cast(Mapping[str, Any], spec).get(_SUBTYPES_KEY, {})
     if not isinstance(own, Mapping):
         raise ValueError(f"a model spec's {_SUBTYPES_KEY!r} must be a mapping {{subtype: model spec}}, got {own!r}")
     for name, sub in own.items():
@@ -703,7 +710,7 @@ def _subtype_specs(spec: Mapping[str, Any]) -> Mapping[str, ModelSpec]:
         if name in _STATE_KEYS:
             raise ValueError(f"model spec {_SUBTYPES_KEY!r} names {name!r}, which is a state; give a state's model "
                              "beside 'subtypes'")
-        if isinstance(sub, Mapping) and "model" not in sub:
+        if _keyed_by_state(sub):
             raise ValueError(f"the model spec of subtype {name!r} must be one model, not keyed by state, got {sub!r}")
     return own
 
@@ -715,7 +722,8 @@ def resolve_model(spec: ModelSpec, state: Union[State, str, None] = None,
     ``state`` when the spec is keyed by state, or the entry for ``subtype``
     when the spec lists it under ``"subtypes"``.
     """
-    if isinstance(spec, Mapping) and "model" not in spec:
+    if _keyed_by_state(spec):
+        spec = cast(Mapping[str, Any], spec)
         keys = set(spec) - {_SUBTYPES_KEY}
         if not keys or not keys <= _STATE_KEYS:
             raise ValueError(f"a state-keyed model spec may only have keys {sorted(_STATE_KEYS)} and "
@@ -777,8 +785,7 @@ def validate_models(models: Mapping[str, ModelSpec],
                 check_model_options(model, opts)
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"model for {name!r} in state {State(st).value!r}: {exc}") from None
-        own = _subtype_specs(spec) if isinstance(spec, Mapping) and "model" not in spec else {}
-        for sub in own:
+        for sub in _subtype_specs(spec):
             try:
                 model, opts = resolve_model(spec, subtype=sub)
                 check_model_options(model, opts)

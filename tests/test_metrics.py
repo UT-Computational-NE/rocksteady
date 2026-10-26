@@ -4,6 +4,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import rocksteady as rs
@@ -179,7 +180,8 @@ def test_stats_by_subtype_keep_only_the_states_asked_for():
 
 def test_stats_by_subtype_refuse_a_subtype_named_like_a_row():
     for name in ("all", "transient"):
-        segs = [rs.Segment(0, 10, ST, subtype=name)]
+        # The refused segment between two that are fine.
+        segs = [rs.Segment(0, 3, ST, subtype="cold"), rs.Segment(3, 6, ST, subtype=name), rs.Segment(6, 10, TR)]
         with pytest.raises(ValueError, match=f"subtype {name!r}"):
             stats_by_state(np.zeros(10), np.ones(10), segs, dt=1.0, by="subtype")
     two = [rs.Segment(0, 5, ST, subtype="x"), rs.Segment(5, 10, TR, subtype="x")]
@@ -187,6 +189,15 @@ def test_stats_by_subtype_refuse_a_subtype_named_like_a_row():
         stats_by_state(np.zeros(10), np.ones(10), two, dt=1.0, by="subtype")
     with pytest.raises(ValueError, match="by must be"):
         stats_by_state(np.zeros(10), np.ones(10), [rs.Segment(0, 10, ST)], dt=1.0, by="segment")
+
+
+def test_stats_by_subtype_without_segments_or_subtypes_have_the_state_rows():
+    empty = stats_by_state(np.zeros(0), np.zeros(0), [], dt=1.0, by="subtype")
+    assert list(empty.index) == ["all", "steady", "transient", "indeterminate"] and (empty["n"] == 0).all()
+    segs = [rs.Segment(0, 4, ST), rs.Segment(4, 10, TR)]
+    plain = stats_by_state(np.zeros(10), np.arange(10.0), segs, dt=1.0, by="subtype")
+    by_state = stats_by_state(np.zeros(10), np.arange(10.0), segs, dt=1.0)
+    pd.testing.assert_frame_equal(plain.rename_axis("state"), by_state)
 
 
 def _var_mean_ar1(n, phi):

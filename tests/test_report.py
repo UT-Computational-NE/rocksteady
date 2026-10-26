@@ -105,6 +105,33 @@ def test_fit_report_records_each_subtypes_model_and_parameters():
     assert "subtype" not in plain.to_string()
 
 
+def test_the_table_of_segments_has_a_subtype_column_when_any_segment_has_a_subtype():
+    vals = _subtyped_values()
+    middle = [rs.Segment(0, 40, ST), rs.Segment(40, 80, TR, subtype="pulse"), rs.Segment(80, 160, ST)]
+    text = fit_report(vals, middle, SUBTYPE_MODELS)["y"].to_string().split("intervals")[1]
+    assert "subtype" in text.splitlines()[1] and " pulse " in text
+    none = [rs.Segment(0, 40, ST), rs.Segment(40, 80, TR), rs.Segment(80, 160, ST)]
+    assert "subtype" not in fit_report(vals, none, SUBTYPE_MODELS)["y"].to_string()
+
+
+def test_an_empty_subtypes_entry_is_a_spec_without_one():
+    vals = _subtyped_values()
+    spec = {"steady": 0, "transient": 3}
+    empty = fit_report(vals, SUBTYPED, {"y": {**spec, "subtypes": {}}})
+    plain = fit_report(vals, SUBTYPED, {"y": spec})
+    assert empty["y"].title == plain["y"].title and empty.provenance["models"] == plain.provenance["models"]
+    assert empty["y"].by_interval["model"].tolist() == ["poly 0", "poly 3", "poly 0", "poly 3"]
+
+
+def test_reports_by_subtype_of_segments_without_subtypes_are_by_state():
+    vals = _subtyped_values()
+    segs = [rs.Segment(0, 80, ST), rs.Segment(80, 160, TR)]
+    by_subtype = fit_report(vals, segs, {"y": 1}, by="subtype")["y"].by_state
+    by_state = fit_report(vals, segs, {"y": 1})["y"].by_state
+    assert by_subtype.index.name == "subtype"
+    pd.testing.assert_frame_equal(by_subtype.rename_axis("state"), by_state)
+
+
 def test_order_zero_on_one_plateau_has_no_correlation():
     vals = pd.DataFrame({"y": 5.0 + np.random.default_rng(2).normal(0, 0.1, 400)})
     rep = fit_report(vals, rs.segments(["steady"] * 400), {"y": 0}, dt=1.0)

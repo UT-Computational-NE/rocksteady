@@ -407,13 +407,16 @@ $0 = b_0 < b_1 < \dots < b_K = N$ and a state $s_k$ for each segment, to
 minimise
 
 $$
-\sum_{k=1}^{K} \Big[ C_{s_k}(b_{k-1}, b_k) + \lambda_{s_k} \Big],
+\sum_{k=1}^{K} \Big[ C_{s_k}(b_{k-1}, b_k) + \lambda_{s_k} \Big]
+  + \sum_{\text{soft } s} \omega_s \sum_{\text{periods } P} \max\big(0,\, n_{s,P} - N_s\big),
 \qquad C_s(p, q) = \min_\theta \sum_{i=p}^{q-1} \big(y_i - f_s(t_i; \theta)\big)^2 ,
 $$
 
-subject to the constraints:
+where $n_{s,P}$ counts the segments of $s$ touching period $P$ and
+$\omega_s$ is the `overflow_penalty` of a soft cap (none by default), subject
+to the constraints:
 - at most $N_s$ segments of each state per period, a segment counting
-  against every period it touches;
+  against every period it touches, unless the cap is soft;
 - the allowed state transitions;
 - per-state minimum and maximum durations.
 
