@@ -308,7 +308,24 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
-    return np.floor((ts - origin) / step).astype(np.int64)
+    with np.errstate(over="ignore"):  # a quotient too large for a float is refused below, without a warning
+        numbers = (ts - origin) / step
+    # From 2**53 a float no longer holds every whole number, and past 2**63 int64 overflows: samples would share
+    # periods that are not theirs. Below the bound, rounding can still move a sample or a period start when the
+    # origin is far from the times; this check does not catch that. A NaN time has no period number and fails
+    # the comparison; an infinite one is past every bound, but no per or period_origin helps it, so it is named
+    # on its own.
+    too_large = np.flatnonzero(np.abs(numbers) >= 2.0 ** 53)
+    if len(too_large):
+        infinite = too_large[np.isinf(ts[too_large])]
+        if len(infinite):
+            raise ValueError(f"the sample at {float(ts[infinite[0]])!r} s is not a finite time, so it falls in no "
+                             f"period of per {per!r}")
+        raise ValueError(f"per {per!r} and period_origin {period_origin!r} give the sample at "
+                         f"{float(ts[too_large[0]])!r} s a period number of magnitude 2**53 or more, where a "
+                         "float no longer holds every whole number; give a period_origin nearer the times, or a "
+                         "longer per")
+    return np.floor(numbers).astype(np.int64)
 
 
 def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
@@ -321,7 +338,12 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``); with numeric times, both are
-    seconds, and ``period_origin`` must be finite.
+    seconds, ``period_origin`` must be finite, and a ``per`` and
+    ``period_origin`` that give a sample a period number,
+    ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
+    ``ValueError``: from 2**53 on, a float no longer holds every whole
+    number. With a ``per``, an infinite time raises ``ValueError``: it
+    falls in no period.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -1708,7 +1730,11 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         times, a finite number of seconds (NaN, infinite, ``pd.NaT``,
         ``pd.NA``, or a NaT ``np.datetime64`` or ``np.timedelta64`` of any
         unit raises ``ValueError``). Default: the Unix epoch, i.e.
-        midnight for days.
+        midnight for days. With numeric times, a ``per`` and
+        ``period_origin`` that give a sample a period number,
+        ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
+        ``ValueError``: from 2**53 on, a float no longer holds every whole
+        number.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).

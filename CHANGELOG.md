@@ -22,6 +22,20 @@ Upgrading from 0.5.1. Behaviour changes to check:
   and a numpy NaT (`np.datetime64("NaT")` or `np.timedelta64("NaT")`, any
   unit; #154), as `period_origin` or as `per`, raised `float()`'s
   `TypeError`; they now raise `ValueError`.
+- **Breaking:** with numeric times, `count_by_period` and
+  `optimal_segments` refuse a `per` and `period_origin` that give a sample
+  a period number, `(t - period_origin) / per`, of `2**53` or more in
+  magnitude, with a `ValueError` that names both and the sample's time
+  (#155). 0.5.1 accepted them and could give wrong periods: six hourly samples
+  from 0 s with `per=7200` fell in one period with `period_origin=1e300`
+  (the period numbers overflowed int64) and in two with
+  `period_origin=1e20`, not three; with `per=1e-300`,
+  `optimal_segments(..., method="exact")` on those samples did not finish
+  in 20 s. Some calls at `2**53` or more are refused that 0.5.1
+  got right: `per=1` with `period_origin=2**53` gave each of those samples
+  its own period. `count_by_period` with a `per` also refuses an infinite
+  time, naming it (`optimal_segments` already refused one); 0.5.1 counted
+  that sample in a period of its own, far from the times.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -98,6 +112,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   positive number of seconds", each naming the value; both failed with
   `float()`'s `TypeError`. This applies to `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` (#154).
+- With numeric times, a `per` and `period_origin` that give a sample a
+  period number of `2**53` or more in magnitude are refused with a
+  `ValueError` that names both and the sample's time. From `2**53` on, a
+  float no longer holds every whole number: an origin far from the times
+  (`1e20` beside hourly samples from 0 s, with `per=7200`) or a tiny `per`
+  put samples in periods not their own, and past `2**63` in magnitude the
+  period numbers overflowed int64 (with `period_origin=1e300`, every
+  sample fell in one period), all without an error. This applies to
+  `count_by_period` and `optimal_segments`. `count_by_period` with a `per`
+  also refuses an infinite time, naming it; it counted that sample in a
+  period of its own, far from the times (#155).
 
 ### Documentation
 
