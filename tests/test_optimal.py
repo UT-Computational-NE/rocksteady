@@ -379,14 +379,18 @@ def test_a_large_period_origin_whose_period_numbers_a_float_holds_keeps_its_peri
 def test_a_far_period_origin_gives_the_periods_of_exact_arithmetic(origin, starts, counts):
     # Each origin modulo 7200 s, worked out in exact arithmetic: 0 s for 2**48 and 2**52 periods back, 1440 s for
     # 2**52.5 periods back and for -1e300, 6400 s for 1e20, 5760 s for 1e300. Far from the times, the origin's
-    # float spacing (256 s at 2**48 periods of 7200 s, 4096 s at 2**52) is coarser than the samples.
+    # float spacing (256 s at 2**48 periods of 7200 s, 4096 s at 2**52) is coarser than the samples' own.
     t = np.arange(6) * 3600.0
     got = count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=origin)
     assert got["steady"].tolist() == counts
     assert got.index.tolist() == starts
-    # The optimiser numbers periods the same way: one segment over the six samples touches each period once.
-    fit = optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin, method="exact")
-    assert fit.counts["steady"].tolist() == [1] * len(starts)
+    # The optimiser numbers periods the same way. Alternating values, and segments of at most an hour, give it
+    # one segment per sample.
+    y = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+    fit = optimal_segments(t, y, {"steady": 0}, per=7200, period_origin=origin, method="exact",
+                           max_duration_s={"steady": 3600.0})
+    assert len(fit.segments) == 6
+    assert fit.counts["steady"].tolist() == counts
     assert fit.counts.index.tolist() == starts
 
 
@@ -412,6 +416,16 @@ def test_a_period_start_is_the_float_nearest_its_exact_start():
     assert got.index.tolist() == [0.33]
 
 
+def test_a_period_start_near_the_largest_float_is_its_exact_start_without_an_overflow():
+    # Periods of 1e308 s from -1.7e308 s: in floats, -2 * 1e308 overflows before -1.7e308 + 2e308 is added.
+    t = np.array([-1.7e308, -1e308, 0.0, 1.7e308])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        got = count_by_period([Segment(i, i + 1, ST) for i in range(4)], t, 1e308, period_origin=-1.7e308)
+    assert got["steady"].tolist() == [2, 1, 1]
+    assert got.index.tolist() == [-1.7e308, -6.999999999999999e307, 1.3e308]
+
+
 def test_a_difference_from_the_period_start_that_rounds_keeps_the_periods_of_exact_arithmetic():
     # Periods of 1 s on the half second. The samples, 2**52 + 1 s and 2**52 + 2 s, are 2**52 + 0.5 and 2**52 + 1.5
     # periods on: in adjacent periods. At 2**52 a float holds only whole numbers, and both differences round to
@@ -421,6 +435,27 @@ def test_a_difference_from_the_period_start_that_rounds_keeps_the_periods_of_exa
     got = count_by_period([Segment(0, 2, ST)], t, 1, period_origin=0.5)
     assert got["steady"].tolist() == [1, 1]
     assert got.index.tolist() == [2.0 ** 52, 2.0 ** 52 + 2]
+
+
+def test_a_difference_that_rounds_onto_a_period_start_keeps_the_sample_in_the_period_before():
+    # Hourly periods from 0.05 s. The sample on a whole hour, 276201342969 hours on, lies 0.05 s before a period
+    # start; a float there is a multiple of 0.125 s, so t - 0.05 rounds back to t and the float quotient is the
+    # whole number 276201342969. The sample is in the period before, which starts 0.05 s after the hour before:
+    # the float nearest that start is the hour itself.
+    t = np.array([276201342969 * 3600.0])
+    got = count_by_period([Segment(0, 1, ST)], t, 3600, period_origin=0.05)
+    assert got["steady"].tolist() == [1]
+    assert got.index.tolist() == [276201342968 * 3600.0]
+
+
+def test_a_quotient_that_rounds_just_past_a_whole_number_keeps_the_sample_in_the_period_before():
+    # Periods of 0.1 s from 0.123 s, i.e. on 0.023 s (0.022999999999999993 as worked out from the floats). The
+    # sample is the float nearest the start of period 30851831921, but a little before that start: the exact
+    # quotient is 30851831920.99999974, while the float one, after the difference rounds, is 30851831921.000004.
+    t = np.array([3085183192.123])
+    got = count_by_period([Segment(0, 1, ST)], t, 0.1, period_origin=0.123)
+    assert got["steady"].tolist() == [1]
+    assert got.index.tolist() == [3085183192.0230002]
 
 
 def test_an_infeasible_period_far_from_the_origin_is_named_by_its_exact_start():
@@ -492,8 +527,8 @@ def test_a_time_that_is_not_a_number_is_not_refused_when_the_other_period_number
 @pytest.mark.parametrize("per, origin", [(7200, None), (1e9, 0.0), (1e-13, None)],
                          ids=["per 7200", "per 1e9, origin 0", "per 1e-13"])
 def test_an_infinite_time_is_refused_by_name_without_advice_on_per_or_period_origin(time, per, origin):
-    # No per or period_origin gives an infinite time a period. With per 1e-13 the sample at 3600 s comes first and
-    # is past 2**53 periods too (3.6e16), but the infinite time is named.
+    # No per or period_origin gives an infinite time a period. With per 1e-13 the sample at 3600 s, before the
+    # infinite time, is past 2**53 periods too (3.6e16 of them), but the infinite time is named.
     t = np.array([0.0, 3600.0, time, 10800.0, 14400.0, 18000.0])
     named = rf"^the sample at {re.escape(repr(time))} s is not a finite time, so it falls in no period of per {per!r}$"
     with pytest.raises(ValueError, match=named):

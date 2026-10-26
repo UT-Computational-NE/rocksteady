@@ -35,8 +35,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   refused one); 0.5.1 counted that sample in a period of its own, far
   from the times.
 - With numeric times, each sample falls in the period exact arithmetic
-  gives it, and each period is indexed by the float nearest its exact
-  start (#165). 0.5.1 worked periods out in floats, which gave wrong
+  gives it, taking the floats as given, and each period is indexed by the
+  float nearest its exact start (#165). 0.5.1 worked periods out in floats, which gave wrong
   periods without an error when `period_origin` was far from the times.
   Six hourly samples from 0 s with `per=7200` fell in one period with
   `period_origin=1e300` (the period numbers overflowed int64), and in two
