@@ -22,6 +22,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   and a numpy NaT (`np.datetime64("NaT")` or `np.timedelta64("NaT")`, any
   unit; #154), as `period_origin` or as `per`, raised `float()`'s
   `TypeError`; they now raise `ValueError`.
+- **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
+  and `OptimalSegmentation.counts` refuse a time as `per` or
+  `period_origin`, whatever its unit, with a `ValueError` that names it
+  (#163): numeric times are seconds, and a time is never read as a number
+  of them. 0.5.1 read an `np.timedelta64` or `np.datetime64` in
+  nanoseconds or without a unit, or a 0-d array of one, as that many
+  seconds: `per=np.timedelta64(3600, "ns")` gave hourly periods. Every
+  other time (`np.timedelta64(1, "h")`, `pd.Timedelta`, `pd.Timestamp`,
+  `pd.Period`, a `pd.DateOffset`, a `datetime` object) raised `float()`'s
+  `TypeError`, as did a 0-d array of a numpy NaT, which now gets the
+  `ValueError` of the NaT it holds.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -98,6 +109,17 @@ Upgrading from 0.5.1. Behaviour changes to check:
   positive number of seconds", each naming the value; both failed with
   `float()`'s `TypeError`. This applies to `count_by_period`,
   `optimal_segments` and `OptimalSegmentation.counts` (#154).
+- With numeric times, a time as `per` or `period_origin` gets "with
+  numeric times, per (or period_origin) must be a number of seconds, not a
+  time", naming the value, whatever its unit: an `np.datetime64` or
+  `np.timedelta64` of any unit or none, a `pd.Timestamp`, `pd.Timedelta`,
+  `pd.Period` or `pd.DateOffset`, or a `datetime`, `date`, `time` or
+  `timedelta`, each also in a 0-d array. One in nanoseconds or without a
+  unit was read as that many seconds, and the rest failed with `float()`'s
+  `TypeError`. A 0-d array of a NaT is read as the NaT it holds, so it gets
+  the NaT's `ValueError`; it failed with `float()`'s `TypeError`. This
+  applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#163).
 
 ### Documentation
 
