@@ -33,11 +33,15 @@ Upgrading from 0.5.1. Behaviour changes to check:
   apart, gave each sample its own period. `count_by_period` with a `per`
   also refuses an infinite time, naming it (`optimal_segments` already
   refused one); 0.5.1 counted that sample in a period of its own, far
-  from the times.
+  from the times. A period start past the most negative float is refused
+  too, naming `per`, `period_origin` and the sample (#165); only a `per`
+  near the largest float gives one. With `per=1.5e308`, 0.5.1 indexed the
+  period of the sample at `-1.7e308` s as `-inf`.
 - With numeric times, each sample falls in the period exact arithmetic
   gives it, taking the floats as given, and each period is indexed by the
-  float nearest its exact start (#165). 0.5.1 worked periods out in floats, which gave wrong
-  periods without an error when `period_origin` was far from the times.
+  float nearest its exact start (#165). 0.5.1 worked periods out in
+  floats, which gave wrong periods without an error when `period_origin`
+  was far from the times.
   Six hourly samples from 0 s with `per=7200` fell in one period with
   `period_origin=1e300` (the period numbers overflowed int64), and in two
   periods, starting 0 s and 16384 s, with `period_origin=1e20`; they now
@@ -172,7 +176,9 @@ Upgrading from 0.5.1. Behaviour changes to check:
   walk every period. This applies to `count_by_period` and
   `optimal_segments`. `count_by_period` with a `per` also refuses an
   infinite time, naming it; it counted that sample in a period of its
-  own, far from the times (#155).
+  own, far from the times (#155). A period start past the most negative
+  float, which no index can show, is refused by name; it was indexed
+  `-inf` (#165).
 
 ### Documentation
 

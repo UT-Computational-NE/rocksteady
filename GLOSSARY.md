@@ -61,3 +61,11 @@ _Avoid_: limit (that is a criterion's threshold), rule
 **Period**:
 The span of time (a day, a week) that per-period counts of segments apply to.
 _Avoid_: window (the detector's), sample period (say sample spacing)
+
+**Period start**:
+Where a period begins: `period_origin` plus a whole number of `per`. Count tables are indexed by period start; with numeric times, by the float nearest it.
+_Avoid_: period origin (the one start the caller gives)
+
+**Period number**:
+With numeric times, how many whole periods a sample lies after the period start in `[0, per)` (`period_origin` modulo `per`). One of `2**53` or more in magnitude is refused.
+_Avoid_: period index (the index holds period starts)

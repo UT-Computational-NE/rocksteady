@@ -147,8 +147,8 @@ import warnings
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from numbers import Real
-from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol,
-                    Sequence, Sized, Tuple, Union, cast)
+from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple,
+                    Optional, Protocol, Sequence, Sized, Tuple, Union, cast)
 
 import numpy as np
 
@@ -336,39 +336,54 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
         # than that would recur. Period numbers never go back: the repeated time stays in the period in
         # progress, so each period has one count budget, and the optimiser's counters stay valid.
         return np.maximum.accumulate(ids) if len(ids) else ids
-    step, phase = _numeric_periods(per, period_origin)
-    phase_float = float(phase)
+    grid = _numeric_periods(per, period_origin)
+    step = grid.step
     finite = np.isfinite(ts)
     with np.errstate(over="ignore", invalid="ignore"):  # an overflow or an infinite time is refused below
-        if phase == 0:
-            diff, exact = ts, finite
+        if grid.phase == 0:
+            diff, diff_exact = ts, finite
         else:
-            diff = ts - phase_float
-            # The rounding error of the difference (Knuth's two-sum): zero exactly when the difference is exact.
+            diff = ts - grid.phase_float
+            # The rounding error of the difference: zero exactly when the difference is exact. Dekker's fast
+            # two-sum holds when every |t| is at least the phase; otherwise Knuth's two-sum.
             back = diff - ts
-            error = (ts - (diff - back)) + (-phase_float - back)
-            exact = finite & (error == 0) & (Fraction(phase_float) == phase)
+            if np.min(np.abs(ts), initial=np.inf) >= grid.phase_float:
+                error = -grid.phase_float - back
+            else:
+                error = (ts - (diff - back)) + (-grid.phase_float - back)
+            diff_exact = finite & (error == 0) & grid.phase_is_float
         quotient = diff / step
     numbers = np.floor(quotient)
     # From 2**53 a float no longer holds every whole number, and past 2**63 int64 overflows: samples would share
     # periods that are not theirs. With the difference exact, its comparison with 2**53 periods (a power of two
     # times per, so exact) is exact. A NaN time has no period number and fails every comparison; an infinite one
     # is past every bound, but no per or period_origin helps it, so it is named on its own.
-    too_large = (exact & (np.abs(diff) >= 2.0 ** 53 * step)) | np.isinf(ts)
+    too_large = (diff_exact & (np.abs(diff) >= 2.0 ** 53 * step)) | np.isinf(ts)
     # With the difference exact, a float quotient that is not whole floors to the exact period number: rounding
-    # is monotone and keeps it between the same whole numbers. One that is whole is exact only when the remainder
-    # (exact, from fmod) is 0. When the difference rounded, or the period start is not a float, the quotient is
-    # within 2 * 2**-53 * |q| + 2**-53 of the exact one (one rounding each of the start, the difference and the
-    # quotient); it floors right when it is farther than that from a whole number, taken here 4 times over.
-    # The others are worked out in exact arithmetic.
-    with np.errstate(invalid="ignore"):  # an infinite quotient is past 2**52
-        magnitude = np.abs(quotient)
-        near_whole = np.abs(quotient - np.round(quotient)) <= 2.0 ** -50 * (magnitude + 1)
-        doubtful = finite & ~too_large & ~exact & ((magnitude >= 2.0 ** 52) | near_whole)
-    whole = np.flatnonzero(exact & ~too_large & (numbers == quotient))
-    doubtful[whole[np.fmod(diff[whole], step) != 0]] = True
-    for i in np.flatnonzero(doubtful):
-        number = (Fraction(float(ts[i])) - phase) / Fraction(step)
+    # is monotone and keeps it between the same whole numbers. A whole one, n, is decided by the remainder r
+    # (exact, from fmod, with the difference's sign): the exact quotient is n - 1 + r / per past n - 1 when
+    # r > per / 2, or r / per short of n when -per / 2 < r < 0; otherwise its floor is n. |r| is never per / 2:
+    # a half-integer quotient under 2**52 is a float, so not whole, and from 2**52 on it would need a time with
+    # more than 53 significant bits.
+    whole = np.flatnonzero(diff_exact & ~too_large & (numbers == quotient))
+    remainder = np.fmod(diff[whole], step)
+    with np.errstate(over="ignore"):  # 2|r| past the largest float is still more than per
+        twice = 2 * np.abs(remainder)
+    numbers[whole] -= ((remainder > 0) & (twice > step)) | ((remainder < 0) & (twice < step))
+    # When the difference rounded, or the period start is not a float, the quotient is within
+    # 2 * 2**-53 * |q| + 2**-53 of the exact one (one rounding each of the start, the difference and the
+    # quotient); it floors right when it is farther than that from a whole number, taken here at least 4 times
+    # over. The others are worked out in exact arithmetic: among them every quotient of 2**52 or more, which is
+    # whole, and an infinite one (it overflowed), whose distance is NaN.
+    rounded = finite & ~too_large & ~diff_exact
+    doubtful = np.empty(0, dtype=np.intp)
+    if rounded.any():
+        with np.errstate(invalid="ignore"):
+            past = quotient - numbers  # in [0, 1)
+            clear = np.minimum(past, 1 - past) > 2.0 ** -50 * (np.abs(quotient) + 1)
+        doubtful = np.flatnonzero(rounded & ~clear)
+    for i in doubtful:
+        number = (Fraction(float(ts[i])) - grid.phase) / grid.exact_step
         if abs(number) >= 2 ** 53:
             too_large[i] = True
         else:
@@ -383,23 +398,48 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
                          f"{float(ts[refused[0]])!r} s a period number of magnitude 2**53 or more, counted from "
                          "the period start in [0, per), where a float no longer holds every whole number; give a "
                          "longer per")
+    # A period starts less than per before its samples, so only a sample within per of the most negative float
+    # can have a start past it, which no index can show.
+    with np.errstate(over="ignore"):
+        low = np.flatnonzero(finite & (ts - step <= -np.finfo(float).max))
+    for i in low:
+        try:
+            float(grid.phase + int(numbers[i]) * grid.exact_step)
+        except OverflowError:
+            raise ValueError(f"per {per!r} and period_origin {period_origin!r} start the period of the sample at "
+                             f"{float(ts[i])!r} s past the most negative float, so no index can show it; give a "
+                             "shorter per") from None
     return numbers.astype(np.int64)
 
 
-def _numeric_periods(per, period_origin) -> Tuple[float, Fraction]:
+class _PeriodGrid(NamedTuple):
     """
-    The period ``per`` of numeric times, in seconds, and the one period start
-    in ``[0, per)``: ``period_origin`` modulo ``per``, exact, so a far origin
-    loses nothing to rounding. It is often not a float (``period_origin``
-    -1e-300 beside ``per`` 7200 gives 7200 - 1e-300). Period numbers count
-    from it.
+    Periods of numeric times: ``step`` (``per``) in seconds, and ``phase``,
+    the one period start in ``[0, per)``: ``period_origin`` modulo ``per``,
+    exact, so a far origin loses nothing to rounding. It is often not a
+    float (``period_origin`` -1e-300 beside ``per`` 7200 gives
+    7200 - 1e-300). Period numbers count from it.
+    """
+    step: float
+    phase: Fraction
+    phase_float: float  # the float nearest phase
+    phase_is_float: bool
+    exact_step: Fraction
+
+
+def _numeric_periods(per, period_origin) -> _PeriodGrid:
+    """
+    The periods ``per`` and ``period_origin`` give numeric times. A ``per``
+    that is not a positive number of seconds is refused.
     """
     if isinstance(per, str):
         raise ValueError("per as a string (e.g. '1D') needs times as a DatetimeIndex; give seconds for numeric times")
     step = _seconds(per)
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
-    return step, Fraction(_origin_seconds(period_origin)) % Fraction(step)
+    exact_step = Fraction(step)
+    phase = Fraction(_origin_seconds(period_origin)) % exact_step
+    return _PeriodGrid(step, phase, float(phase), Fraction(float(phase)) == phase, exact_step)
 
 
 def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
@@ -416,11 +456,14 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     seconds, ``period_origin`` must be finite, each sample falls in the
     period exact arithmetic gives it, taking the floats as given, and each
     period is indexed by the float nearest its exact start, however far
-    ``period_origin`` is from the times. A ``per`` that gives a sample a period number of 2**53 or
-    more in magnitude, counted from the period start in ``[0, per)``
-    (``period_origin`` modulo ``per``), raises ``ValueError``: from 2**53
-    on, a float no longer holds every whole number. With a ``per``, an
-    infinite time raises ``ValueError``: it falls in no period.
+    ``period_origin`` is from the times. A ``per`` that gives a sample a
+    period number of 2**53 or more in magnitude, counted from the period
+    start in ``[0, per)`` (``period_origin`` modulo ``per``), raises
+    ``ValueError``: from 2**53 on, a float no longer holds every whole
+    number. So does a period start past the most negative float, which no
+    index can show (only a ``per`` near the largest float gives one). With
+    a ``per``, an infinite time raises ``ValueError``: it falls in no
+    period.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
@@ -466,18 +509,17 @@ def _period_starts(ids: np.ndarray, idx, per, period_origin):
     # The float nearest each exact start, phase + k * step. When phase is a float and k * step is exact (k times
     # step's odd integer significand is under 2**53), one float addition rounds it once, to the nearest. The
     # others are worked out over a common power-of-two denominator: Python divides integers with one rounding.
-    step, phase = _numeric_periods(per, period_origin)
-    phase_float, exact_step = float(phase), Fraction(step)
-    odd = exact_step.numerator // (exact_step.numerator & -exact_step.numerator)
+    grid = _numeric_periods(per, period_origin)
+    odd = grid.exact_step.numerator // (grid.exact_step.numerator & -grid.exact_step.numerator)
     ids = np.asarray(ids, dtype=np.int64)
     with np.errstate(over="ignore"):  # a start past the largest float on the way is worked out exactly below
-        starts = phase_float + ids * step
-    fast = np.isfinite(starts) & (np.abs(ids) < 2 ** 53 // odd) & (Fraction(phase_float) == phase)
+        starts = grid.phase_float + ids * grid.step
+    fast = np.isfinite(starts) & (np.abs(ids) < 2 ** 53 // odd) & grid.phase_is_float
     rest = np.flatnonzero(~fast)
     if len(rest):
-        den = math.lcm(phase.denominator, exact_step.denominator)
-        phase_units = phase.numerator * (den // phase.denominator)
-        step_units = exact_step.numerator * (den // exact_step.denominator)
+        den = math.lcm(grid.phase.denominator, grid.exact_step.denominator)
+        phase_units = grid.phase.numerator * (den // grid.phase.denominator)
+        step_units = grid.exact_step.numerator * (den // grid.exact_step.denominator)
         for i in rest:
             starts[i] = (phase_units + int(ids[i]) * step_units) / den
     return pd.Index(starts)
@@ -1841,7 +1883,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         gives a sample a period number of 2**53 or more in magnitude,
         counted from the period start in ``[0, per)`` (``period_origin``
         modulo ``per``), raises ``ValueError``: from 2**53 on, a float no
-        longer holds every whole number.
+        longer holds every whole number. So does a period start past the
+        most negative float, which no index can show.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
