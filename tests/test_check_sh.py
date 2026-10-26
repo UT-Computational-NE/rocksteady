@@ -121,12 +121,13 @@ def test_an_interpreter_without_the_dev_extra_is_named_and_stops_the_checks(tmp_
     assert str(bare) in run.stderr and sys.executable in run.stderr  # as given, and the binary it runs
     assert "pytest" in run.stderr and "sphinx" in run.stderr and "mypy" in run.stderr  # the full run typechecks
     assert "pylint" in run.stderr and "pycodestyle" in run.stderr  # and lints
-    assert "lacks numpy pandas, which the package needs, and pytest" in run.stderr  # its own dependencies first
+    # Its own dependencies first.
+    assert "lacks numpy pandas python-dateutil, which the package needs, and pytest" in run.stderr
     # That interpreter's own pip, for the missing distributions only: `pip install -e` from a worktree would point
     # the environment's editable install at the worktree.
     # With the minimum versions the extras in pyproject.toml ask for.
-    want = ("'numpy>=1.22' 'pandas>=1.5' 'pytest>=7' 'mypy>=1.10' 'pylint>=3' 'pycodestyle>=2.11' 'sphinx>=7' "
-            "'sphinx-rtd-theme>=2' 'myst-parser>=2'")
+    want = ("'numpy>=1.22' 'pandas>=1.5' 'python-dateutil>=2.8.1' 'pytest>=7' 'mypy>=1.10' 'pylint>=3' "
+            "'pycodestyle>=2.11' 'sphinx>=7' 'sphinx-rtd-theme>=2' 'myst-parser>=2'")
     assert f"{sys.executable} -m pip install {want}" in run.stderr
     # A fresh environment is set up with the editable install, from the main checkout.
     assert 'pip install -e ".[dev]" from the main checkout' in run.stderr
