@@ -53,9 +53,26 @@ Upgrading from 0.5.1. Behaviour changes to check:
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
   started four-hour periods at 19:00, 23:00, 03:00, ...; it now starts them
   at 21:00, 01:00, 05:00, ..., as `"2026-03-02 01:00-06:00"` (01:00 in
-  Chicago) does. An origin in the index's own zone, or a naive one, gives
-  the same periods as in 0.5.1; beside a naive index, an aware origin still
-  keeps its own clock.
+  Chicago) does. The conversion is at the origin's own instant, so its date
+  decides the hour: `"2026-07-01 07:00+00:00"` is 02:00 in Chicago
+  (daylight saving time) and starts them on 02:00's grid, even beside a
+  March record (#159). An origin in the index's own zone (that zone, not
+  a fixed offset such as `-06:00`, which is Chicago's only in winter) with
+  a whole date (see the next item), or a naive one, gives the same periods
+  as in 0.5.1; beside a naive index, an aware origin still keeps its own
+  clock.
+- **Breaking:** with times as a `DatetimeIndex`, `count_by_period`,
+  `optimal_segments` and `OptimalSegmentation.counts` refuse an aware
+  `period_origin` string without a whole date (year, month and day), such
+  as `"07:00+00:00"`, `"7am UTC"` or `"2026-03 07:00+00:00"`, with a
+  `ValueError` that names it (#159). 0.5.1 read it on its own clock, on
+  the date pandas gave it: today, year 1 or the 1st of the month. Before
+  pandas 3.0, 0.5.1 raised `OutOfBoundsDatetime` on a string dated in
+  year 1: pandas 1.5 cannot parse it, and on pandas 2.x 0.5.1 could not
+  cast it to nanoseconds. Converted to the index's zone, as an aware
+  origin now is, today's date would make the periods depend on the season
+  the code runs in. A naive string without a date (`"01:00"`) is still
+  accepted.
 - Two error messages read differently; code that matches their text needs
   updating (#137; the rule is under Changed). Without `subtypes`, `initial`
   or `final`, the infeasibility `ValueError` of `optimal_segments` opened
@@ -85,11 +102,25 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   is converted to the index's zone before periods start on its wall clock,
   so the same instant in any zone starts the same periods. It was read on
-  its own clock: beside a Chicago index, `07:00 UTC` (01:00 in Chicago)
-  started four-hour periods on 07:00's grid (23:00, 03:00, ...), not
-  01:00's. An origin in the index's own zone, or a naive one, gives the
-  same periods as before; beside a naive index, an aware origin still
-  keeps its own clock (#144).
+  its own clock: beside a Chicago index, 07:00 UTC on a date in standard
+  time (01:00 in Chicago) started four-hour periods on 07:00's grid
+  (23:00, 03:00, ...), not 01:00's. It is converted at its own instant, so
+  07:00 UTC on a date in daylight saving time (02:00 in Chicago) starts
+  them on 02:00's grid, whatever the record's season (#159). An origin in
+  the index's own zone (not a fixed offset that matches it in one season)
+  with a whole date, or a naive one, gives the same periods as before;
+  beside a naive index, an aware origin still keeps its own clock (#144).
+- An aware `period_origin` string without a whole date (year, month and
+  day) is refused with a `ValueError` that names it, beside an aware or a
+  naive index: pandas dates `"07:00+00:00"` today, `"7am UTC"` in year 1
+  (pandas 1.5 cannot hold it) and `"2026-03 07:00+00:00"` on the 1st
+  (#159). A zone name dateutil does not know is left to pandas, which
+  refuses it (pandas 3) or drops it with a warning and reads the time as
+  naive; the machine's own zone name (`"07:00 CST"` on a machine in
+  Chicago) counts as aware, and without a date is refused.
+- `python-dateutil` (2.8.1 or later) is a declared dependency; pandas
+  already required it. `optimal.py` uses it to tell an aware string
+  without a whole date (#159).
 - The `ValueError` for an infeasible `optimal_segments` names only what
   the call uses: "first and last segments" only when `initial` or `final`
   is given, and "the subtypes' conditions" only with subtypes. Without
@@ -167,6 +198,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   zone a conversion targets (#158).
 - `docs/agents/review.md`: the shape of `review.json` for a review posted
   as the bot: `event`, `body`, `comments[]` and `commit_id` (#79).
+- `docs/agents/review.md`: a change that converts a time between zones, or
+  reads one on a wall clock, is probed with an input from the other
+  daylight-saving season, one without a whole date, and the fall-back and
+  spring-forward hours (#159).
 
 ### Tests and CI
 
@@ -174,7 +209,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   Chicago `DatetimeIndex`: a naive string, `pd.Timestamp`,
   `datetime.datetime` and `np.datetime64` (in ns and in minutes), and aware
   ones in Chicago, UTC and New York, each through `count_by_period` and a
-  capped `optimal_segments` (#145).
+  capped `optimal_segments` (#145). It also pins aware strings with a date
+  (ISO, `Z` and RFC 2822 forms) and a naive string without one (#159).
+- An aware `period_origin` dated in the other season from a Chicago record
+  is pinned on its own instant's grid: a July 07:00 UTC beside a March
+  record on 02:00's, and a March one beside a July record on 01:00's,
+  through `count_by_period` and a capped `optimal_segments` (#159). On
+  pandas 3, a zone name pandas does not know (`"07:00 CST"`) is pinned to
+  get pandas' own error, with no warning before it.
+- CI's `min-deps` job prints the python-dateutil it gets. It does not
+  pin 2.8.1, the oldest that `pyproject.toml` allows: on CI's runner, with
+  2.8.1, `test_a_signal_during_the_restore_waits_for_it_to_finish` in
+  `tests/test_mutate.py` fails every time (#159, #172).
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
@@ -190,7 +236,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   30 s (#147).
 - `tools/check.sh` stops before pytest, naming them and the install
   command, when its interpreter lacks one of the package's
-  dependencies (numpy, pandas: those `pyproject.toml` lists). It names an
+  dependencies (those `pyproject.toml` lists: numpy, pandas and, since
+  #159, python-dateutil). It names an
   interpreter that exits non-zero, which ended the script without a message
   of its own, and a `PYTHON` that is not executable, which it called
   missing (#90).

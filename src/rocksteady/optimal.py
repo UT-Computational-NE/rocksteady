@@ -143,6 +143,7 @@ a longer segment never costs less, whichever subtype could take it.
 
 import datetime
 import math
+import warnings
 from dataclasses import dataclass, field, replace
 from numbers import Real
 from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Protocol,
@@ -287,12 +288,40 @@ def _period_step(per):
     return step
 
 
+def _aware_without_a_whole_date(text: str) -> bool:
+    """
+    Whether ``text`` is an aware time without a whole date (year, month and
+    day). pandas dates ``"07:00+00:00"`` today, so the instant, and with it
+    the wall-clock time in another zone, depends on the season; it dates
+    ``"7am UTC"`` in year 1 (pandas 1.5 cannot hold it), and ``"2026-03
+    07:00+00:00"`` on the 1st. A string dateutil cannot read is left to
+    pandas. dateutil reads the machine's own zone name (CST in Chicago) as
+    local time, so such a string counts as aware.
+    """
+    from dateutil import parser
+
+    try:
+        # A zone name dateutil does not know warns; pandas then refuses it or warns itself. catch_warnings swaps the
+        # process-wide filters, so another thread's warnings could be filtered too during these two parses.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", parser.UnknownTimezoneWarning)
+            # Defaults that differ in year, month and day, in leap years and in months of 31 days, so that any
+            # date the text gives is valid beside either.
+            first = parser.parse(text, default=datetime.datetime(2000, 1, 1))
+            second = parser.parse(text, default=datetime.datetime(2004, 3, 2))
+    except (ValueError, OverflowError):
+        return False
+    return first.tzinfo is not None and first.date() != second.date()
+
+
 def _origin_stamp(period_origin, tz):
     """
     The wall-clock start ``period_origin`` of periods of a DatetimeIndex in
-    zone ``tz`` (default: the Unix epoch). An aware origin is read on the
-    index's clock, so the same instant in any zone starts the same periods;
-    beside a naive index (``tz`` None) it keeps its own clock.
+    zone ``tz`` (default: the Unix epoch). An aware origin is converted to
+    the index's zone at its own instant and read on the index's clock, so
+    the same instant in any zone starts the same periods; beside a naive
+    index (``tz`` None) it keeps its own clock. An aware string without a
+    whole date is refused.
     """
     import pandas as pd
 
@@ -301,6 +330,9 @@ def _origin_stamp(period_origin, tz):
     if _is_number(period_origin):
         raise ValueError(f"period_origin as a number needs numeric times (seconds); with a DatetimeIndex give a "
                          f"timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}")
+    if isinstance(period_origin, str) and _aware_without_a_whole_date(period_origin):
+        raise ValueError(f"an aware period_origin needs a whole date (e.g. '2026-03-02 07:00+00:00'), "
+                         f"got {period_origin!r}")
     origin = pd.NaT if _is_missing(period_origin) else pd.Timestamp(period_origin)
     if pd.isna(origin):
         raise ValueError(f"period_origin must be a timestamp (e.g. '2026-03-02 06:00'), got {period_origin!r}, "
@@ -362,7 +394,8 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     ``t``, ``per`` and ``period_origin`` are as in ``optimal_segments``:
     with a DatetimeIndex, ``per`` is a string or Timedelta with a unit and
     ``period_origin`` a timestamp (for either, a number, or a value pandas
-    reads as NaT, raises ``ValueError``); with numeric times, both are
+    reads as NaT, raises ``ValueError``, as does an aware string without a
+    whole date for ``period_origin``); with numeric times, both are
     seconds, ``period_origin`` must be finite, a time as either (numpy,
     pandas or standard library, any unit or none, also in a 0-d array)
     raises ``ValueError``, and a ``per`` and ``period_origin`` that give a
@@ -1757,17 +1790,26 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         Where periods start: a timestamp with a DatetimeIndex (a number, or
         one pandas reads as NaT, raises ``ValueError``), read on the index's
         wall clock. Beside an aware index, an aware one is converted to the
-        index's zone first, so the same instant in any zone starts the same
-        periods; beside a naive index, it keeps its own clock. With numeric
-        times, a finite number of seconds (NaN, infinite, ``pd.NaT``,
-        ``pd.NA``, a NaT ``np.datetime64`` or ``np.timedelta64`` of any
-        unit, or a time as for ``per``, raises ``ValueError``; a 0-d array
-        is read as the value it holds). Default: the Unix epoch, i.e.
-        midnight for days. With numeric times, a ``per`` and
-        ``period_origin`` that give a sample a period number,
-        ``(t - period_origin) / per``, of 2**53 or more in magnitude raise
-        ``ValueError``: from 2**53 on, a float no longer holds every whole
-        number.
+        index's zone at its own instant, so the same instant in any zone
+        starts the same periods. Beside a Chicago index, whatever the
+        record's season, ``"2026-03-02 07:00+00:00"`` starts them on 01:00's
+        grid and ``"2026-07-01 07:00+00:00"`` (daylight saving time) on
+        02:00's. Beside a naive index, it keeps its own clock. An aware
+        string needs a whole date (year, month and day), beside either
+        index, or raises ``ValueError``: pandas dates ``"07:00+00:00"``
+        today, so beside an aware index its periods would depend on the
+        season it runs in. A zone name dateutil does not know is left to
+        pandas, which refuses it (pandas 3) or reads the time as naive; the
+        machine's own zone name (CST in Chicago) counts as aware. With
+        numeric times, a finite number of seconds (NaN, infinite,
+        ``pd.NaT``, ``pd.NA``, a NaT ``np.datetime64`` or
+        ``np.timedelta64`` of any unit, or a time as for ``per``, raises
+        ``ValueError``; a 0-d array is read as the value it holds).
+        Default: the Unix epoch, i.e. midnight for days. With numeric
+        times, a ``per`` and ``period_origin`` that give a sample a period
+        number, ``(t - period_origin) / per``, of 2**53 or more in
+        magnitude raise ``ValueError``: from 2**53 on, a float no longer
+        holds every whole number.
     prune : bool
         Drop candidate segments whose own cost exceeds a known feasible
         solution's total (see "Cost" in the module docstring).
