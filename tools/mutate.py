@@ -234,16 +234,28 @@ def _write_in_place(path, data):
 
 
 def _restore(path, original, stat):
-    """Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done."""
-    mask = getattr(signal, "pthread_sigmask", None)  # POSIX
-    if mask:
-        mask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    """
+    Write the original back, with its modification time; Ctrl-C and SIGTERM wait until it is done. They are held
+    by their Python handlers, not blocked: a signal mask holds a signal in one thread only, and a signal sent to
+    the process goes to any thread that does not block it, after which the main thread runs the Python handler at
+    its next signal check (on CPython 3.10, its next GIL re-take or explicit check), mask or not: in the middle of
+    the write, or after the restore. It must be called from the main thread, as ``signal.signal`` must.
+    """
+    held = []
+    previous = {}
     try:
-        _write_in_place(path, original)
-        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-    finally:
-        if mask:
-            mask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous[sig] = signal.getsignal(sig)  # stored before the swap, which a signal can follow at once
+            signal.signal(sig, lambda signum, frame: held.append(signum))
+    finally:  # a signal that comes before its handler is swapped raises here, so the write is in a finally
+        try:
+            _write_in_place(path, original)
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            for sig in held:
+                signal.raise_signal(sig)  # to this thread, which runs its handler before raise_signal returns
 
 
 def _verdict(code, output, limit):

@@ -91,6 +91,35 @@ typed = rs.classify_segments(t, y, plain, subtypes=loop, events={"heater": heate
 assert [s.subtype for s in typed] == [s.subtype for s in res.segments]
 # [classify]
 
+# [report]
+# The fits and statistics by subtype: res.models fits each segment with the model the optimiser used.
+report = rs.report.fit_report(pd.DataFrame({"loop": y}, index=t), res.segments, {"loop": res.models},
+                              units={"loop": "°C"}, by="subtype")
+print(report.to_string(intervals=False))
+# [report]
+
+assert list(report["loop"].by_state.index) == [
+    "all", "steady", "cold", "hot", "transient", "cool-down", "drift", "heat-up", "indeterminate"]
+
+# [soft]
+# Suppose a drift is rare enough to cap at none a day. A hard cap of 0 hides day 2's drift inside a cold
+# plateau, which then fits badly; a soft one keeps the drift, at a cost, and says where it overflowed.
+caps = {"hot": 1, "heat-up": 1, "cool-down": 1, "drift": 0}
+common = dict(subtypes=loop, events={"heater": heater}, transitions=transitions, initial={"steady"},
+              final={"steady"}, per="1D", min_duration_s={"steady": 3600}, max_duration_s={"transient": 3 * 3600},
+              method="exact", grid_s=1800)
+hard = rs.optimal_segments(t, y, {"steady": 0, "transient": "exp"}, max_counts=caps, **common)
+soft = rs.optimal_segments(t, y, {"steady": 0, "transient": "exp"}, max_counts=caps,
+                           overflow_penalty={"drift": 50.0}, **common)
+print(hard)
+print(soft)
+print(soft.overflow)
+# [soft]
+
+assert "drift" not in [s.subtype for s in hard.segments] and hard.rms > 5 * soft.rms
+assert [s.subtype for s in soft.segments] == [s.subtype for s in res.segments]
+assert soft.overflow["drift"].tolist() == [0, 1] and soft.info["overflow_cost"] == 50.0
+
 
 # [reactor]
 # A reactor's scheme, by the same mechanism. Power is in % of full power, and the thresholds

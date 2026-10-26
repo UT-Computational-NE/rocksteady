@@ -172,6 +172,44 @@ def test_piecewise_fit_uses_the_model_for_each_state():
         piecewise_fit(t, y[:-1], segs, 0)
 
 
+SUBTYPED = [rs.Segment(0, 50, State.STEADY, subtype="cold"), rs.Segment(50, 100, State.TRANSIENT, subtype="pulse"),
+            rs.Segment(100, 150, State.TRANSIENT, subtype="rise"), rs.Segment(150, 200, State.STEADY)]
+
+
+def test_a_subtype_in_the_spec_is_fitted_with_its_own_model_and_any_other_with_its_states():
+    t = np.arange(200.0)
+    y = np.sin(t / 7.0)
+    spec = {"steady": 0, "transient": 3, "subtypes": {"pulse": 2}}
+    pw = piecewise_fit(t, y, SUBTYPED, spec)
+    assert [r.label for r in pw.results] == ["poly 0", "poly 2", "poly 3", "poly 0"]
+    for s, r in zip(SUBTYPED, pw.results):
+        alone = fit_model(spec, t[s.slice], y[s.slice], s.state, s.subtype)
+        np.testing.assert_array_equal(r.fitted, alone.fitted)
+    assert resolve_model(spec, "transient", "pulse") == ("poly", {"order": 2})
+    assert resolve_model(spec, "transient", "rise") == ("poly", {"order": 3})
+    assert resolve_model(spec, "indeterminate", "pulse") == ("poly", {"order": 2})
+    assert resolve_model(spec, "transient") == ("poly", {"order": 3})
+
+
+def test_subtype_entries_of_a_spec_are_checked():
+    validate_models({"power": {"steady": 0, "transient": "exp", "subtypes": {"pulse": 1, "hot": "first_order"}}})
+    for bad, match in [({"stedy": 0, "transient": 1, "subtypes": {"pulse": 1}}, "keys"),
+                       ({"subtypes": {"pulse": 1}}, "at least one state"),
+                       ({"steady": 0, "transient": 1, "subtypes": [("pulse", 1)]}, "must be a mapping"),
+                       ({"steady": 0, "transient": 1, "subtypes": {"": 1}}, "non-empty string"),
+                       ({"steady": 0, "transient": 1, "subtypes": {"steady": 1}}, "which is a state"),
+                       ({"steady": 0, "transient": 1, "subtypes": {"pulse": {"steady": 1}}}, "one model"),
+                       ({"steady": 0, "transient": 1, "subtypes": {"cold": 0, "pulse": "spline"}},
+                        "subtype 'pulse'.*unknown fit model"),
+                       ({"steady": 0, "transient": 1, "subtypes": {"cold": 0, "pulse": {"model": "poly", "degree": 2}}},
+                        "subtype 'pulse'.*degree")]:
+        with pytest.raises(ValueError, match=match):
+            validate_models({"power": bad})
+    # An error in the subtypes' entry names the entry, not the first state resolved.
+    with pytest.raises(ValueError, match=r"^model for 'power': model spec 'subtypes' names 'steady'"):
+        validate_models({"power": {"steady": 0, "transient": 1, "subtypes": {"steady": 1}}})
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("order", [0, 1])
 @pytest.mark.parametrize("phi", [0.0, 0.5, 0.9])

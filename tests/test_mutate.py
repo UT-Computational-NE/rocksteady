@@ -4,9 +4,11 @@ import contextlib
 import errno
 import importlib.util
 import os
+import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -359,24 +361,109 @@ def test_a_process_a_test_started_ends_with_the_run(tmp_path, how):
     assert (tmp_path / "calc.py").read_text() == SLOW_CALC
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal masks")
-def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatch):
-    """A second Ctrl-C between the truncating open and the write would leave the file empty."""
+@contextlib.contextmanager
+def _sigterm_ends_the_run(tool):
+    """SIGTERM handled as tools/mutate.py's main sets it, and the test's own handler put back after."""
+    before = signal.signal(signal.SIGTERM, tool._ended)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, before)
+
+
+def _open_then(act):
+    """``open``, calling ``act()`` once it has opened a file for writing: truncated, not yet written."""
+    def opened(file, mode="r", *args, **kwargs):
+        handle = open(file, mode, *args, **kwargs)
+        if "w" in mode:
+            act()
+        return handle
+    return opened
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill ends the process on Windows")
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["Ctrl-C", "SIGTERM"])
+def test_a_signal_during_the_restore_waits_for_it_to_finish(tmp_path, monkeypatch, sig):
+    """
+    A Ctrl-C or SIGTERM between the truncating open and the write would leave the file empty. The signal goes to
+    the process, as the terminal's does, while another thread is running, so any thread may take it.
+    """
     tool = _load_tool()
     path = tmp_path / "calc.py"
     path.write_text("mutated\n")
-    real_open = open
+    read_end, write_end = os.pipe()  # Python writes the signal's number to write_end once a thread has taken it
+    os.set_blocking(write_end, False)
+    stop = threading.Event()
+    other = threading.Thread(target=stop.wait)  # started before the restore, so it does not block the signal
+    other.start()
 
-    def interrupted_open(file, mode="r", *args, **kwargs):
-        handle = real_open(file, mode, *args, **kwargs)
-        if "w" in mode:
-            os.kill(os.getpid(), signal.SIGINT)  # lands between the truncation and the write
-        return handle
+    def kill():
+        os.kill(os.getpid(), sig)
+        taken = select.select([read_end], [], [], 10)[0] and os.read(read_end, 1)
+        assert taken == bytes([sig]), f"no thread took signal {sig} within 10 s: {taken!r}"
 
-    monkeypatch.setattr(tool, "open", interrupted_open, raising=False)
-    with pytest.raises(KeyboardInterrupt):
+    monkeypatch.setattr(tool, "open", _open_then(kill), raising=False)
+    wakeup_before = signal.set_wakeup_fd(write_end)
+    try:
+        with _sigterm_ends_the_run(tool), pytest.raises(KeyboardInterrupt) as raised:
+            tool._restore(str(path), CALC.encode(), os.stat(path))
+    finally:
+        signal.set_wakeup_fd(wakeup_before)
+        stop.set()
+        other.join()
+        os.close(read_end)
+        os.close(write_end)
+    assert raised.type is (tool._Ended if sig == signal.SIGTERM else KeyboardInterrupt)
+    assert path.read_text() == CALC
+
+
+def test_signals_held_during_the_restore_are_sent_again_in_the_order_they_came(tmp_path, monkeypatch):
+    """A SIGTERM, then a Ctrl-C, during the write: once the file is back, the SIGTERM raises."""
+    tool = _load_tool()
+    path = tmp_path / "calc.py"
+    path.write_text("mutated\n")
+
+    def sigterm_then_ctrl_c():
+        signal.raise_signal(signal.SIGTERM)
+        signal.raise_signal(signal.SIGINT)
+
+    monkeypatch.setattr(tool, "open", _open_then(sigterm_then_ctrl_c), raising=False)
+    with _sigterm_ends_the_run(tool), pytest.raises(KeyboardInterrupt) as raised:
+        tool._restore(str(path), CALC.encode(), os.stat(path))
+    assert raised.type is tool._Ended
+    assert path.read_text() == CALC
+
+
+@pytest.mark.parametrize("after_first", [True, False], ids=["just after Ctrl-C's swap", "at SIGTERM's swap"])
+def test_a_signal_before_the_restore_holds_them_all_still_restores_the_file(tmp_path, monkeypatch, after_first):
+    """
+    A SIGTERM handled while the restore swaps its handlers in: just after Ctrl-C's swap returns, or at the start
+    of SIGTERM's. The file and Ctrl-C's own handler are still put back.
+    """
+    tool = _load_tool()
+    path = tmp_path / "calc.py"
+    path.write_text("mutated\n")
+    swaps = []
+
+    class Signal:  # the signal module, with a SIGTERM handled during the handler swaps
+        def __getattr__(self, name):
+            return getattr(signal, name)
+
+        def signal(self, sig, handler):
+            swaps.append(sig)
+            if not after_first and len(swaps) == 2:
+                signal.raise_signal(signal.SIGTERM)
+            before = signal.signal(sig, handler)
+            if after_first and len(swaps) == 1:
+                signal.raise_signal(signal.SIGTERM)
+            return before
+
+    monkeypatch.setattr(tool, "signal", Signal())
+    ctrl_c = signal.getsignal(signal.SIGINT)
+    with _sigterm_ends_the_run(tool), pytest.raises(tool._Ended):
         tool._restore(str(path), CALC.encode(), os.stat(path))
     assert path.read_text() == CALC
+    assert signal.getsignal(signal.SIGINT) is ctrl_c
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")

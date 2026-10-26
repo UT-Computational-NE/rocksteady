@@ -58,6 +58,10 @@ _Avoid_: optimal state, detected segment
 A restriction on the optimiser's whole segmentation: counts per period, which state or subtype may follow which, which may take the record's first and last segments, durations, and penalties.
 _Avoid_: limit (that is a criterion's threshold), rule
 
+**Soft cap**:
+A count cap that segments may exceed: each segment beyond it in a period adds its overflow penalty to the optimiser's objective.
+_Avoid_: soft limit (a limit is a criterion's threshold), soft constraint
+
 **Period**:
 The span of time (a day, a week) that per-period counts of segments apply to.
 _Avoid_: window (the detector's), sample period (say sample spacing)

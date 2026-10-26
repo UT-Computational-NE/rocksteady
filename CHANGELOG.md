@@ -52,6 +52,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   0.5 s fell in the period indexed 0.5; the float `0.1` is a little more
   than a tenth, so five periods end just after 0.5 s, and it now falls in
   the period indexed 0.4.
+- **Breaking:** with numeric times, `count_by_period`, `optimal_segments`
+  and `OptimalSegmentation.counts` refuse a time as `per` or
+  `period_origin`, whatever its unit, with a `ValueError` that names it
+  (#163): numeric times are seconds, and a time is never read as a number
+  of them. 0.5.1 read an `np.timedelta64` or `np.datetime64` in
+  nanoseconds, an `np.timedelta64` without a unit, or a 0-d array of one,
+  as that many seconds: `per=np.timedelta64(3600, "ns")` gave hourly
+  periods. Every other time (`np.timedelta64(1, "h")`, `pd.Timedelta`,
+  `pd.Timestamp`, `pd.Period`, a `pd.DateOffset`, or a `datetime`, `date`,
+  `time` or `timedelta`) raised `float()`'s `TypeError`. So did a 0-d
+  array of a NaT (numpy's or `pd.NaT`) or of `pd.NA`, which now gets the
+  `ValueError` of the value it holds.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   starts different periods: it is converted to the index's zone first
   (#144). Beside a Chicago index in March, `"2026-03-02 07:00+00:00"`
@@ -98,8 +110,53 @@ Upgrading from 0.5.1. Behaviour changes to check:
   last segments". Only a call with subtypes and also `initial` or `final`
   keeps 0.5.1's opening. Matching "no segmentation satisfies the
   constraints" or "these segments cannot be typed" still works.
+- The tables of segments gain a `subtype` column after `state` (`None` for
+  a segment without one): `report.fit_report`'s and `compare_report`'s
+  `by_interval`, `Report.by_interval` and `Report.to_dict()`, and
+  `metrics.stats_by_segment` (#58). Code that reads these columns by
+  position, or compares whole frames, needs updating. The printed table of
+  segments gains a `subtype` column only when some segment has a subtype.
+- A model spec keyed by state may have a `"subtypes"` key (#57), so the
+  `ValueError` for any other key reads "a state-keyed model spec may only
+  have keys ['indeterminate', 'steady', 'transient'] and 'subtypes', with
+  at least one state, got [...]"; 0.5.1's read "... may only have keys
+  ['indeterminate', 'steady', 'transient'], got [...]". Matching "a
+  state-keyed model spec may only have keys" still works.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
+
+### Added
+
+- `Subtype(model=...)`: a subtype fits its segments with a model of its
+  own instead of its state's, in `optimal_segments` (a pulse fitted with a
+  parabola among transients fitted with a line, say). With `"bic"`, such a
+  subtype takes its model's penalty. A model spec keyed by state may list
+  subtypes' models under `"subtypes"`, as `{"steady": 0, "transient": 1,
+  "subtypes": {"pulse": 2}}`, for `fit.piecewise_fit`, `fit.fit_model`,
+  `fit.resolve_model`, `fit.validate_models` and `report.fit_report`; the
+  new `OptimalSegmentation.models` is that spec for the optimiser's
+  signal, so `fit_report(values, res.segments, {signal: res.models})` fits
+  each segment as the optimiser did (#57).
+- Reports by subtype, `by="subtype"`: `report.fit_report` and
+  `metrics.stats_by_state` follow each state's row with one row per subtype
+  its segments carry, sorted by name; `optimal.count_by_period` follows
+  each state's column with its subtypes' columns, counting as
+  `OptimalSegmentation.counts` does; `compare_segments` labels each sample
+  with its segment's subtype, or its state when it has none. They take
+  segments from any source, and refuse a subtype carried by segments of
+  two states, or named like a state, like `"all"` (in `fit_report`,
+  `stats_by_state` and `count_by_period`) or like `"none"` (in
+  `compare_segments`) (#58).
+- Soft caps for `optimal_segments`: `overflow_penalty={name: cost}` lets
+  the caps of names in `max_counts` be exceeded, each segment beyond its
+  cap in a period (counted once against each period it touches) adding
+  `cost` to the objective, so an unusual day gets an extra
+  segment at a cost instead of a distorted segmentation or no result. The
+  search stays exact, with no more count layers than hard caps.
+  `OptimalSegmentation.overflow` holds the segments beyond each soft cap per
+  period, `info["overflow_cost"]` their cost, and `summary()` names the caps
+  that overflowed. Transitions, `initial`, `final` and durations stay hard
+  (#59).
 
 ### Changed
 
@@ -179,6 +236,18 @@ Upgrading from 0.5.1. Behaviour changes to check:
   own, far from the times (#155). A period start past the most negative
   float, which no index can show, is refused by name; it was indexed
   `-inf` (#165).
+- With numeric times, a time as `per` or `period_origin` gets "with
+  numeric times, per (or period_origin) must be a number of seconds, not a
+  time", naming the value, whatever its unit: an `np.datetime64` or
+  `np.timedelta64` of any unit or none, a `pd.Timestamp`, `pd.Timedelta`,
+  `pd.Period` or `pd.DateOffset`, or a `datetime`, `date`, `time` or
+  `timedelta`, each also in a 0-d array. A numpy time in nanoseconds, or
+  an `np.timedelta64` without a unit, was read as that many seconds, and
+  the rest failed with `float()`'s `TypeError`. A 0-d array of a NaT
+  (numpy's or `pd.NaT`) or of `pd.NA` is read as the value it holds, so it
+  gets that value's `ValueError`; it failed with `float()`'s `TypeError`.
+  This applies to `count_by_period`, `optimal_segments` and
+  `OptimalSegmentation.counts` (#163).
 
 ### Documentation
 
@@ -193,6 +262,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   first nor last, beside items that decide the other way (or with a case at
   each end), so that neither the other check (`all(...)` for `any(...)`),
   the first item nor the last can stand in for it (#146, #156).
+- `docs/agents/coding-standards.md`: a loop over a caller's value ends on
+  every input; a test feeds it each form that gives back itself or its own
+  kind (a masked value, an array type whose items are its own type, a
+  container that holds itself) (#163).
 - `docs/agents/coding-standards.md`: a test that pins an offset, an origin,
   a phase or a zone uses one the code's fallback cannot reach by accident:
   not a whole number of periods from the default, and not already in the
@@ -218,10 +291,30 @@ Upgrading from 0.5.1. Behaviour changes to check:
   through `count_by_period` and a capped `optimal_segments` (#159). On
   pandas 3, a zone name pandas does not know (`"07:00 CST"`) is pinned to
   get pandas' own error, with no warning before it.
-- CI's `min-deps` job prints the python-dateutil it gets. It does not
-  pin 2.8.1, the oldest that `pyproject.toml` allows: on CI's runner, with
-  2.8.1, `test_a_signal_during_the_restore_waits_for_it_to_finish` in
-  `tests/test_mutate.py` fails every time (#159, #172).
+- CI's `min-deps` job pins python-dateutil 2.8.1, the oldest that
+  `pyproject.toml` allows, and prints it (#159, #172).
+- A Ctrl-C or SIGTERM during `tools/mutate.py`'s restore of a file waits
+  until the file is back, whatever thread takes the signal (#172). The
+  restore blocked both with a signal mask, which holds a signal in the
+  calling thread only. A signal sent to the process could go to another
+  thread that did not block it, and the main thread then ran the handler
+  at its next signal check (on CPython 3.10, its next GIL re-take or
+  explicit check), mask or not: in the middle of the write, leaving the
+  file empty, or after the restore, so that it raised nothing there. The
+  tool's own process has one thread, but
+  `test_a_signal_during_the_restore_waits_for_it_to_finish` ran the
+  restore in pytest's, beside numpy's OpenBLAS threads (3 on CI's runner).
+  It failed there now and then, and on 3 of 3 runs with python-dateutil
+  2.8.1 in `min-deps`; why that version made it fail every time, and why
+  no interrupt surfaced later in those runs, was not traced. The restore
+  now holds the signals with Python handlers, which run in the main
+  thread, and once the file is back sends the held signals again in the
+  order they came, the first whose handler raises ending the restore. A
+  signal that comes while it swaps the handlers in still lets it write the
+  file. It must be called from the main thread. The test now runs a
+  thread of its own that does not block the signal and waits until some
+  thread has taken it, so the old restore fails it every time; it covers
+  SIGTERM too.
 - The hang test in `tests/test_mutate.py` no longer fails on a loaded
   machine. Its `TIMEOUT` of 3 s also bound the unmutated run and the quick
   mutant, whose pytest start-up alone could exceed it; it is now 20 s, and
