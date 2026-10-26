@@ -341,8 +341,10 @@ def test_a_period_origin_of_numeric_times_that_is_not_a_finite_number_is_refused
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=origin)
 
 
-@pytest.mark.parametrize("per, origin", [(7200, 1e300), (7200, -1e300), (7200, 1e20), (1e-300, None)],
-                         ids=["origin 1e300", "origin -1e300", "origin 1e20", "per 1e-300"])
+@pytest.mark.parametrize("per, origin", [(7200, 1e300), (7200, -1e300), (7200, 1e20), (1e-300, None), (1e-310, None),
+                                         (1e-300, -1.7e308)],
+                         ids=["origin 1e300", "origin -1e300", "origin 1e20", "per 1e-300", "per 1e-310 (subnormal)",
+                              "per 1e-300, origin -1.7e308"])
 def test_period_numbers_a_float_cannot_hold_exactly_are_refused_by_name(per, origin):
     # Each gives hourly samples period numbers of 2**53 or more in magnitude, where a float no longer holds every
     # whole number and, past 2**63, int64 holds none. The error names per and period_origin.
@@ -350,7 +352,7 @@ def test_period_numbers_a_float_cannot_hold_exactly_are_refused_by_name(per, ori
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     named = rf"per {re.escape(repr(per))} and period_origin {re.escape(repr(origin))} give .* 2\*\*53"
     with warnings.catch_warnings():
-        warnings.simplefilter("error")  # refused before numpy warns of the int64 cast
+        warnings.simplefilter("error")  # refused before numpy warns of an overflow or of the int64 cast
         with pytest.raises(ValueError, match=named):
             count_by_period(segs, t, per, period_origin=origin)
         with pytest.raises(ValueError, match=named):
@@ -397,11 +399,26 @@ def test_a_time_that_is_not_a_number_leaves_the_other_period_numbers_checked():
         count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200, period_origin=1e20)
 
 
-def test_an_infinite_time_is_named_as_the_sample_whose_period_number_is_refused():
-    t = np.array([0.0, 3600.0, np.inf, 10800.0, 14400.0, 18000.0])
-    named = r"per 7200 and period_origin None give the sample at inf s a period number of magnitude 2\*\*53 or more"
+def test_a_time_that_is_not_a_number_is_not_refused_when_the_other_period_numbers_are_in_bound():
+    # Segments that leave out the NaN sample: hourly samples in two-hour periods from 0 s.
+    t = np.array([0.0, 3600.0, np.nan, 10800.0, 14400.0, 18000.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # numpy warns of casting the NaN sample's NaN to int64
+        counts = count_by_period([Segment(0, 2, ST), Segment(3, 6, ST)], t, 7200)
+    assert counts["steady"].tolist() == [1, 1, 1]
+    assert counts.index.tolist() == [0.0, 7200.0, 14400.0]
+
+
+@pytest.mark.parametrize("time", [np.inf, -np.inf], ids=["inf", "-inf"])
+@pytest.mark.parametrize("per, origin", [(7200, None), (1e9, 0.0), (7200, 1e20)],
+                         ids=["per 7200", "per 1e9, origin 0", "origin 1e20"])
+def test_an_infinite_time_is_refused_by_name_without_advice_on_per_or_period_origin(time, per, origin):
+    # No per or period_origin gives an infinite time a period. With origin 1e20 the sample at 0 s comes first and
+    # is past 2**53 periods too, but the infinite time is named.
+    t = np.array([0.0, 3600.0, time, 10800.0, 14400.0, 18000.0])
+    named = rf"^the sample at {re.escape(repr(time))} s is not a finite time, so it falls in no period of per {per!r}$"
     with pytest.raises(ValueError, match=named):
-        count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, 7200)
+        count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, per, period_origin=origin)
 
 
 @pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
