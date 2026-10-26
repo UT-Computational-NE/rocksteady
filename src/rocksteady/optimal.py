@@ -244,7 +244,10 @@ def _seconds(x, name: str) -> float:
             if v.dtype.kind not in "mM":
                 break
             v = np.asarray(v)
-        v = v[()]
+        held = v[()]
+        if held is v:  # a 0-d object array that holds itself: float() refuses it
+            break
+        v = held
     if v is pd.NaT or v is pd.NA or (isinstance(v, (np.datetime64, np.timedelta64)) and np.isnat(v)):
         return math.nan
     if isinstance(v, _TIME_TYPES + (pd.Period, pd.offsets.BaseOffset)):

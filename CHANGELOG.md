@@ -192,6 +192,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   first nor last, beside items that decide the other way (or with a case at
   each end), so that neither the other check (`all(...)` for `any(...)`),
   the first item nor the last can stand in for it (#146, #156).
+- `docs/agents/coding-standards.md`: a loop over a caller's value ends on
+  every input; a test feeds it each form that gives back itself or its own
+  kind (a masked value, an array type whose items are its own type, a
+  container that holds itself) (#163).
 - `docs/agents/coding-standards.md`: a test that pins an offset, an origin,
   a phase or a zone uses one the code's fallback cannot reach by accident:
   not a whole number of periods from the default, and not already in the

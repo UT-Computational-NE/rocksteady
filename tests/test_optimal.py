@@ -525,20 +525,31 @@ def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=per)
 
 
-@pytest.mark.parametrize("value", [pytest.param(np.array([7200.0, 3600.0]), id="1-d of two"),
-                                   pytest.param(np.array([[7200.0, 3600.0]]), id="2-d of two"),
-                                   pytest.param(np.array(7200.0).view(_WithAUnit), id="0-d _WithAUnit")])
-def test_an_array_float_refuses_is_not_read_as_the_period_or_origin_of_numeric_times(value):
-    # float() refuses an array of two numbers, and one of a type that refuses it; neither is read as its values.
+def _holding_itself():
+    """A 0-d object array whose one item is the array itself."""
+    held = np.empty((), dtype=object)
+    held[()] = held
+    return held
+
+
+@pytest.mark.parametrize("value, error", [
+    pytest.param(np.array([7200.0, 3600.0]), TypeError, id="1-d of two"),
+    pytest.param(np.array([[7200.0, 3600.0]]), TypeError, id="2-d of two"),
+    pytest.param(np.array(7200.0).view(_WithAUnit), TypeError, id="0-d _WithAUnit"),
+    pytest.param(_holding_itself(), RecursionError, id="0-d holding itself"),
+])
+def test_an_array_float_refuses_is_not_read_as_the_period_or_origin_of_numeric_times(value, error):
+    # float() refuses an array of two numbers, one of a type that refuses it, and one that holds itself (it recurses);
+    # none is read as its values.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
-    with pytest.raises(TypeError):
+    with pytest.raises(error):
         count_by_period(segs, t, value)
-    with pytest.raises(TypeError):
+    with pytest.raises(error):
         count_by_period(segs, t, 7200, period_origin=value)
-    with pytest.raises(TypeError):
+    with pytest.raises(error):
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=value)
-    with pytest.raises(TypeError):
+    with pytest.raises(error):
         optimal_segments(t, np.zeros(6), {"steady": 0}, per=7200, period_origin=value)
 
 
