@@ -230,6 +230,13 @@ def test_a_period_string_pandas_cannot_read_is_refused_by_name():
         count_by_period([Segment(0, 24, ST)], idx, "bogus")
 
 
+def _in_0d(value):
+    """A 0-d object array holding ``value``, which may itself be an array."""
+    held = np.empty((), dtype=object)
+    held[()] = value
+    return held
+
+
 _NUMBERS = [pytest.param(7200, id="int"), pytest.param(7200.0, id="float"), pytest.param(np.int64(7200), id="np.int64"),
             pytest.param(np.float64(7200.0), id="np.float64"), pytest.param(True, id="bool"),
             pytest.param(np.True_, id="np.bool_")]
@@ -282,7 +289,8 @@ def test_a_period_pandas_reads_as_nat_is_refused_by_name(per):
         optimal_segments(idx, np.zeros(6), {"steady": 0}, per=per)
 
 
-@pytest.mark.parametrize("per", _NUMBERS)
+@pytest.mark.parametrize("per", _NUMBERS + [pytest.param(np.array(7200.0), id="0-d float"),
+                                             pytest.param(_in_0d(np.array(7200)), id="0-d in 0-d int")])
 def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     # Samples half a period apart: one-sample segments touch two per period, from 0 s (True is a 1 s period).
     step = float(per) / 2
@@ -293,7 +301,8 @@ def test_a_number_as_the_period_of_numeric_times_is_seconds(per):
     assert counts.index.tolist() == [0.0, 2 * step, 4 * step]
 
 
-@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600)], ids=["int", "float", "np.int64"])
+@pytest.mark.parametrize("origin", [3600, 3600.0, np.int64(3600), np.array(3600.0), _in_0d(np.array(3600))],
+                         ids=["int", "float", "np.int64", "0-d float", "0-d in 0-d int"])
 def test_a_number_as_the_period_origin_of_numeric_times_is_seconds(origin):
     # Two-hour periods from 3600 s, which is not a whole number of periods from 0 s: hourly samples fall 1, 2, 2, 1.
     t = np.arange(6) * 3600.0
@@ -325,6 +334,7 @@ _TIMES = [
     pytest.param(pd.DateOffset(hours=1), id="pd.DateOffset"),
     pytest.param(np.array(pd.Timedelta(1, "h"), dtype=object), id="0-d object pd.Timedelta"),
     pytest.param(np.array(pd.offsets.Hour(1), dtype=object), id="0-d object pd.offsets.Hour"),
+    pytest.param(_in_0d(np.array(np.timedelta64(3600, "ns"))), id="0-d in 0-d np.timedelta64 ns"),
 ]
 
 
@@ -342,7 +352,7 @@ def test_a_time_as_the_period_of_numeric_times_is_refused_by_name(per):
 
 @pytest.mark.parametrize("origin", _TIMES)
 def test_a_time_as_the_period_origin_of_numeric_times_is_refused_by_name(origin):
-    # Numeric times have no epoch and no unit but seconds: a time is never read as a number of them.
+    # As for per: numeric times are seconds, and a time is never read as a number of them, whatever its unit.
     t = np.arange(6) * 3600.0
     segs = [Segment(i, i + 1, ST) for i in range(6)]
     named = rf"with numeric times, period_origin must be a number of seconds, not a time, got {re.escape(repr(origin))}$"

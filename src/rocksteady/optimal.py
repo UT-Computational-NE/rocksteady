@@ -224,14 +224,17 @@ def _seconds(x, name: str) -> float:
     ``x``, the ``name`` argument of numeric times, as a float of seconds,
     with ``pd.NaT``, ``pd.NA`` and a numpy NaT (``np.datetime64`` or
     ``np.timedelta64``, any unit) as NaN (``float()`` takes none of them).
-    A 0-d array is read as the scalar it holds. A time that is not NaT
+    A 0-d array is read as the scalar it holds (through any 0-d arrays
+    nested in it). A time that is not NaT
     (numpy, pandas, including a ``Period`` or a ``DateOffset``, or standard
     library, any unit or none) is refused: numeric times are seconds, and a
     time is never read as a number of them.
     """
     import pandas as pd
 
-    v = x[()] if isinstance(x, np.ndarray) and x.ndim == 0 else x
+    v = x
+    while isinstance(v, np.ndarray) and v.ndim == 0:
+        v = v[()]
     if v is pd.NaT or v is pd.NA or (isinstance(v, (np.datetime64, np.timedelta64)) and np.isnat(v)):
         return math.nan
     if isinstance(v, _TIME_TYPES + (pd.Period, pd.offsets.BaseOffset)):
@@ -335,8 +338,8 @@ def count_by_period(segments: Sequence[Segment], t, per, *, period_origin=None,
     ``period_origin`` a timestamp (for either, a number, or a value pandas
     reads as NaT, raises ``ValueError``); with numeric times, both are
     seconds, ``period_origin`` must be finite, and a time as either (numpy,
-    pandas or standard library, any unit, also in a 0-d array) raises
-    ``ValueError``.
+    pandas or standard library, any unit or none, also in a 0-d array)
+    raises ``ValueError``.
     """
     ts, idx = _times(t)
     segs = check_segments(segments, len(ts))
