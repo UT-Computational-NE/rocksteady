@@ -871,6 +871,9 @@ def test_counts_by_subtype_follow_each_state_with_its_subtypes_by_name():
     assert counts.loc[0.0].tolist() == [0, 2, 1, 1, 1, 1]  # cold [15, 25) touches both periods
     assert counts.loc[20.0].tolist() == [1, 2, 2, 0, 1, 0]
     assert list(count_by_period(SUBTYPED, t, 20.0).columns) == ["indeterminate", "steady", "transient"]
+    # By state, a column named for no state counts nothing, as before subtypes were counted.
+    named = count_by_period(SUBTYPED, t, 20.0, states=["steady", "cold"])
+    assert named["steady"].tolist() == [2, 2] and named["cold"].tolist() == [0, 0]
     some = count_by_period(SUBTYPED, t, 20.0, by="subtype", states=["transient"])
     assert list(some.columns) == ["transient", "pulse"] and some["pulse"].tolist() == [1, 0]
 

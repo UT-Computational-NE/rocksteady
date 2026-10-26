@@ -205,6 +205,9 @@ def test_subtype_entries_of_a_spec_are_checked():
                         "subtype 'pulse'.*degree")]:
         with pytest.raises(ValueError, match=match):
             validate_models({"power": bad})
+    # An error in the subtypes' entry names the entry, not the first state resolved.
+    with pytest.raises(ValueError, match=r"^model for 'power': model spec 'subtypes' names 'steady'"):
+        validate_models({"power": {"steady": 0, "transient": 1, "subtypes": {"steady": 1}}})
 
 
 @pytest.mark.slow

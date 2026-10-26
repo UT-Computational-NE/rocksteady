@@ -779,13 +779,17 @@ def validate_models(models: Mapping[str, ModelSpec],
     Errors name the signal, the state or subtype, the model and the option.
     """
     for name, spec in models.items():
+        try:
+            own = _subtype_specs(spec)
+        except ValueError as exc:
+            raise ValueError(f"model for {name!r}: {exc}") from None
         for st in states:
             try:
                 model, opts = resolve_model(spec, st)
                 check_model_options(model, opts)
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"model for {name!r} in state {State(st).value!r}: {exc}") from None
-        for sub in _subtype_specs(spec):
+        for sub in own:
             try:
                 model, opts = resolve_model(spec, subtype=sub)
                 check_model_options(model, opts)
