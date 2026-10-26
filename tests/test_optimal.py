@@ -421,6 +421,16 @@ def test_an_infinite_time_is_refused_by_name_without_advice_on_per_or_period_ori
         count_by_period([Segment(i, i + 1, ST) for i in range(6)], t, per, period_origin=origin)
 
 
+@pytest.mark.parametrize("t, first", [
+    pytest.param([np.inf, 3600.0, 7200.0, 10800.0, 14400.0, 18000.0], "inf", id="inf first"),
+    pytest.param([-np.inf, 3600.0, 7200.0, 10800.0, 14400.0, np.inf], "-inf", id="-inf first, inf last"),
+])
+def test_the_first_infinite_time_is_the_one_refused_by_name(t, first):
+    named = rf"^the sample at {re.escape(first)} s is not a finite time, so it falls in no period of per 7200$"
+    with pytest.raises(ValueError, match=named):
+        count_by_period([Segment(i, i + 1, ST) for i in range(6)], np.array(t), 7200)
+
+
 @pytest.mark.parametrize("per", [pd.NaT, pd.NA] + _NUMPY_NATS, ids=["pd.NaT", "pd.NA"] + _NUMPY_NAT_IDS)
 def test_a_missing_period_of_numeric_times_is_refused_by_name(per):
     t = np.arange(6) * 3600.0

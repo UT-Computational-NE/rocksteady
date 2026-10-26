@@ -308,18 +308,19 @@ def _period_ids(ts: np.ndarray, idx, per, period_origin) -> Optional[np.ndarray]
     if not step > 0 or not math.isfinite(step):
         raise ValueError(f"per must be a positive number of seconds, got {per!r}")
     origin = _origin_seconds(period_origin)
-    infinite = np.flatnonzero(np.isinf(ts))
-    if len(infinite):
-        raise ValueError(f"the sample at {float(ts[infinite[0]])!r} s is not a finite time, so it falls in no "
-                         f"period of per {per!r}")
     with np.errstate(over="ignore"):  # a quotient too large for a float is refused below, without a warning
         numbers = (ts - origin) / step
     # From 2**53 a float no longer holds every whole number, and past 2**63 int64 overflows: samples would share
     # periods that are not theirs. Below the bound, rounding can still move a sample or a period start when the
     # origin is far from the times; this check does not catch that. A NaN time has no period number and fails
-    # the comparison.
+    # the comparison; an infinite one is past every bound, but no per or period_origin helps it, so it is named
+    # on its own.
     too_large = np.flatnonzero(np.abs(numbers) >= 2.0 ** 53)
     if len(too_large):
+        infinite = too_large[np.isinf(ts[too_large])]
+        if len(infinite):
+            raise ValueError(f"the sample at {float(ts[infinite[0]])!r} s is not a finite time, so it falls in no "
+                             f"period of per {per!r}")
         raise ValueError(f"per {per!r} and period_origin {period_origin!r} give the sample at "
                          f"{float(ts[too_large[0]])!r} s a period number of magnitude 2**53 or more, where a "
                          "float no longer holds every whole number; give a period_origin nearer the times, or a "
