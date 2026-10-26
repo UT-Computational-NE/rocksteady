@@ -122,7 +122,11 @@ other with its state's. `res.models` is that spec for the optimiser's
 signal, so `fit_report(values, res.segments, {"power": res.models})` fits
 each segment as the optimiser did. State keys are still checked, so a
 mistyped state name is refused, and a name under `"subtypes"` that is a
-state's is refused too.
+state's is refused too. Other names under `"subtypes"` are not checked
+against the segments, since `res.models` lists every subtype with a model
+of its own, whether or not it took a segment: a misspelt name changes
+nothing, and the misspelt subtype's segments are fitted with their state's
+model.
 
 ### The first and last segments
 

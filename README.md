@@ -376,7 +376,7 @@ uncertainty in quadrature.
 `report.provenance` records how a report was made:
 - the rocksteady version;
 - the time origin and sample spacing;
-- every signal's model spec per state, with defaults filled in (`fit.normalize_model`), and its parameter order;
+- every signal's model spec per state, and per subtype with a model of its own (`"subtypes"`), with defaults filled in (`fit.normalize_model`), and its parameter order;
 - the uncertainty methods and the NRMSE normalization;
 - from `batch.fit_report`, the detector's effective timing, validity policy and components, and the segmentation settings.
 

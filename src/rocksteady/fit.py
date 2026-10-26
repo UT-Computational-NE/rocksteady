@@ -36,6 +36,10 @@ subtypes their own models under ``"subtypes"``, for example ``{"steady":
 0, "transient": "exp", "subtypes": {"pulse": 1}}``: a segment whose
 ``subtype`` is listed there is fitted with that model, and any other
 segment with its state's (``optimal.Subtype`` names a segment's subtype).
+The names there are not checked against the segments: a name that no
+segment carries, such as a subtype absent from this record or a
+misspelling, changes nothing, so a misspelt subtype's segments are fitted
+with their state's model.
 
 Parameter uncertainty
 ---------------------

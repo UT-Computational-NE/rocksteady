@@ -32,7 +32,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from .fit import FitResult, PiecewiseFit, _subtype_specs, normalize_model, piecewise_fit, resolve_model, validate_models
-from .metrics import STATES, _subtype_column, signal_stats, stats_by_segment, stats_by_state
+from . import _grouping as _g
+from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment
 
 FIT_INTERVAL_COLUMNS = ["segment", "state", "subtype", "forced", "start", "stop", "t_start_s", "t_end_s", "model", "t_ref_s",
@@ -194,6 +195,15 @@ def _model_label(name: str, opts: Mapping[str, Any]) -> str:
     return f"poly {opts.get('order', 0)}" if name == "poly" else name
 
 
+def _normalized(spec, states: Sequence[str]) -> Dict[str, Any]:
+    """A signal's spec for the provenance: each state's model, then any subtypes' own under ``"subtypes"``."""
+    out: Dict[str, Any] = {st: normalize_model(spec, st) for st in states}
+    own = _subtype_specs(spec)
+    if own:
+        out["subtypes"] = {sub: normalize_model(spec, subtype=sub) for sub in own}
+    return out
+
+
 def _models_title(spec, states: Sequence[str]) -> str:
     parts = [f"{st} {_model_label(*resolve_model(spec, st))}" for st in states if st != "all"]
     own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _subtype_specs(spec)]
@@ -261,7 +271,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         import pandas as pd
 
         per_segment = pd.DataFrame(rows, columns=None if rows else FIT_INTERVAL_COLUMNS)
-        per_segment["subtype"] = _subtype_column(segs, per_segment.index)
+        per_segment["subtype"] = _g.subtype_column(segs, per_segment.index)
         blocks.append(SignalReport(name, f"fit vs data   {_models_title(spec, states)}", by_state, per_segment,
                                    units.get(name), pw, pw.results, origin))
     fit_states = [s for s in states if s != "all"]
@@ -274,10 +284,7 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
     prov = _provenance("fit_report", origin, dt, nrmse, states, units)
     prov.update({
         "error": "e = fit - data",
-        "models": {name: {**{st: normalize_model(spec, st) for st in fit_states},
-                          **({"subtypes": {sub: normalize_model(spec, subtype=sub) for sub in _subtype_specs(spec)}}
-                             if _subtype_specs(spec) else {})}
-                   for name, spec in models.items()},
+        "models": {name: _normalized(spec, fit_states) for name, spec in models.items()},
         "parameter_order": order,
         "parameter_reference": "params are stated at t_ref (poly: segment centre; first_order, exp: first valid "
                                "sample); FitResult.evaluation is the stable form for fit.evaluate",

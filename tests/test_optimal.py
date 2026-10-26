@@ -874,6 +874,8 @@ def test_counts_by_subtype_follow_each_state_with_its_subtypes_by_name():
     # By state, a column named for no state counts nothing, as before subtypes were counted.
     named = count_by_period(SUBTYPED, t, 20.0, states=["steady", "cold"])
     assert named["steady"].tolist() == [2, 2] and named["cold"].tolist() == [0, 0]
+    with pytest.raises(ValueError, match="by must be one of"):
+        count_by_period(SUBTYPED, t, 20.0, by="Subtype")
     some = count_by_period(SUBTYPED, t, 20.0, by="subtype", states=["transient"])
     assert list(some.columns) == ["transient", "pulse"] and some["pulse"].tolist() == [1, 0]
 
@@ -988,6 +990,37 @@ def test_typing_refines_segments_again_fits_each_only_with_its_own_states_model(
     typed = optimal_segments(t, y, models, subtypes={"any": rs.Subtype("steady")}, **kw)
     assert [(s.start, s.stop) for s in typed.segments] == [(s.start, s.stop) for s in plain.segments]
     assert typed.n_fits == plain.n_fits
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_a_state_whose_every_subtype_has_its_own_model_matches_brute_force(seed):
+    t, y = _bump_day(np.random.default_rng(seed))
+    models = {"steady": 0, "transient": 1}
+    subtypes = {"pulse": rs.Subtype("transient", model=2, peak=(1.0, None)), "low": rs.Subtype("transient", model=0)}
+    want_cost, optima = _brute(t, y, models, penalty=0.3, subtypes=subtypes)
+    got = optimal_segments(t, y, models, method="exact", penalty=0.3, subtypes=subtypes)
+    assert got.objective == pytest.approx(want_cost, rel=1e-9, abs=1e-9) and _segmentation(got) in optima
+
+
+def test_a_subtypes_own_slow_model_is_pruned_like_a_states():
+    t, y, _ = _startup_record()
+    kw = dict(method="subset", candidates=list(range(0, len(y) + 1, 60)), max_counts={"transient": 2},
+              subtypes={"rise": rs.Subtype("transient", model="exp"), "other": rs.Subtype("transient")})
+    pruned = optimal_segments(t, y, {"steady": 0, "transient": 1}, **kw)
+    full = optimal_segments(t, y, {"steady": 0, "transient": 1}, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"]) and pruned.n_fits < full.n_fits
+    assert _segmentation(pruned) == _segmentation(full) and pruned.objective == full.objective
+
+
+def test_the_models_of_a_result_without_subtype_models_are_the_models_given():
+    t, y = _pulse_day()
+    models = {"steady": 0, "transient": 1}
+    plain = optimal_segments(t, y, models, method="exact", grid_s=10.0, subtypes={"any": rs.Subtype("transient")})
+    assert plain.models == models
+    own = optimal_segments(t, y, models, method="exact", grid_s=10.0,
+                           subtypes={"pulse": rs.Subtype("transient", model=2)})
+    with pytest.raises(ValueError, match=r"subtypes' models go in Subtype\(model=...\)"):
+        optimal_segments(t, y, own.models, method="exact", grid_s=10.0)
 
 
 def test_a_subtype_with_its_own_model_takes_that_models_bic_penalty():

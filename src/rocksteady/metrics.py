@@ -33,12 +33,13 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from . import _grouping as _g
+from ._grouping import ALL
 from .fit import FitResult
 from .states import Segment, State, check_segments
 from .stats import acf_tau
 
 NRMSE_NORMS = ("mean", "range", "std", "none")
-ALL = "all"
 STATES = (ALL,) + tuple(s.value for s in State)
 
 
@@ -234,66 +235,6 @@ def error_stats(a: np.ndarray, b: np.ndarray, *, dt: float, pieces: Optional[Seq
     )
 
 
-_BY = ("state", "subtype")
-
-
-def _check_by(by: str) -> None:
-    if by not in _BY:
-        raise ValueError(f"by must be one of {_BY}, got {by!r}")
-
-
-def _subtype_column(segs: Sequence[Segment], index):
-    """
-    Each segment's subtype as a column (None, not NaN, for none: pandas 3
-    would infer a string column, with NaN for None).
-    """
-    import pandas as pd
-
-    return pd.Series([s.subtype for s in segs], index=index, dtype=object)
-
-
-def _subtype_states(segs: Sequence[Segment], reserved: Sequence[str] = ()) -> Dict[str, str]:
-    """
-    The state of each subtype the segments carry, ``{subtype: state}``. A
-    subtype named like a state or one of ``reserved``, or carried by
-    segments of two states, is refused (``ValueError``).
-    """
-    names = {*reserved, *(st.value for st in State)}
-    out: Dict[str, str] = {}
-    for i, s in enumerate(segs):
-        if s.subtype is None:
-            continue
-        if s.subtype in names:
-            raise ValueError(f"segment {i} has subtype {s.subtype!r}, the name of a state or of a row "
-                             f"({', '.join(sorted(names))}); give it another name")
-        st = out.setdefault(s.subtype, State(s.state).value)
-        if st != State(s.state).value:
-            raise ValueError(f"subtype {s.subtype!r} is carried by segments of two states ({st!r} and "
-                             f"{State(s.state).value!r}); a subtype refines one state")
-    return out
-
-
-def _groups(segs: Sequence[Segment], rows: Sequence[str], by: str = "state") -> List[Tuple[str, List[int]]]:
-    """
-    The rows of a table by state or by subtype, each with the positions in
-    ``segs`` of the segments it pools. ``rows`` are ``"all"`` or states.
-    By ``"state"``, each row pools its state's segments (``"all"``, every
-    segment). By ``"subtype"``, each state's row is followed by a row for
-    each subtype its segments carry, sorted by name, which pools that
-    subtype's segments; a state whose segments carry none has only its own
-    row. A subtype named like a state or ``"all"``, or carried by segments
-    of two states, is refused (``_subtype_states``).
-    """
-    _check_by(by)
-    subtypes = _subtype_states(segs, (ALL,)) if by == "subtype" else {}
-    out = []
-    for row in rows:
-        out.append((str(row), [i for i, s in enumerate(segs) if row == ALL or s.state == State(row)]))
-        for sub in sorted(k for k, st in subtypes.items() if st == row):
-            out.append((sub, [i for i, s in enumerate(segs) if s.subtype == sub]))
-    return out
-
-
 def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt: float,
                    states: Sequence[str] = STATES, nrmse: str = "mean", max_lag_frac: float = 0.25,
                    t: Optional[np.ndarray] = None, by: str = "state"):
@@ -302,7 +243,7 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
     "steady", "transient", "indeterminate"), pooling that state's segments.
     With ``by="subtype"``, each state's row is followed by one row per
     subtype its segments carry, sorted by name, pooling that subtype's
-    segments. Returns a DataFrame indexed by state (an
+    segments (``_grouping.groups``). Returns a DataFrame indexed by state (an
     index named ``"subtype"`` with ``by="subtype"``). ``t``: see
     ``error_stats``.
     """
@@ -310,7 +251,7 @@ def stats_by_state(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, dt:
 
     segs = check_segments(segs, len(np.asarray(a)))
     rows = {}
-    for name, members in _groups(segs, states, by):
+    for name, members in _g.groups(segs, states, by):
         sel = [(segs[i].start, segs[i].stop) for i in members]
         es = (error_stats(a, b, dt=dt, pieces=sel, nrmse=nrmse, max_lag_frac=max_lag_frac, t=t) if sel
               else _nan_error_stats())
@@ -337,7 +278,7 @@ def stats_by_segment(a: np.ndarray, b: np.ndarray, segs: Sequence[Segment], *, d
                      "stop": s.stop, **es.as_dict()})
     columns = ["segment", "state", "subtype", "forced", "start", "stop"] + [f.name for f in fields(ErrorStats)]
     out = pd.DataFrame(rows, columns=columns)  # same columns when there are no segments
-    out["subtype"] = _subtype_column(segs, out.index)
+    out["subtype"] = _g.subtype_column(segs, out.index)
     return out
 
 
