@@ -303,6 +303,8 @@ changes nothing about it. Without subtypes, it is exact for least
 squares once a model is fitted in full, except that the exponential models'
 default time-constant bounds scale with the span; give explicit bounds, or
 `prune=False`, for a strict guarantee (*Segment costs* in {doc}`methods`).
+The segments of a `first_order` model with `y0` fixed are never pruned:
+its cost can fall as a segment grows.
 
 When the conditions and the hard constraints leave no
 segmentation, the `ValueError` names the earliest time after which none can
@@ -340,8 +342,11 @@ caps that overflowed, so a batch run can flag the days to look at.
 The search stays exact: past the cap every further segment costs the same,
 so the program counts a soft cap only up to the cap and needs no more count
 layers than a hard one. A cheap overflow can make the cheap constant fits
-that bound the search choose segments a slower model cannot fit, and the
-search then runs without pruning, exactly but no faster.
+that bound the search choose segments with too few valid samples for a
+slower model to fit; they then choose again, with that model kept off
+segments with no more valid samples (but not off those with none), so with
+the built-in models the search is still pruned whenever a segmentation the
+models can fit exists.
 
 ### A sketch of a reactor's scheme
 

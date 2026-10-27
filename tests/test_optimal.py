@@ -1585,8 +1585,115 @@ def test_pruning_stays_exact_with_soft_caps_and_subtype_models(cost):
         got = optimal_segments(t, y, models, method="subset", candidates=positions, subtypes=subtypes, prune=prune,
                                **kw)
         assert got.objective == pytest.approx(want_cost, rel=1e-9) and _segmentation(got) in optima
-        if prune and cost == 5.0:  # here the cheap constant fits give the search a finite bound to prune by
+        if prune:
             assert math.isfinite(got.info["upper_bound"])
+
+
+@pytest.mark.parametrize("caps", [
+    dict(max_counts={"steady": 2, "transient": 1}, overflow_penalty={"steady": 0.05}),
+    dict(max_counts={"steady": 1, "transient": 1}, per=7.0),
+])
+def test_the_pruning_bound_is_finite_when_constant_fits_choose_segments_too_short_for_a_slow_model(caps):
+    # Constant fits first make a transient of [0, 4) or [6, 8): too few samples for first_order to fit.
+    t = np.arange(14.0)
+    y = np.where(t < 4, 0.0, 5.0 * (1 - np.exp(-(t - 4) / 2.0))) + np.random.default_rng(9).normal(0, 0.05, 14)
+    models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 0.5, "tau_max": 50.0}}
+    kw = dict(method="subset", candidates=[0, 2, 4, 6, 8, 11, 14], penalty=0.1, **caps)
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"]) and pruned.n_fits < full.n_fits
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_the_pruning_bound_keeps_a_slow_models_segment_without_valid_samples():
+    # Constant fits first make a transient of [2, 6), too short for first_order. The only segmentation left
+    # has the transient on [6, 10), which has no valid samples and costs 0 under any model.
+    t = np.arange(20.0)
+    y = np.r_[0.0, 0.0, 3.0, 3.0, 3.0, 3.0, [np.nan] * 4, [3.0] * 10] + np.random.default_rng(0).normal(0, 0.01, 20)
+    models = {"steady": 0, "transient": {"model": "first_order"}}
+    kw = dict(method="subset", candidates=[0, 2, 6, 10, 20], penalty=0.1, initial=["steady"], final=["steady"],
+              max_counts={"steady": 2, "transient": 1}, transitions={"steady": ["transient"], "transient": ["steady"]},
+              max_duration_s={"steady": 15.0})
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"])
+    assert [(s.start, s.state.value) for s in pruned.segments] == [(0, "steady"), (6, "transient"), (10, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_the_pruning_bound_keeps_a_slow_models_segment_of_the_fewest_samples_it_can_fit():
+    # first_order fits 5 samples or more. Constant fits first make a transient of [3, 7), 4 samples; the
+    # steady durations then leave only [2, 7), 5 samples.
+    t = np.arange(13.0)
+    y = np.r_[[0.0] * 3, 4.0 * (1 - np.exp(-np.arange(1.0, 5.0) / 1.5)), [4.0] * 6]
+    y = y + np.random.default_rng(1).normal(0, 0.01, 13)
+    models = {"steady": 0, "transient": {"model": "first_order", "tau_min": 0.5, "tau_max": 50.0}}
+    kw = dict(method="subset", candidates=[0, 2, 3, 7, 13], penalty=0.1, initial=["steady"], final=["steady"],
+              transitions={"steady": ["transient"], "transient": ["steady"]}, max_duration_s={"steady": 6.0})
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"])
+    assert [(s.start, s.state.value) for s in pruned.segments] == [(0, "steady"), (2, "transient"), (7, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+@pytest.mark.parametrize("bounds", [{}, {"tau_min": 0.5, "tau_max": 50.0}])
+def test_pruning_stays_exact_for_first_order_with_y0_fixed(bounds):
+    # y0 is pinned at a segment's first valid sample, so a segment that starts earlier can cost less.
+    t = np.array([0.0, 1.0, 2.0, 4.5, 5.5, 6.5, 7.5, 8.5, 11.0, 12.0, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5])
+    y = np.array([0.0791, 0.1193, -0.0599, -0.0075, 0.0609, -0.0556, 1.531, 2.4433, 3.5646, 3.6855,
+                  3.8512, 3.9663, 3.881, 4.0384, 4.0222, 4.0256])
+    fo = {"model": "first_order", "y0": 0.0, **bounds}
+    kw = dict(penalty=1.0, method="exact", min_duration_s={"transient": 2.0},
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    pruned = optimal_segments(t, y, {"steady": fo, "transient": fo}, **kw)
+    full = optimal_segments(t, y, {"steady": fo, "transient": fo}, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"])
+    assert [(s.start, s.state.value) for s in full.segments] == [(0, "transient"), (5, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_pruning_stays_exact_for_a_subtypes_own_first_order_with_y0_fixed():
+    t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 15.0, 17.5, 18.5, 19.5, 20.5, 21.5])
+    y = np.array([-0.0535, -0.0721, 0.0647, -0.004, 0.0159, -0.0195, -0.0508, 1.5865, 2.5256, 3.0639,
+                  3.5134, 3.7046, 3.8744, 3.9512, 3.9484, 4.0229, 3.9194, 3.9624])
+    models = {"steady": 0, "transient": {"model": "poly", "order": 3}}
+    kw = dict(penalty=0.01, method="subset", candidates=[0, 1, 2, 3, 4, 6, 14, 16, 18],
+              subtypes={"rise": rs.Subtype("transient", model={"model": "first_order", "y0": 0.0}),
+                        "other": rs.Subtype("transient")},
+              max_counts={"steady": 2, "transient": 1}, overflow_penalty={"steady": 0.05}, per=7.0,
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert [(s.start, s.state.value, s.subtype) for s in full.segments] == [(0, "steady", None),
+                                                                             (6, "transient", "rise")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_a_model_that_cannot_fit_long_segments_is_searched_without_a_bound():
+    # Constant fits first make one transient of the whole record, which this model cannot fit. Kept off
+    # segments that long or shorter, they find none, though the model fits [0, 3).
+    def short_only(t, y):
+        r = fit_poly(t, y, 0)
+        return r if np.isfinite(y).sum() <= 3 else dataclasses.replace(r, residuals=np.full(len(y), np.nan))
+
+    rs.registry.fit_models.register("short_only", short_only)
+    try:
+        r = optimal_segments(np.arange(8.0), np.zeros(8), {"steady": 0, "transient": "short_only"},
+                             method="subset", candidates=[0, 3, 8], initial=["transient"],
+                             penalty={"steady": 1.0, "transient": 0.1})
+    finally:
+        rs.registry.fit_models.unregister("short_only")
+    assert r.info["upper_bound"] == math.inf
+    assert [(s.start, s.state.value) for s in r.segments] == [(0, "transient"), (3, "steady")]
+
+
+def test_a_record_only_too_short_segments_could_cover_is_infeasible():
+    # The one segment initial and final allow has 4 samples, too few for first_order.
+    t = np.arange(4.0)
+    with pytest.raises(ValueError, match=r"none can continue from 0\.0 s \(sample 0\)"):
+        optimal_segments(t, np.exp(-t / 2.0), {"steady": 0, "transient": {"model": "first_order"}},
+                         method="subset", candidates=[0, 4], initial=["transient"], final=["transient"])
 
 
 def test_overflow_in_two_periods_and_of_two_soft_caps():
