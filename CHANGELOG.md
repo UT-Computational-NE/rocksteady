@@ -197,8 +197,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   off those with none) and the constant fits choose again, so with the
   built-in models the bound is finite whenever a segmentation the models
   can fit exists. Results do not change (except by the `y0` fix under
-  Fixed); `n_fits` can fall. A cheap `overflow_penalty` made this likelier, and it happened
-  without soft caps too (#175).
+  Fixed); `n_fits` can fall. A cheap `overflow_penalty` made this
+  likelier, and it happened without soft caps too (#175).
 
 ### Fixed
 
