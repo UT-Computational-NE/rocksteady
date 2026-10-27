@@ -1637,6 +1637,22 @@ def test_the_pruning_bound_keeps_a_slow_models_segment_of_the_fewest_samples_it_
     assert pruned.segments == full.segments and pruned.objective == full.objective
 
 
+@pytest.mark.parametrize("bounds", [{}, {"tau_min": 0.5, "tau_max": 50.0}])
+def test_pruning_stays_exact_for_first_order_with_y0_fixed(bounds):
+    # y0 is pinned at a segment's first sample, so a segment that starts earlier can cost less.
+    t = np.array([0.0, 1.0, 2.0, 4.5, 5.5, 6.5, 7.5, 8.5, 11.0, 12.0, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5])
+    y = np.array([0.0791, 0.1193, -0.0599, -0.0075, 0.0609, -0.0556, 1.531, 2.4433, 3.5646, 3.6855,
+                  3.8512, 3.9663, 3.881, 4.0384, 4.0222, 4.0256])
+    fo = {"model": "first_order", "y0": 0.0, **bounds}
+    kw = dict(penalty=1.0, method="exact", min_duration_s={"transient": 2.0},
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    pruned = optimal_segments(t, y, {"steady": fo, "transient": fo}, **kw)
+    full = optimal_segments(t, y, {"steady": fo, "transient": fo}, prune=False, **kw)
+    assert math.isfinite(pruned.info["upper_bound"])
+    assert [(s.start, s.state.value) for s in full.segments] == [(0, "transient"), (5, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
 def test_a_model_that_cannot_fit_long_segments_is_searched_without_a_bound():
     # Constant fits first make one transient of the whole record, which this model cannot fit. Kept off
     # segments that long or shorter, they find none, though the model fits [0, 3).

@@ -463,17 +463,19 @@ whose residual is not resolved above that bound is fitted directly. Other
 models are fitted with `fit.fit_model`. A candidate segment is dropped once
 its own cost exceeds the total cost of a known feasible solution. For least
 squares that is exact: once its model is fitted in full, a segment's cost
-never decreases as it grows. The exponential models' default search bounds
-scale with the span; give explicit bounds, or `prune=False`, for a strict
-guarantee.
+never decreases as it grows. That fails for `first_order` with `y0` fixed:
+`y0` is pinned at the segment's first sample, so a segment that starts
+earlier can cost less, and its segments are never dropped. The exponential
+models' default search bounds scale with the span; give explicit bounds, or
+`prune=False`, for a strict guarantee.
 
 The feasible solution is the optimum under cheap constant fits, costed with
 the real models; `info["upper_bound"]` is its total, raised slightly against
-rounding. When it holds a segment too short for its model to fit, the model
-is kept off segments with that many valid samples or fewer (but at least
-one), and the constant fits choose again. For models that fail only on too
-few samples, as the built-in ones do, the bound is then finite whenever a
-segmentation the models can fit exists.
+rounding. When a segment of it cannot be fitted, its model is kept off
+segments with at least one valid sample and no more than the most in any
+segment it could not fit, and the constant fits choose again. For models
+that fail only on too few samples, as the built-in ones do, the bound is
+then finite whenever a segmentation the models can fit exists.
 
 Optimal breakpoints for $K - 1$ segments are not, in general, a subset of
 those for $K$. Fitting $y = t$ with constants splits at $1/2$ for two

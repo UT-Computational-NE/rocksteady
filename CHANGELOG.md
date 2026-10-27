@@ -193,14 +193,21 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - `optimal_segments` prunes where it used to run unpruned: when the cheap
   constant fits that bound the search chose a segment too short for a slow
   model (`first_order`, `exp`) to fit, `info["upper_bound"]` was infinite.
-  The model is now kept off segments that short and the constant fits
-  choose again, so with the built-in models the bound is finite whenever a
-  segmentation the models can fit exists. Results do not change; `n_fits`
+  The model is now kept off segments with no more valid samples (but not
+  off those with none) and the constant fits choose again, so with the
+  built-in models the bound is finite whenever a segmentation the models
+  can fit exists. Results do not change; `n_fits`
   can fall. A cheap `overflow_penalty` made this likelier, and it happened
   without soft caps too (#175).
 
 ### Fixed
 
+- `optimal_segments` with `first_order` and `y0` fixed could return a
+  segmentation costing more than the optimum, with `prune=True` (the
+  default) whenever the pruning bound was finite: pruning assumes a
+  segment's cost never falls as it grows, but `y0` is pinned at the
+  segment's first sample, so a segment that starts earlier can cost less.
+  Such a model's segments are no longer pruned (#175).
 - With times as a `DatetimeIndex`, a `per` that pandas reads as NaT
   (`pd.NaT`, `"NaT"`, `""`, `pd.NA`, `np.timedelta64("NaT", "h")`) is
   refused with a `ValueError` that names it; it failed with pandas' bare

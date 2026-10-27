@@ -142,7 +142,10 @@ known feasible solution (``prune=True``). That is exact when a longer segment
 never fits better than a shorter one it contains, which holds for least
 squares once the model is fitted in full. So pruning waits while a
 polynomial is still fitted with a reduced order (``order_reduced``, too few
-samples), and segments too short for a model never stop the search. The
+samples), and segments too short for a model never stop the search. It does
+not hold for ``first_order`` with ``y0`` fixed, whose ``y0`` is pinned at the
+segment's first sample, so a segment that starts earlier can cost less: its
+segments are never dropped by the bound. The
 exponential models' default time-constant bounds scale with the segment's
 span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
 for a strict guarantee, or pass ``prune=False``. Pruning is decided on the
@@ -159,7 +162,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from numbers import Real
 from typing import (AbstractSet, Any, Callable, Collection, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple,
-                    Optional, Protocol, Sequence, Sized, Tuple, Union, cast)
+                    Optional, Protocol, Sequence, Set, Sized, Tuple, Union, cast)
 
 import numpy as np
 
@@ -653,10 +656,15 @@ class _Costs:
         self.Sx, self.Sy = _RangeSum(x), _RangeSum(yc)
         self.Sxx, self.Sxy, self.Syy = _RangeSum(x * x), _RangeSum(x * yc), _RangeSum(yc * yc)
         self.fast: Dict[str, Optional[int]] = {}
+        # Models whose cost can fall as a segment grows: first_order with y0 fixed pins y0 at the
+        # segment's first sample, so a segment that starts earlier can cost less.
+        self.not_monotone: Set[str] = set()
         for st in self.keys:
             name, opts = _fit.resolve_model(models[st])
             order = int(opts.get("order", 0)) if name == "poly" else None
             self.fast[st] = order if order is not None and order <= 1 else None
+            if name == "first_order" and opts.get("y0") is not None:
+                self.not_monotone.add(st)
         self.cache: Dict[Tuple[str, int, int], float] = {}
         self.reduced: Dict[Tuple[str, int, int], bool] = {}
         self.n_fits = 0
@@ -746,8 +754,11 @@ class _Costs:
         return c
 
     def full_model(self, st: str, p: int, q: int) -> bool:
-        """The fit of ``[p, q)`` used the whole model (no order reduction): costs grow from here on."""
-        return not self.reduced.get((st, p, q), False)
+        """
+        The fit of ``[p, q)`` used the whole model (no order reduction), of a
+        model whose cost never falls as a segment grows: costs grow from here on.
+        """
+        return st not in self.not_monotone and not self.reduced.get((st, p, q), False)
 
 
 class _SegmentCosts(Protocol):
@@ -1624,7 +1635,8 @@ class _Problem:
         the true problem may still have a segmentation).
         """
         costs = cast(_Costs, self.costs)  # only _Costs has models that are not fast
-        min_valid: Dict[str, int] = {}  # of a slow model: the fewest valid samples it may fit
+        # Of a slow model: the fewest valid samples of a segment it may take, unless the segment has none.
+        min_valid: Dict[str, int] = {}
         while True:
             table, k = self._forward(B, surrogate=True, ub=math.inf, prune=False, min_valid=min_valid)
             if table is None and not min_valid:
@@ -1633,6 +1645,7 @@ class _Problem:
             if table is None:
                 return math.inf
             bounds, opts = self._backtrack(B, *table)
+            before = dict(min_valid)
             unfit = False
             for i, o in enumerate(opts):
                 p, q = bounds[i], bounds[i + 1]
@@ -1642,6 +1655,8 @@ class _Problem:
                     unfit = True
             if not unfit:
                 return self.total(bounds, opts)[0] * (1 + 1e-9) + 1e-12
+            if min_valid == before:  # an unfit segment was not kept off: the next round would choose it again
+                raise RuntimeError("the constant fits chose a segment its model was already kept off")
 
     def _forward(self, B: np.ndarray, *, surrogate: bool, ub: float, prune: bool,
                  min_valid: Optional[Mapping[str, int]] = None):
@@ -1649,8 +1664,8 @@ class _Problem:
         The program's table over breakpoints ``B``, ``(F, R, bp_j, bp_o, bp_l)``
         (None when no segmentation reaches ``B[-1]``), and the index of the
         latest candidate a segmentation reaches. With ``surrogate``, a slow
-        model is kept off segments with fewer valid samples than ``min_valid``
-        gives it.
+        model is kept off segments with at least one valid sample and fewer
+        than ``min_valid`` gives it.
         """
         m, O, L = len(B), self.O, self.L
         F = np.full((m, O, L), math.inf)
@@ -1921,7 +1936,7 @@ def _options(states: Sequence[str], pen: Mapping[str, float], max_counts, transi
 
 def _poly0(costs: _Costs, ps: np.ndarray, q: int) -> np.ndarray:
     """Constant-fit SSE for starts ``ps``: the cheap surrogate used only to find a feasible bound."""
-    n = costs.N[q] - costs.N[ps]
+    n = costs.n_valid(ps, q)
     syy, _ = costs.Syy.range(ps, q)
     sy, _ = costs.Sy.range(ps, q)
     with np.errstate(invalid="ignore", divide="ignore"):
