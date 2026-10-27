@@ -464,10 +464,10 @@ models are fitted with `fit.fit_model`. A candidate segment is dropped once
 its own cost exceeds the total cost of a known feasible solution. For least
 squares that is exact: once its model is fitted in full, a segment's cost
 never decreases as it grows. That fails for `first_order` with `y0` fixed:
-`y0` is pinned at the segment's first sample, so a segment that starts
-earlier can cost less, and its segments are never dropped. The exponential
-models' default search bounds scale with the span; give explicit bounds, or
-`prune=False`, for a strict guarantee.
+`y0` is pinned at the segment's first valid sample, so a segment that
+starts earlier can cost less, and its segments are never dropped. The
+exponential models' default search bounds scale with the span; give
+explicit bounds, or `prune=False`, for a strict guarantee.
 
 The feasible solution is the optimum under cheap constant fits, costed with
 the real models; `info["upper_bound"]` is its total, raised slightly against

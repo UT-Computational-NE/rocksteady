@@ -1639,7 +1639,7 @@ def test_the_pruning_bound_keeps_a_slow_models_segment_of_the_fewest_samples_it_
 
 @pytest.mark.parametrize("bounds", [{}, {"tau_min": 0.5, "tau_max": 50.0}])
 def test_pruning_stays_exact_for_first_order_with_y0_fixed(bounds):
-    # y0 is pinned at a segment's first sample, so a segment that starts earlier can cost less.
+    # y0 is pinned at a segment's first valid sample, so a segment that starts earlier can cost less.
     t = np.array([0.0, 1.0, 2.0, 4.5, 5.5, 6.5, 7.5, 8.5, 11.0, 12.0, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5])
     y = np.array([0.0791, 0.1193, -0.0599, -0.0075, 0.0609, -0.0556, 1.531, 2.4433, 3.5646, 3.6855,
                   3.8512, 3.9663, 3.881, 4.0384, 4.0222, 4.0256])
@@ -1650,6 +1650,23 @@ def test_pruning_stays_exact_for_first_order_with_y0_fixed(bounds):
     full = optimal_segments(t, y, {"steady": fo, "transient": fo}, prune=False, **kw)
     assert math.isfinite(pruned.info["upper_bound"])
     assert [(s.start, s.state.value) for s in full.segments] == [(0, "transient"), (5, "steady")]
+    assert pruned.segments == full.segments and pruned.objective == full.objective
+
+
+def test_pruning_stays_exact_for_a_subtypes_own_first_order_with_y0_fixed():
+    t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 15.0, 17.5, 18.5, 19.5, 20.5, 21.5])
+    y = np.array([-0.0535, -0.0721, 0.0647, -0.004, 0.0159, -0.0195, -0.0508, 1.5865, 2.5256, 3.0639,
+                  3.5134, 3.7046, 3.8744, 3.9512, 3.9484, 4.0229, 3.9194, 3.9624])
+    models = {"steady": 0, "transient": {"model": "poly", "order": 3}}
+    kw = dict(penalty=0.01, method="subset", candidates=[0, 1, 2, 3, 4, 6, 14, 16, 18],
+              subtypes={"rise": rs.Subtype("transient", model={"model": "first_order", "y0": 0.0}),
+                        "other": rs.Subtype("transient")},
+              max_counts={"steady": 2, "transient": 1}, overflow_penalty={"steady": 0.05}, per=7.0,
+              transitions={"steady": ["transient"], "transient": ["steady"]})
+    pruned = optimal_segments(t, y, models, **kw)
+    full = optimal_segments(t, y, models, prune=False, **kw)
+    assert [(s.start, s.state.value, s.subtype) for s in full.segments] == [(0, "steady", None),
+                                                                             (6, "transient", "rise")]
     assert pruned.segments == full.segments and pruned.objective == full.objective
 
 

@@ -144,8 +144,8 @@ squares once the model is fitted in full. So pruning waits while a
 polynomial is still fitted with a reduced order (``order_reduced``, too few
 samples), and segments too short for a model never stop the search. It does
 not hold for ``first_order`` with ``y0`` fixed, whose ``y0`` is pinned at the
-segment's first sample, so a segment that starts earlier can cost less: its
-segments are never dropped by the bound. The
+segment's first valid sample, so a segment that starts earlier can cost less:
+its segments are never dropped by the bound. The
 exponential models' default time-constant bounds scale with the segment's
 span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
 for a strict guarantee, or pass ``prune=False``. Pruning is decided on the
@@ -657,7 +657,7 @@ class _Costs:
         self.Sxx, self.Sxy, self.Syy = _RangeSum(x * x), _RangeSum(x * yc), _RangeSum(yc * yc)
         self.fast: Dict[str, Optional[int]] = {}
         # Models whose cost can fall as a segment grows: first_order with y0 fixed pins y0 at the
-        # segment's first sample, so a segment that starts earlier can cost less.
+        # segment's first valid sample, so a segment that starts earlier can cost less.
         self.not_monotone: Set[str] = set()
         for st in self.keys:
             name, opts = _fit.resolve_model(models[st])
