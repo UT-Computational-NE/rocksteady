@@ -485,3 +485,18 @@ def test_derived_properties_follow_a_float_subclass_whose_arithmetic_changes(fie
     fresh = _Result0("c", r.statistic, r.uncertainty, r.limit, r.k)
     assert fresh.outcome != Outcome.PASS
     assert (r.outcome, r.ratio, r.invalid_reason) == (fresh.outcome, fresh.ratio, fresh.invalid_reason)
+
+
+@pytest.mark.parametrize("prop", ["invalid_reason", "ratio", "outcome"])
+def test_each_derived_property_read_alone_gives_the_0_5_1_warnings(prop):
+    """``upper`` and ``lower`` overflow here: only the properties that read them warn, as in 0.5.1."""
+    fields = ("c", np.float64(1e308), np.float64(1e308), 1.0, 2.0)
+
+    def read(cls):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            value = getattr(cls(*fields), prop)
+        return value, [str(w.message) for w in caught]
+
+    assert read(rs.CriterionResult) == read(_Result0)
+    assert len(read(_Result0)[1]) == {"invalid_reason": 0, "ratio": 1, "outcome": 2}[prop]

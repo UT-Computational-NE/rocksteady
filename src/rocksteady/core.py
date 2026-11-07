@@ -194,12 +194,15 @@ class CriterionResult:
     k: float
     details: Dict[str, float] = field(default_factory=dict)
 
-    def _judged(self) -> Tuple[Optional[str], float, Outcome]:
+    def _judged(self) -> List[Any]:
         """
-        ``(invalid_reason, ratio, outcome)``, worked out together, and kept
-        while the fields are the same objects and each is of a
-        ``_KEPT_TYPES`` type. The fields are compared by identity, not
-        equality: equal values can report differently (the reprs of inf and
+        ``[invalid_reason, ratio, outcome]``, kept while the fields are the
+        same objects and each is of a ``_KEPT_TYPES`` type. Only the reason
+        is worked out here: ``ratio`` and ``outcome`` fill their slots (None
+        until then) on their first read, so that each property does only its
+        own arithmetic (and gives only its own warnings, such as an overflow
+        in ``upper``). The fields are compared by identity, not equality:
+        equal values can report differently (the reprs of inf and
         np.float64(inf), or of -0.0 and 0.0, in ``invalid_reason``). Only a
         ``CriterionResult`` itself uses it: a subclass's properties may read
         more than the fields, so a subclass works each out on every read.
@@ -209,8 +212,7 @@ class CriterionResult:
         kept = self.__dict__.get("_kept_from")
         if kept is not None and kept[0] is s and kept[1] is u and kept[2] is lim and kept[3] is k:
             return kept[4]
-        reason = self._invalid_reason()
-        judged = (reason, self._ratio(reason), self._outcome(reason))
+        judged = [self._invalid_reason(), None, None]
         if (type(s) in _KEPT_TYPES and type(u) in _KEPT_TYPES and type(lim) in _KEPT_TYPES
                 and type(k) in _KEPT_TYPES):  # exact types: a float subclass's arithmetic can change
             self.__dict__["_kept_from"] = (s, u, lim, k, judged)
@@ -259,7 +261,10 @@ class CriterionResult:
         """
         if type(self) is not CriterionResult:
             return self._ratio(self.invalid_reason)
-        return self._judged()[1]
+        judged = self._judged()
+        if judged[1] is None:
+            judged[1] = self._ratio(judged[0])
+        return judged[1]
 
     def _ratio(self, invalid_reason: Optional[str]) -> float:
         if invalid_reason is not None:
@@ -272,7 +277,10 @@ class CriterionResult:
         """PASS, FAIL or UNDECIDED; an invalid result is always UNDECIDED, never a pass."""
         if type(self) is not CriterionResult:
             return self._outcome(self.invalid_reason)
-        return self._judged()[2]
+        judged = self._judged()
+        if judged[2] is None:
+            judged[2] = self._outcome(judged[0])
+        return judged[2]
 
     def _outcome(self, invalid_reason: Optional[str]) -> Outcome:
         if invalid_reason is not None:
