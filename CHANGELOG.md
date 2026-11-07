@@ -171,6 +171,25 @@ Upgrading from 0.5.1. Behaviour changes to check:
   period, `info["overflow_cost"]` their cost, and `summary()` names the caps
   that overflowed. Transitions, `initial`, `final` and durations stay hard
   (#59).
+- Joined transients for `optimal_segments`: `join_transients=True` fits
+  each transient as the line from the previous steady segment's level, at
+  its first sample, to the next segment's level, at that segment's first
+  sample, so a transient can no longer be flat and take a plateau that a
+  cap keeps from being steady. At the record's start or end only its inner
+  side is joined. Steady segments are fitted on their own, as before (ADR
+  0002). The option needs `{"steady": 0, "transient": 1}` (a subtype's own
+  model too) and refuses `indeterminate`; no transient follows a
+  transient, and none borders a steady segment with no finite sample. With
+  `"bic"`, a transient joined on both sides is charged no free parameter.
+  The search stays exact on the candidates, at up to about `m**4` steps
+  for `m` candidates: a day of 1 s samples with 288 candidates and
+  `refine` took about 9 s on an Apple M3 Max, against 2 s without the
+  option.
+  `OptimalSegmentation.models` carries `"join_transients": True`, which
+  `fit.piecewise_fit`, `fit.validate_models` and `report.fit_report`
+  accept, so the report fits the segments as the optimiser did; given
+  segments it cannot join, `fit_report` raises `ValueError` naming them.
+  New: `fit.fit_joined_line` and `fit.joins_transients` (#179).
 
 ### Changed
 

@@ -477,6 +477,41 @@ segment it could not fit, and the constant fits choose again. For models
 that fail only on too few samples, as the built-in ones do, the bound is
 then finite whenever a segmentation the models can fit exists.
 
+**Joined transients.** With `join_transients=True`, a steady segment is
+fitted with its mean $L$, and a transient over $[p, q)$ between levels
+$L_1$ and $L_2$ is the line from $(t_p, L_1)$ to $(t_q, L_2)$, $t_q$ being
+the next segment's first sample. With $u_i = (t_i - t_p)/(t_q - t_p)$, its
+SSE splits into three terms that cannot cancel:
+
+$$
+F + A\,(L_2 - L_1 - s)^2 + n\,\big(\bar y - (1 - \bar u) L_1 - \bar u L_2\big)^2 ,
+$$
+
+where $F$ is the SSE of the segment's free least-squares line, $s$ that
+line's rise from $u = 0$ to $u = 1$, $A = \sum_i (u_i - \bar u)^2$, and $n$,
+$\bar y$, $\bar u$ the count and means of the finite samples. The terms
+come from the same range sums, and a segment whose time variance they do
+not resolve is summed directly. A transient at the record's start or end
+is joined at one end only: the minimum of the last two terms over the free
+end's level, $A n (c s - g)^2 / (A + n c^2)$, with $c$ and $g$ the slope's
+coefficient and offset in the joined term.
+
+A transient's cost couples its neighbours' levels, so the program's state
+holds the last steady segment's start as well as its end: $G(k, j, s, c)$ is
+the best cost of a segmentation whose last segment is steady over
+$[B_j, B_k)$, in subtype or state $s$ with counts $c$. A steady segment over
+$[B_j, B_k)$ follows a steady segment ending at $B_j$, a transient that
+starts the record, or a transient over $[B_i, B_j)$ after a steady segment
+over $[B_h, B_i)$, whose level enters the transient's cost. The program
+runs over $j$, taking for each $(i, h)$ the cost at every end $k$ at once,
+so it takes up to $O(m^4)$ steps for $m$ candidates. A joined transient
+never costs less than its free line ($F$ alone), so pruning against the
+joined objective of the segmentation the fits apart choose stays exact.
+`refine` scores a move by the segments beside the boundary and the
+transients next to them, and searches again the boundaries up to three away
+from one that moved, whose costs the move can change (ADR 0002 says why
+steady segments are fitted on their own).
+
 Optimal breakpoints for $K - 1$ segments are not, in general, a subset of
 those for $K$. Fitting $y = t$ with constants splits at $1/2$ for two
 segments and at $1/3, 2/3$ for three. That is why `"subset"` (choosing among

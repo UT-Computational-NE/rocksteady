@@ -54,6 +54,10 @@ _Avoid_: event (for the mask), flags, trigger
 A segment chosen by the optimiser to describe a finished record as well as possible within its constraints; it is not certified steady by the detector.
 _Avoid_: optimal state, detected segment
 
+**Joined transient**:
+A transient fitted as the straight line from the level of the steady segment before it, at its first sample, to the level of the segment after it, at that segment's first sample; at the record's start or end, only its inner side is joined.
+_Avoid_: continuous segment, pinned transient (`first_order` pins `y0`), flat transient
+
 **Constraint**:
 A restriction on the optimiser's whole segmentation: counts per period, which state or subtype may follow which, which may take the record's first and last segments, durations, and penalties.
 _Avoid_: limit (that is a criterion's threshold), rule

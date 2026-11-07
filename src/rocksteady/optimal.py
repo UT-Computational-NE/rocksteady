@@ -40,7 +40,8 @@ Constraints
 - ``transitions``: which state or subtype may follow which. Default: any.
   This constrains the sequence of segments only. Segments are fitted
   independently, so consecutive fits need not meet: a level change can sit
-  at any boundary.
+  at any boundary. With ``join_transients`` (below), transients meet their
+  neighbours, and no transient follows a transient.
   Alternation forbids steady -> steady, but the optimiser may then place a
   short transient on a plateau next to a step rather than across it.
 - ``initial`` / ``final``: the states or subtypes the record's first and
@@ -109,6 +110,45 @@ breakpoints and states fixed and no count caps, durations or penalties, so
 ties go to the least sum of positions as above, and a segmentation that
 cannot be typed raises an error that names where.
 
+Joined transients
+-----------------
+With ``join_transients=True``, each transient is a joined transient: the
+straight line from the level of the steady segment before it, at the
+transient's first sample, to the level of the segment after it, at that
+segment's first sample. A transient fitted with a free line can be flat,
+fitting a run of steady samples as well as a constant does; a joined
+transient between two different levels cannot be, and one that holds
+steady samples at an end pays for them. At the record's start or end only
+its inner side is joined, and its slope is fitted by least squares through
+that point; a transient that is the whole record is a free line. Steady
+segments are fitted as without the option, each on its own (ADR 0002), so
+the objective is the SSE of the profile of steady levels joined by lines,
+plus the penalties, under every constraint.
+
+The option fits steady segments with a constant and transients with a line
+(``models={"steady": 0, "transient": 1}``, and any ``Subtype.model`` the
+same); any other model, and ``indeterminate`` in ``models``, raises
+``ValueError``. A transient borders steady segments or the record's ends
+only: no transient follows a transient, whatever ``transitions`` allow.
+Steady -> steady stays allowed where ``transitions`` allow it, and stays a
+step. A steady segment with no finite sample has no level, so a transient
+is never placed beside one; when nothing else fits, the infeasibility error
+says so. With ``"bic"``, a joined transient's penalty counts its free
+parameters: none joined on both sides, so it costs half a steady segment's
+penalty, and one more for each side not joined, at the record's start or
+end. A penalty mapping applies as given, wherever the transient lies.
+
+The result is optimal under this objective on the candidates (``subset``,
+``exact``), and ``refine`` moves boundaries under it. A transient's cost
+depends on both its neighbours' levels, so the program also tracks the
+last steady segment's start: it takes up to about ``m**4`` steps for ``m``
+candidates where the program without the option takes ``m**2``, and
+``exact`` needs a coarse ``grid_s``. A day of 1 s samples with 288
+candidates (one per 300 s) takes seconds; a day of one-minute samples on a
+120 s grid (721 candidates) takes more than a minute. ``OptimalSegmentation.models`` carries
+``"join_transients": True``, so ``report.fit_report`` fits the segments as
+the optimiser did.
+
 Methods
 -------
 All three run one dynamic program over candidate breakpoints, which tracks
@@ -148,7 +188,10 @@ segment's first valid sample, so a segment that starts earlier can cost less:
 its segments are never dropped by the bound. The
 exponential models' default time-constant bounds scale with the segment's
 span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
-for a strict guarantee, or pass ``prune=False``. Pruning is decided on the
+for a strict guarantee, or pass ``prune=False``. With ``join_transients``,
+the joined objective of the segmentation the fits apart choose bounds the
+joined search; a joined transient never costs less than its free line, so
+pruning stays exact. Pruning is decided on the
 model cost before any subtype's condition, for each model in use (a
 state's, and each subtype's own), so it stays exact with subtypes: a
 longer segment never costs less under one model, whichever subtype could
@@ -168,6 +211,7 @@ import numpy as np
 
 from . import _grouping as _g
 from . import _validate as _v
+from . import _joined
 from . import fit as _fit
 from .states import Segment, State, check_segments
 
@@ -653,6 +697,9 @@ class _Costs:
         x = np.where(ok, (ts - mid) / (0.5 * span if span > 0 else 1.0), 0.0)
         yc = np.where(ok, y - (np.mean(y[ok]) if ok.any() else 0.0), 0.0)
         self.N = np.concatenate(([0.0], np.cumsum(ok.astype(float))))  # integers: exact
+        # Every sample's scaled time, finite or not, and the centred signal: joined transients are pinned at times.
+        self.x_all = (ts - mid) / (0.5 * span if span > 0 else 1.0)
+        self.yc = yc
         self.Sx, self.Sy = _RangeSum(x), _RangeSum(yc)
         self.Sxx, self.Sxy, self.Syy = _RangeSum(x * x), _RangeSum(x * yc), _RangeSum(yc * yc)
         self.fast: Dict[str, Optional[int]] = {}
@@ -856,7 +903,8 @@ class OptimalSegmentation:
     spec as ``report.fit_report`` takes one: the states' models, and under
     ``"subtypes"`` those of the subtypes with a model of their own, so that
     ``fit_report(values, result.segments, {signal: result.models})`` fits
-    each segment as the optimiser did. ``overflow`` is indexed as
+    each segment as the optimiser did; with ``join_transients``, it also holds
+    ``"join_transients": True``. ``overflow`` is indexed as
     ``counts`` is, with a column per soft-capped name
     (``overflow_penalty``) holding the segments beyond its cap in each
     period, and ``info["overflow_cost"]`` what they add to ``objective``.
@@ -1814,12 +1862,16 @@ class _Problem:
                         best_v[t_], best_r[t_], best[t_] = v, r, (jidx[sp, l], sp, l)
         return best_v, best_r, best[:, 0], best[:, 1], best[:, 2]
 
-    def refine(self, bounds: List[int], opts: List[int], window_s: float, max_sweeps: int = 5):
+    def refine(self, bounds: List[int], opts: List[int], window_s: float, max_sweeps: int = 5,
+               joined: Optional["_joined.Joined"] = None):
         """
         Move each internal boundary within ``window_s`` while that lowers the total cost (options fixed).
+        With ``joined``, segments are costed joined: a move costs the segments beside the boundary and the
+        transients next to them.
 
         Each boundary is searched coarse to fine (about 16 positions per level, strides shrinking eightfold),
-        and after the first sweep only boundaries next to one that moved are searched again.
+        and after the first sweep only boundaries next to one that moved are searched again (joined, those up to
+        three away).
         """
         bounds = list(bounds)
         dirty = set(range(1, len(bounds) - 1))
@@ -1844,6 +1896,8 @@ class _Problem:
                     if not self.feasible(moved, opts):
                         return math.inf
                     # Moving a boundary across a period's start can change the overflow beyond a soft cap.
+                    if joined is not None:
+                        return joined.window_cost(moved, opts, i) + self.overflow_cost(moved, opts)
                     return self.cost(a, lo, x) + self.cost(b, x, hi) + self.overflow_cost(moved, opts)
 
                 seen = {cur: score(cur)}
@@ -1862,7 +1916,11 @@ class _Problem:
                 if best_x != cur and seen[best_x] < seen[cur] - 1e-12 * max(1.0, abs(seen[cur])):
                     bounds[i] = best_x
                     moved.add(i)
-            dirty = {j for i in moved for j in (i - 1, i + 1) if 0 < j < len(bounds) - 1}
+            # A move changes the segments beside it. Joined, it changes their levels too, so the transients next
+            # to them, which enter the cost of boundaries up to three away.
+            reach = 3 if joined is not None else 1
+            dirty = {j for i in moved for j in range(i - reach, i + reach + 1)
+                     if j != i and 0 < j < len(bounds) - 1}
         return bounds
 
 
@@ -2060,6 +2118,31 @@ def _overflow_table(counts, prob: "_Problem", bounds, opts):
     return out
 
 
+def _state_of(key: str, subtypes: Mapping[str, "Subtype"]) -> str:
+    """The state of a model key: a state's name, or a subtype's with a model of its own."""
+    return subtypes[key].state.value if key in subtypes else key
+
+
+def _model_key(options: Sequence[_Option], state: str) -> Optional[str]:
+    """The model key of ``state``'s options (all one model when transients are joined), or None without any."""
+    return next((opt.model_key for opt in options if opt.state == state), None)
+
+
+def _check_joined_models(models: Mapping[str, Any], subtypes: Mapping[str, "Subtype"]) -> None:
+    """With ``join_transients``: a constant for steady segments and a line for transients, and no indeterminate."""
+    if "indeterminate" in models:
+        raise ValueError("join_transients joins transients to steady segments only: models names 'indeterminate', "
+                         "which a transient cannot be joined to")
+    want = {"steady": 0, "transient": 1}
+    named = [(f"state {st!r}", st, models[st]) for st in models]
+    named += [(f"subtype {k!r}", sub.state.value, sub.model) for k, sub in subtypes.items() if sub.model is not None]
+    for who, st, spec in named:
+        name, opts = _fit.resolve_model(spec)
+        if name != "poly" or int(opts.get("order", 0)) != want[st]:
+            line = "a constant (poly order 0)" if st == "steady" else "a line (poly order 1)"
+            raise ValueError(f"join_transients fits {st} segments with {line}; {who} has model {spec!r}")
+
+
 def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: Optional[Mapping[str, int]] = None,
                      transitions: Optional[Mapping[str, Sequence[str]]] = None,
                      min_duration_s: Optional[Mapping[str, float]] = None,
@@ -2070,7 +2153,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                      subtypes: Optional[Mapping[str, Subtype]] = None, initial: Optional[Collection[str]] = None,
                      final: Optional[Collection[str]] = None,
                      events: Optional[Mapping[str, Any]] = None,
-                     overflow_penalty: Optional[Mapping[str, float]] = None) -> OptimalSegmentation:
+                     overflow_penalty: Optional[Mapping[str, float]] = None,
+                     join_transients: bool = False) -> OptimalSegmentation:
     """
     Best-fit segments of ``y`` under constraints (see the module docstring).
 
@@ -2186,6 +2270,12 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         keeps it in check. A cost of 0 lets the cap be passed freely. ``overflow`` on the
         result holds the segments beyond each soft cap per period, and
         ``info["overflow_cost"]`` what they cost.
+    join_transients : bool
+        Fit each transient as the line from the previous steady segment's
+        level, at its first sample, to the next segment's level, at that
+        segment's first sample (see "Joined transients" in the module
+        docstring). Needs ``models`` to be a constant for steady segments and
+        a line for transients, and refuses ``indeterminate``. Default: False.
 
     Returns
     -------
@@ -2206,6 +2296,11 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
             raise ValueError(f"models names {st!r}, which is not a state ({', '.join(_STATE_NAMES)})")
     _fit.validate_models({"y": dict(models)}, states=states)
     subtypes = _checked_subtypes(subtypes, states)
+    if not isinstance(join_transients, (bool, np.bool_)):
+        raise ValueError(f"join_transients must be True or False, got {join_transients!r}")
+    join_transients = bool(join_transients)
+    if join_transients:
+        _check_joined_models(models, subtypes)
     check = _name_check(states, subtypes)
     for name, mapping in (("max_counts", max_counts), ("min_duration_s", min_duration_s),
                           ("max_duration_s", max_duration_s)):
@@ -2230,12 +2325,17 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     fits = {**{st: models[st] for st in states}, **own_models}
     # Penalty per state, then per subtype: a subtype's own replaces its state's, which it takes otherwise.
     own: Mapping[str, float] = {}
+    extra = 0.0  # with "bic" and joined transients: the penalty of each free parameter of a transient at an end
     if isinstance(penalty, str):
         if penalty != "bic":
             raise ValueError(f"penalty must be 'bic', a number or a mapping, got {penalty!r}")
         var = _noise_var(y)
         n_valid = int(np.isfinite(y).sum())
-        bic = {k: var * (_n_params(fits, k, ts, y) + 1) * math.log(max(n_valid, 2)) for k in fits}
+        log_n = math.log(max(n_valid, 2))
+        bic = {k: var * (_n_params(fits, k, ts, y) + 1) * log_n for k in fits}
+        if join_transients:  # a transient joined on both sides has no free parameter
+            bic.update({k: var * log_n for k in fits if _state_of(k, subtypes) == "transient"})
+            extra = var * log_n
         pen = {st: bic[st] for st in states}
         own = {k: bic[k] for k in subtypes if k in bic}  # a subtype with a model of its own: that model's
     elif isinstance(penalty, Mapping):
@@ -2252,6 +2352,9 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     options, counters, allowed, may_start, may_end, columns = _options(
         states, pen, max_counts, transitions, min_duration_s, max_duration_s, subtypes, _Conditions(ts, y, masks),
         initial, final, soft)
+    if join_transients:  # a joined transient borders steady segments only
+        is_transient = np.array([opt.state == "transient" for opt in options])
+        allowed = allowed & ~(is_transient[:, None] & is_transient[None, :])
     prob = _Problem(ts, y, idx, fits, options, counters, allowed, may_start, may_end, columns, per, period_origin,
                     max_counts, transitions, initial_final)
     if method in ("subset", "refine"):
@@ -2272,11 +2375,19 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     # A feasible solution first, with cheap constant-fit costs; its true cost bounds the search.
     ub = prob.pruning_bound_or_raise(B) if prune and slow else math.inf
     bounds, opts = prob.solve(B, ub=ub, prune=prune)
+    joined = None
+    if join_transients:
+        # The fits apart are a feasible segmentation under the same constraints (or the error, when none
+        # is): its joined objective bounds the joined search.
+        joined = _joined.Joined(prob, _model_key(options, "steady"), _model_key(options, "transient"),
+                                extra)
+        ub = joined.total(bounds, opts)[0] if prune else math.inf
+        bounds, opts = joined.solve(B, ub)
     if method == "refine":
         if refine_s is None:
             gaps = np.diff(ts[np.minimum(B, n - 1)])
             refine_s = 0.5 * float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 0.0
-        bounds = prob.refine(bounds, opts, float(refine_s))
+        bounds = prob.refine(bounds, opts, float(refine_s), joined=joined)
         if subtypes:
             # A moved segment can meet an earlier-declared subtype's conditions: type the final segments again,
             # by the same program with their breakpoints and states fixed, under every constraint, and the
@@ -2286,7 +2397,7 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
                               period_origin, max_counts, transitions, initial_final, fixed_segments=fixed,
                               costs=prob.costs)
             _, opts = retype.solve(np.asarray(bounds, dtype=np.int64), prune=False)
-    objective, sse = prob.total(bounds, opts)
+    objective, sse = (joined or prob).total(bounds, opts)
     segs = [Segment(bounds[i], bounds[i + 1], State(options[o].state), subtype=options[o].subtype)
             for i, o in enumerate(opts)]
     n_valid = int(np.isfinite(y).sum())
@@ -2297,7 +2408,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
                                int(len(B)), prob.costs.n_fits, info, subtypes,
-                               {**dict(models), **({"subtypes": own_models} if own_models else {})},
+                               {**dict(models), **({"subtypes": own_models} if own_models else {}),
+                                **({_fit.JOIN_KEY: True} if join_transients else {})},
                                overflow)
 
 
