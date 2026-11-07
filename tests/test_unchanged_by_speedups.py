@@ -5,6 +5,7 @@ the bits of every float, so a change that moves only a last bit, or turns 0.0 in
 """
 
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -278,6 +279,52 @@ def test_line_fit_and_deviation_criteria_give_the_0_5_values_bit_for_bit(runs):
         assert (r.name, r.details) == (r0.name, r0.details)
         assert _bits([r.statistic, r.uncertainty, r.limit, r.k]).tolist() == \
             _bits([r0.statistic, r0.uncertainty, r0.limit, r0.k]).tolist()
+
+
+def _fit_and_warnings(fit, t, y):
+    """``fit(t, y)`` as bits, and the distinct messages of the warnings it gave (0.5 took some means twice, so it
+    gave some warnings twice)."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = fit(t, y)
+    return [_bits(v).tolist() for v in out], sorted({str(w.message) for w in caught})
+
+
+@pytest.mark.parametrize("t, y", [
+    # int64 times and values whose sums overflow int64; their means take a float64 sum
+    (np.arange(4, dtype=np.int64) * 2**61, np.array([2**62, 2**62, 2**62, 1], dtype=np.int64)),
+    (np.arange(5, dtype=np.float32), np.array([1, 2, 2, 3, 5], dtype=np.float32)),
+    (np.empty(0), np.empty(0)),  # no samples: mean's own warning
+    # float64 off any grid, whose sums round differently in another order
+    (np.random.default_rng(3).normal(0, 1e3, 20), np.random.default_rng(4).normal(0, 1, 20)),
+], ids=["int64", "float32", "empty", "float64"])
+def test_line_fit_gives_the_0_5_values_and_warnings_on_other_arrays(t, y):
+    assert _fit_and_warnings(rs.stats.linear_fit, t, y) == _fit_and_warnings(_linear_fit0, t, y)
+
+
+def test_a_deviation_criterion_gives_the_0_5_values_on_a_masked_window():
+    """A masked array's mean counts its unmasked items only."""
+    c = rs.DeviationCriterion("x", 1.0, 0.1)
+    t, y = np.arange(4.0), np.ma.array([1.0, 50.0, 2.0, 4.0], mask=[0, 1, 0, 0])
+    r, r0 = c.evaluate(t, y), _deviation0(c, t, y)
+    assert _bits([r.statistic, r.uncertainty]).tolist() == _bits([r0.statistic, r0.uncertainty]).tolist()
+    assert r0.statistic == pytest.approx(5 / 3)  # |4 - 7/3|: the unmasked mean
+
+
+def test_a_step_detector_raises_on_a_value_it_cannot_store_and_leaves_it_out():
+    """A decision on #180: 0.5.1 kept such a value, and raised only while its full history held it."""
+    early = rs.StepChange("x", 1.0, m=2)
+    assert early.update(0.0, {}, {"x": 0.0}) is False
+    with pytest.raises(ValueError):  # at once, though the history is not yet full
+        early.update(1.0, {}, {"x": "x"})
+    # Left out: the next samples are judged as if it never came, not with what its slot held before (5.0).
+    step, clean = rs.StepChange("x", 1.0, m=1), rs.StepChange("x", 1.0, m=1)
+    assert [step.update(0.0, {}, {"x": 5.0}), step.update(1.0, {}, {"x": 0.0})] == [False, True]
+    with pytest.raises(ValueError):
+        step.update(2.0, {}, {"x": "x"})
+    flags = [step.update(float(i), {}, {"x": v}) for i, v in enumerate([0.0, 0.0, 5.0], start=3)]
+    assert flags == [clean.update(float(i), {}, {"x": v}) for i, v in enumerate([5.0, 0.0, 0.0, 0.0, 5.0])][2:]
+    assert flags == [False, False, True]
 
 
 # Pairs of consecutive values that compare equal: inf then np.float64(inf) (their reprs in invalid_reason differ
