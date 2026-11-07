@@ -99,13 +99,14 @@ def run(detector: Detector, df: "pd.DataFrame", t: Optional[np.ndarray] = None,
     rows = []
     for i in range(len(df)):
         v = detector.update(float(t[i]), dict(zip(cols, data[i])))
-        row = {"label": v.label.value, "eta": v.eta, "limiting": v.limiting,
+        eta, limiting, ratios = v._margins()  # pylint: disable=protected-access
+        row = {"label": v.label.value, "eta": eta, "limiting": limiting,
                "since_disturbance_s": v.since_disturbance_s, "forced_by": v.forced_by,
                "reason": None if v.reason is None else v.reason.value, "valid": v.valid,
                "window_start_s": v.window_start_s}
         if with_results:
-            for name, r in v.results.items():
-                row[f"ratio_{name}"] = r.ratio
+            for (name, r), ratio in zip(v.results.items(), ratios):
+                row[f"ratio_{name}"] = ratio
                 for key, value in r.details.items():
                     row[f"detail_{name}_{key}"] = value
         rows.append(row)

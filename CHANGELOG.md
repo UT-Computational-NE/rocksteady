@@ -160,6 +160,19 @@ Upgrading from 0.5.1. Behaviour changes to check:
 
 ### Changed
 
+- `batch.run` takes about 45 % less time per sample, with the same output
+  bit for bit (#180). On an 86,400-sample day with a TRIGA-like detector
+  (five deviation criteria, three step disturbances, a floor latch), 133 µs
+  became 72 µs. `CriterionResult` keeps its `invalid_reason`, `ratio` and
+  `outcome` until `statistic`, `uncertainty`, `limit` or `k` is reassigned
+  (a subclass still works them out on every read), and `batch.run` reads
+  each ratio once a row. `DeviationCriterion`, `stats.linear_fit` and
+  `StepChange` take their means without `ndarray.mean`'s wrapper, which
+  gives the same values. `StepChange` keeps its history in an array rather
+  than a deque, so a value that `float` cannot read, given to
+  `StepChange.update` directly, now raises on that call. 0.5.1 raised once
+  the history was full, and on every call until the value left it. The
+  detector gives `StepChange` floats only.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   is converted to the index's zone before periods start on its wall clock,
   so the same instant in any zone starts the same periods. It was read on
