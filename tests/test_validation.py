@@ -29,6 +29,18 @@ def test_timing_rejects_invalid_values(opt, value, match):
         rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value})
 
 
+@pytest.mark.parametrize("opt", ["hold_when_undecided", "undecided_counts_toward_hold"])
+def test_timing_flags_must_be_bools(opt):
+    for value in ("false", "true", "", 0, 1, None, []):
+        with pytest.raises(ValueError, match=rf"^Timing\.{opt} must be True or False, got "):
+            rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value})
+    with pytest.raises(ValueError, match=rf"^Timing\.{opt} must be True or False, got 'false'"):
+        rs.build_detector({"timing": {"block_s": 1, "window_s": 3, opt: "false"}, "signals": ["x"],
+                           "criteria": [{"type": "deviation", "signal": "x", "limit": 1, "noise": 0}]})
+    for value, want in ((True, True), (False, False), (np.True_, True), (np.False_, False)):
+        assert getattr(rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value}), opt) is want
+
+
 @pytest.mark.parametrize("make, match", [
     (lambda: rs.Signal("", "x"), "Signal name must be a non-empty string"),
     (lambda: rs.Signal("x", ""), "source must be a column name or a callable"),
