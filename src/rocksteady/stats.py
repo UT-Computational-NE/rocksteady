@@ -85,14 +85,27 @@ def first_nonpositive_lag(resid: np.ndarray, cap: int) -> int:
     return lag
 
 
+def _mean(x: np.ndarray):
+    """
+    ``x.mean()``, bit for bit, at less cost on a non-empty float64
+    ``np.ndarray`` (not a subclass): ``mean`` takes the same sum as
+    ``x.sum()`` and divides it by the count. Any other array takes
+    ``x.mean()`` itself.
+    """
+    if type(x) is np.ndarray and x.dtype.type is np.float64 and x.size:
+        return x.sum() / x.size
+    return x.mean()
+
+
 def linear_fit(t: np.ndarray, y: np.ndarray) -> Tuple[float, float, np.ndarray]:
     """OLS line ``y = a + b t``. Returns (a, b, residuals)."""
-    tc = t - t.mean()
+    t_mean, y_mean = _mean(t), _mean(y)
+    tc = t - t_mean
     stt = float(tc @ tc)
     if stt <= 0:
-        return float(y.mean()), 0.0, y - y.mean()
-    b = float(tc @ (y - y.mean())) / stt
-    a = float(y.mean() - b * t.mean())
+        return float(y_mean), 0.0, y - y_mean
+    b = float(tc @ (y - y_mean)) / stt
+    a = float(y_mean - b * t_mean)
     return a, b, y - (a + b * t)
 
 

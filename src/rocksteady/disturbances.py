@@ -10,14 +10,14 @@ Disturbance detectors: external action that resets the detector's clocks.
   event resets the sequence.
 """
 
-from collections import deque
-from typing import Deque, Iterable, Mapping, Optional, Sequence, Tuple, cast
+from typing import Iterable, Mapping, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
 from . import _validate as _v
 from . import registry
 from .core import Disturbance
+from .stats import _mean
 
 
 @registry.disturbances.register("step")
@@ -44,14 +44,20 @@ class StepChange(Disturbance):
         self.reset()
 
     def reset(self) -> None:
-        self._hist: Deque[float] = deque(maxlen=2 * self.m)
+        # The latest 2m values, each written twice (at i and i + 2m), so that once 2m have been seen they are, in
+        # time order, one contiguous slice: neither half's mean needs a copy.
+        self._ring = np.empty(4 * self.m)
+        self._seen = 0
 
     def update(self, t: float, sample: Mapping[str, float], values: Mapping[str, float]) -> bool:
-        self._hist.append(values[self.signal])
-        if len(self._hist) < 2 * self.m:
+        n = 2 * self.m
+        i = self._seen % n
+        self._ring[i] = self._ring[i + n] = values[self.signal]
+        self._seen += 1
+        if self._seen < n:
             return False
-        h = np.fromiter(self._hist, dtype=float, count=2 * self.m)
-        return bool(abs(h[self.m :].mean() - h[: self.m].mean()) > self.threshold)
+        older, newer = self._ring[i + 1 : i + 1 + self.m], self._ring[i + 1 + self.m : i + 1 + n]
+        return bool(abs(_mean(newer) - _mean(older)) > self.threshold)
 
 
 @registry.disturbances.register("event_log")

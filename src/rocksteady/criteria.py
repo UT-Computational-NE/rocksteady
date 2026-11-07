@@ -25,7 +25,7 @@ import numpy as np
 from . import _validate as _v
 from . import registry
 from .core import Criterion, CriterionResult
-from .stats import DEFAULT_SLOPE_METHOD, linear_fit, t_quantile, tau_int
+from .stats import DEFAULT_SLOPE_METHOD, _mean, linear_fit, t_quantile, tau_int
 
 NoiseModel = Union[float, Callable[[float], float]]
 
@@ -98,12 +98,12 @@ class DeviationCriterion(Criterion):
         self.name = name or f"{signal}_{model}"
 
     def evaluate(self, t_blocks: np.ndarray, y_blocks: np.ndarray) -> CriterionResult:
-        mean = float(y_blocks.mean())
+        mean = float(_mean(y_blocks))
         if self.model == "constant":
             resid = y_blocks - mean
         else:
             resid = linear_fit(t_blocks, y_blocks)[2]
-        dev = float(np.max(np.abs(resid)))
+        dev = float(np.abs(resid).max())  # np.max's reduction, at less cost
         sigma = _sigma(self.noise, mean)  # relative when ``relative`` is True
         if self.relative:
             scale = max(abs(mean), self.scale_floor)

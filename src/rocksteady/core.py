@@ -45,7 +45,8 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union, cast
+from operator import itemgetter
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -155,6 +156,13 @@ class Signal:
 # ---------------------------------------------------------------------------
 
 
+_KEPT_TYPES = (float, int, np.float64)
+"""
+The field types, exactly (not a subclass), whose values and arithmetic cannot
+change, so derived values worked out from them can be kept.
+"""
+
+
 @dataclass
 class CriterionResult:
     """
@@ -168,6 +176,15 @@ class CriterionResult:
     time constant). A criterion that fills it declares the keys in
     ``Criterion.detail_keys``, so ``batch.run(with_results=True)`` can give
     them columns; they never affect the outcome.
+
+    ``invalid_reason``, ``ratio`` and ``outcome`` are each worked out once
+    and kept until ``statistic``, ``uncertainty``, ``limit`` or ``k`` is
+    reassigned, since the detector and ``batch.run`` read them several
+    times a window. They are kept only while every one of those fields is
+    exactly a ``float``, ``int`` or ``np.float64``, whose value and
+    arithmetic cannot change (a 0-d array can be written into, and a
+    ``float`` subclass's arithmetic can read state that changes). A subclass
+    of ``CriterionResult`` works them out on every read.
     """
 
     name: str
@@ -176,6 +193,30 @@ class CriterionResult:
     limit: float
     k: float
     details: Dict[str, float] = field(default_factory=dict)
+
+    def _judged(self) -> List[Any]:
+        """
+        ``[invalid_reason, ratio, outcome]``, kept while the fields are the
+        same objects and each is of a ``_KEPT_TYPES`` type. Only the reason
+        is worked out here: ``ratio`` and ``outcome`` fill their slots (None
+        until then) on their first read, so that each property does only its
+        own arithmetic (and gives only its own warnings, such as an overflow
+        in ``upper``). The fields are compared by identity, not equality:
+        equal values can report differently (the reprs of inf and
+        np.float64(inf), or of -0.0 and 0.0, in ``invalid_reason``). Only a
+        ``CriterionResult`` itself uses it: a subclass's properties may read
+        more than the fields, so a subclass works each out on every read.
+        """
+        s, u, lim, k = self.statistic, self.uncertainty, self.limit, self.k
+        # (statistic, uncertainty, limit, k, judged): a plain tuple, so a pickled result names no private class
+        kept = self.__dict__.get("_kept_from")
+        if kept is not None and kept[0] is s and kept[1] is u and kept[2] is lim and kept[3] is k:
+            return kept[4]
+        judged = [self._invalid_reason(), None, None]
+        if (type(s) in _KEPT_TYPES and type(u) in _KEPT_TYPES and type(lim) in _KEPT_TYPES
+                and type(k) in _KEPT_TYPES):  # exact types: a float subclass's arithmetic can change
+            self.__dict__["_kept_from"] = (s, u, lim, k, judged)
+        return judged
 
     @property
     def upper(self) -> float:
@@ -193,6 +234,11 @@ class CriterionResult:
         non-finite numbers, a negative uncertainty or coverage factor, or a
         limit that is not positive.
         """
+        if type(self) is not CriterionResult:
+            return self._invalid_reason()
+        return self._judged()[0]
+
+    def _invalid_reason(self) -> Optional[str]:
         for label, value in (("statistic", self.statistic), ("uncertainty", self.uncertainty),
                              ("limit", self.limit), ("k", self.k)):
             if not np.isfinite(value):
@@ -213,7 +259,15 @@ class CriterionResult:
         Infinite for an invalid result (see ``invalid_reason``), so the worst
         ratio over several criteria does not depend on their order.
         """
-        if self.invalid_reason is not None:
+        if type(self) is not CriterionResult:
+            return self._ratio(self.invalid_reason)
+        judged = self._judged()
+        if judged[1] is None:
+            judged[1] = self._ratio(judged[0])
+        return judged[1]
+
+    def _ratio(self, invalid_reason: Optional[str]) -> float:
+        if invalid_reason is not None:
             return np.inf
         r = self.upper / self.limit
         return np.inf if np.isnan(r) else float(r)
@@ -221,7 +275,15 @@ class CriterionResult:
     @property
     def outcome(self) -> Outcome:
         """PASS, FAIL or UNDECIDED; an invalid result is always UNDECIDED, never a pass."""
-        if self.invalid_reason is not None:
+        if type(self) is not CriterionResult:
+            return self._outcome(self.invalid_reason)
+        judged = self._judged()
+        if judged[2] is None:
+            judged[2] = self._outcome(judged[0])
+        return judged[2]
+
+    def _outcome(self, invalid_reason: Optional[str]) -> Outcome:
+        if invalid_reason is not None:
             return Outcome.UNDECIDED
         if self.upper <= self.limit:
             return Outcome.PASS
@@ -512,14 +574,26 @@ class Verdict:
     @property
     def eta(self) -> float:
         """Worst margin ratio over the criteria."""
-        return max((r.ratio for r in self.results.values()), default=np.nan)
+        return self._margins()[0]
 
     @property
     def limiting(self) -> Optional[str]:
         """Name of the criterion with the worst margin ratio."""
         if not self.results:
             return None
-        return max(self.results.values(), key=lambda r: r.ratio).name
+        return self._margins()[1]
+
+    def _margins(self) -> Tuple[float, Optional[str], List[float]]:
+        """
+        ``(eta, limiting, ratios)``, reading each result's ratio once; ``ratios``
+        follows the order of ``results``. ``max`` keeps the first of equal
+        ratios, so ``limiting`` names the first criterion with the worst one.
+        """
+        ratios = [r.ratio for r in self.results.values()]
+        if not ratios:
+            return np.nan, None, ratios
+        eta, worst = max(zip(ratios, self.results.values()), key=itemgetter(0))
+        return eta, worst.name, ratios
 
     @property
     def is_steady(self) -> bool:
