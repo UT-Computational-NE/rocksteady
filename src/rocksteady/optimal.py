@@ -1058,11 +1058,10 @@ def _event_conditions(events) -> Optional[Tuple[Tuple[str, bool], ...]]:
     out = {}
     for name, want in items:
         _v.name(name, "a Subtype events mask name")
-        if not isinstance(want, (bool, np.bool_)):
-            raise ValueError(f"Subtype events[{name!r}] must be True or False, got {want!r}")
+        want = _v.boolean(want, f"Subtype events[{name!r}]")
         if name in out:  # only pairs can repeat a name; which one won would depend on their order
             raise ValueError(f"Subtype events names mask {name!r} twice; give each mask once")
-        out[name] = bool(want)
+        out[name] = want
     return tuple(sorted(out.items())) if out else None
 
 

@@ -8,6 +8,8 @@ import math
 from numbers import Integral, Real
 from typing import Any, Optional
 
+import numpy as np
+
 
 def finite(value: Any, what: str, *, positive: bool = False, nonnegative: bool = False) -> float:
     """``value`` as a finite float, optionally > 0 or >= 0; otherwise ValueError naming ``what``."""
@@ -31,6 +33,13 @@ def positive_int(value: Any, what: str) -> int:
     if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
         raise ValueError(f"{what} must be a positive integer, got {value!r}")
     return int(value)
+
+
+def boolean(value: Any, what: str) -> bool:
+    """``value`` as a bool, if it is one (a numpy bool too); text such as ``"false"`` or a number is refused."""
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{what} must be True or False, got {value!r}")
+    return bool(value)
 
 
 def name(value: Any, what: str) -> str:

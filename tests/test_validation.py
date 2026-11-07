@@ -29,6 +29,18 @@ def test_timing_rejects_invalid_values(opt, value, match):
         rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value})
 
 
+@pytest.mark.parametrize("opt", ["hold_when_undecided", "undecided_counts_toward_hold"])
+def test_timing_flags_must_be_bools(opt):
+    for value in ("false", "true", "", 0, 1, None, []):
+        with pytest.raises(ValueError, match=rf"^Timing\.{opt} must be True or False, got "):
+            rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value})
+    with pytest.raises(ValueError, match=rf"^Timing\.{opt} must be True or False, got 'false'"):
+        rs.build_detector({"timing": {"block_s": 1, "window_s": 3, opt: "false"}, "signals": ["x"],
+                           "criteria": [{"type": "deviation", "signal": "x", "limit": 1, "noise": 0}]})
+    for value, want in ((True, True), (False, False), (np.True_, True), (np.False_, False)):
+        assert getattr(rs.Timing(**{"block_s": 1.0, "window_s": 3.0, opt: value}), opt) is want
+
+
 @pytest.mark.parametrize("make, match", [
     (lambda: rs.Signal("", "x"), "Signal name must be a non-empty string"),
     (lambda: rs.Signal("x", ""), "source must be a column name or a callable"),
@@ -54,6 +66,20 @@ def test_components_reject_invalid_arguments(make, match):
         make()
 
 
+@pytest.mark.parametrize("make, kind", [
+    (lambda relative: rs.DeviationCriterion("power", 1.0, 0, relative=relative), "DeviationCriterion"),
+    (lambda relative: rs.AsymptoteCriterion("power", 1.0, tau_max=300.0, relative=relative), "AsymptoteCriterion"),
+], ids=["deviation", "asymptote"])
+def test_relative_must_be_a_bool(make, kind):
+    # Text from a spec, numbers and containers are read as true or false only by accident: refuse them.
+    for relative in ("false", "true", "", 0, 1, 1.0, None, [], [True]):
+        with pytest.raises(ValueError, match=rf"^{kind} 'power': relative must be True or False, got "):
+            make(relative)
+    for relative, want in ((True, True), (False, False), (np.True_, True), (np.False_, False)):
+        crit = make(relative)
+        assert crit.relative is want
+
+
 def test_detector_checks_references_and_names():
     with pytest.raises(ValueError, match="disturbance 'z_step' refers to unknown signal 'z'"):
         _det(disturbances=[rs.StepChange("z", 1.0)])
@@ -75,6 +101,10 @@ def test_specs_are_validated_the_same_way():
     base = {"timing": {"block_s": 1, "window_s": 3}, "signals": ["x"]}
     with pytest.raises(ValueError, match="limit must be > 0"):
         rs.build_detector({**base, "criteria": [{"type": "deviation", "signal": "x", "limit": -1, "noise": 0}]})
+    for criterion in ({"type": "deviation", "signal": "x", "limit": 1, "noise": 0, "relative": "false"},
+                      {"type": "asymptote", "signal": "x", "limit": 1, "tau_max": 300, "relative": "false"}):
+        with pytest.raises(ValueError, match="relative must be True or False, got 'false'"):
+            rs.build_detector({**base, "criteria": [criterion]})
     with pytest.raises(ValueError, match="window_s must be finite"):
         rs.build_detector({**base, "timing": {"block_s": 1, "window_s": float("inf")}})
     with pytest.raises(ValueError, match="refers to unknown signal 'y'"):

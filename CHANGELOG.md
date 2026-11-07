@@ -89,6 +89,20 @@ Upgrading from 0.5.1. Behaviour changes to check:
   origin now is, today's date would make the periods depend on the season
   the code runs in. A naive string without a date (`"01:00"`) is still
   accepted.
+- **Breaking:** `DeviationCriterion` and `AsymptoteCriterion` refuse a
+  `relative` that is not `True` or `False`, and `Timing` refuses such a
+  `hold_when_undecided` or `undecided_counts_toward_hold`, with a
+  `ValueError` that names the criterion or option, as in
+  "DeviationCriterion 'power': relative must be True or False, got
+  'false'" or "Timing.hold_when_undecided must be True or False, got
+  'false'" (#178). A numpy bool is accepted. `build_detector` refuses them
+  in a spec the same way. 0.5.1 read text, numbers, `None` and lists as
+  true or false, so `"false"` from a TOML or YAML spec was read as true,
+  with no error: `relative="false"` judged the criterion relative to the
+  signal's level (a `DeviationCriterion` with `limit=1.0` allowed a
+  deviation of 100 % of the level, or of `scale_floor` if larger, not 1
+  signal unit), and `hold_when_undecided="false"` kept the last decided
+  label through undecided windows.
 - Two error messages read differently; code that matches their text needs
   updating (#137; the rule is under Changed). Without `subtypes`, `initial`
   or `final`, the infeasibility `ValueError` of `optimal_segments` opened

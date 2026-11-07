@@ -438,6 +438,8 @@ class Timing:
         _v.finite(self.window_s, "Timing.window_s", positive=True)
         for opt in ("settle_s", "hold_s", "max_gap_s"):
             _v.finite(getattr(self, opt), f"Timing.{opt}", nonnegative=True)
+        for opt in ("hold_when_undecided", "undecided_counts_toward_hold"):  # a numpy bool is kept as a bool
+            object.__setattr__(self, opt, _v.boolean(getattr(self, opt), f"Timing.{opt}"))
         _v.finite(self.min_block_coverage, "Timing.min_block_coverage")
         if not 0 < self.min_block_coverage <= 1:
             raise ValueError("min_block_coverage must be in (0, 1]")
