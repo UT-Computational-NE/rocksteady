@@ -89,6 +89,16 @@ Upgrading from 0.5.1. Behaviour changes to check:
   origin now is, today's date would make the periods depend on the season
   the code runs in. A naive string without a date (`"01:00"`) is still
   accepted.
+- **Breaking:** `DeviationCriterion` and `AsymptoteCriterion`, and
+  `build_detector` with a `deviation` or `asymptote` criterion, refuse a
+  `relative` that is not `True` or `False` (a numpy bool is accepted) with
+  a `ValueError` that names the criterion, as in "DeviationCriterion
+  'power': relative must be True or False, got 'false'" (#178). 0.5.1 read
+  text, numbers, `None` and lists as true or false, so `relative="false"`
+  from a TOML or YAML spec judged the criterion relative to the signal's
+  level: a `DeviationCriterion` with `limit=1.0` allowed a deviation of
+  100 % of the level (or of `scale_floor`, if larger), not 1 signal unit,
+  with no error.
 - Two error messages read differently; code that matches their text needs
   updating (#137; the rule is under Changed). Without `subtypes`, `initial`
   or `final`, the infeasibility `ValueError` of `optimal_segments` opened
@@ -122,15 +132,6 @@ Upgrading from 0.5.1. Behaviour changes to check:
   at least one state, got [...]"; 0.5.1's read "... may only have keys
   ['indeterminate', 'steady', 'transient'], got [...]". Matching "a
   state-keyed model spec may only have keys" still works.
-- **Breaking:** `DeviationCriterion` and `AsymptoteCriterion`, and
-  `build_detector` with a `deviation` or `asymptote` criterion, refuse a
-  `relative` that is not `True` or `False` (a numpy bool is accepted) with
-  a `ValueError` that names the criterion, as in "DeviationCriterion
-  'power': relative must be True or False, got 'false'" (#178). 0.5.1 read
-  any value as true or false, so `relative="false"` from a TOML or YAML
-  spec judged the criterion relative to the signal's level: with
-  `limit=1.0`, it allowed a deviation of 100 % of the level, not 1 signal
-  unit, with no error.
 - Otherwise, every call returns what 0.5.1 returned and raises where 0.5.1
   raised.
 

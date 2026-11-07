@@ -54,14 +54,14 @@ def test_components_reject_invalid_arguments(make, match):
         make()
 
 
-@pytest.mark.parametrize("make", [
-    lambda relative: rs.DeviationCriterion("power", 1.0, 0, relative=relative),
-    lambda relative: rs.AsymptoteCriterion("power", 1.0, tau_max=300.0, relative=relative),
+@pytest.mark.parametrize("make, kind", [
+    (lambda relative: rs.DeviationCriterion("power", 1.0, 0, relative=relative), "DeviationCriterion"),
+    (lambda relative: rs.AsymptoteCriterion("power", 1.0, tau_max=300.0, relative=relative), "AsymptoteCriterion"),
 ], ids=["deviation", "asymptote"])
-def test_relative_must_be_a_bool(make):
+def test_relative_must_be_a_bool(make, kind):
     # Text from a spec, numbers and containers are read as true or false only by accident: refuse them.
     for relative in ("false", "true", "", 0, 1, 1.0, None, [], [True]):
-        with pytest.raises(ValueError, match=r"Criterion 'power': relative must be True or False, got "):
+        with pytest.raises(ValueError, match=rf"^{kind} 'power': relative must be True or False, got "):
             make(relative)
     for relative, want in ((True, True), (False, False), (np.True_, True), (np.False_, False)):
         crit = make(relative)
