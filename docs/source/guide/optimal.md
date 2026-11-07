@@ -424,8 +424,9 @@ finite sample, if any, is that last one before the gap.
 - **Reporting.** `res.models` carries `"join_transients": True`, so
   `fit_report(values, res.segments, {signal: res.models})` fits the
   segments as the optimiser did. Given segments from elsewhere, it refuses a
-  transient beside a transient, an indeterminate segment, or a steady
-  segment with no finite sample.
+  transient that borders a transient, an indeterminate segment, or a steady
+  segment with no finite sample; such segments elsewhere are fitted as
+  usual.
 - **Cost.** A transient's cost depends on both its neighbours, so the
   program does more work (*Joined transients* in {doc}`methods`). `subset`
   and `refine` on a few hundred candidates take seconds; `exact` needs a

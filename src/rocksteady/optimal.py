@@ -38,10 +38,11 @@ Constraints
   already in progress, so a period shorter than an hour is not counted
   twice; days are unaffected.
 - ``transitions``: which state or subtype may follow which. Default: any.
-  This constrains the sequence of segments only. Segments are fitted
-  independently, so consecutive fits need not meet: a level change can sit
-  at any boundary. With ``join_transients`` (below), transients meet their
-  neighbours, and no transient follows a transient.
+  This constrains the sequence of segments only. Without
+  ``join_transients``, segments are fitted independently, so consecutive
+  fits need not meet: a level change can sit at any boundary. With it
+  (below), each transient meets the steady segments beside it, no transient
+  follows a transient, and only steady -> steady boundaries are steps.
   Alternation forbids steady -> steady, but the optimiser may then place a
   short transient on a plateau next to a step rather than across it.
 - ``initial`` / ``final``: the states or subtypes the record's first and
@@ -54,7 +55,8 @@ Constraints
   segments never fit worse, so every allowed slot is used. The default,
   ``"bic"``, charges ``sigma^2 (p + 1) ln n`` for a model with ``p`` parameters,
   ``sigma`` estimated from the first differences of the data (robustly), so
-  "at most" stays "at most".
+  "at most" stays "at most". With ``join_transients``, ``p`` counts a
+  transient's free parameters (see "Joined transients").
 
 When no segmentation satisfies the constraints, the ``ValueError`` names the
 earliest candidate time after which none can continue, the period containing
@@ -123,7 +125,8 @@ its inner side is joined, and its slope is fitted by least squares through
 that point; a transient that is the whole record is a free line. Steady
 segments are fitted as without the option, each on its own (ADR 0002), so
 the objective is the SSE of the profile of steady levels joined by lines,
-plus the penalties, under every constraint.
+plus the penalties and any soft caps' overflow cost, under every
+constraint.
 
 The option fits steady segments with a constant and transients with a line
 (``models={"steady": 0, "transient": 1}``, and any ``Subtype.model`` the
@@ -190,8 +193,10 @@ exponential models' default time-constant bounds scale with the segment's
 span. Give explicit bounds (``T_min``/``T_max``, ``tau_min``/``tau_max``)
 for a strict guarantee, or pass ``prune=False``. With ``join_transients``,
 the joined objective of the segmentation the fits apart choose bounds the
-joined search; a joined transient never costs less than its free line, so
-pruning stays exact. Pruning is decided on the
+joined search. A joined transient never costs less than its free line, so
+a candidate is dropped once its free line, with the cost of what comes
+before it, exceeds the bound, and pruning stays exact. Each candidate is
+judged on its own: the joined search stops no scan early. Pruning is decided on the
 model cost before any subtype's condition, for each model in use (a
 state's, and each subtype's own), so it stays exact with subtypes: a
 longer segment never costs less under one model, whichever subtype could
@@ -2133,14 +2138,11 @@ def _check_joined_models(models: Mapping[str, Any], subtypes: Mapping[str, "Subt
     if "indeterminate" in models:
         raise ValueError("join_transients joins transients to steady segments only: models names 'indeterminate', "
                          "which a transient cannot be joined to")
-    want = {"steady": 0, "transient": 1}
-    named = [(f"state {st!r}", st, models[st]) for st in models]
-    named += [(f"subtype {k!r}", sub.state.value, sub.model) for k, sub in subtypes.items() if sub.model is not None]
-    for who, st, spec in named:
-        name, opts = _fit.resolve_model(spec)
-        if name != "poly" or int(opts.get("order", 0)) != want[st]:
-            line = "a constant (poly order 0)" if st == "steady" else "a line (poly order 1)"
-            raise ValueError(f"join_transients fits {st} segments with {line}; {who} has model {spec!r}")
+    for st in models:
+        _fit.check_joined(st, models[st], f"state {st!r}")
+    for k, sub in subtypes.items():
+        if sub.model is not None:
+            _fit.check_joined(sub.state.value, sub.model, f"subtype {k!r}")
 
 
 def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: Optional[Mapping[str, int]] = None,
@@ -2203,12 +2205,16 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         (``Subtype.model``): then it takes that model's. See the module
         docstring.
     method : "subset", "refine" (default) or "exact"
+        With ``join_transients``, ``exact`` needs a coarse ``grid_s``: the
+        program takes up to about ``m**4`` steps for ``m`` candidates.
     candidates : list of Segment, or of sample indices
         Candidate breakpoints: required for "subset" and "refine" (for
         example ``states.segments_from(detector, run_output)``), added to the
         grid for "exact".
     grid_s : float, optional
-        For "exact": one candidate per ``grid_s`` seconds. Default: every sample.
+        For "exact": one candidate per ``grid_s`` seconds. Default: every
+        sample, which ``join_transients`` makes slow beyond a few hundred
+        samples.
     refine_s : float, optional
         For "refine": how far a boundary may move. Default: half the median
         gap between candidates. The detector's ``timing.evaluated_window_s``

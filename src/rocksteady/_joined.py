@@ -149,7 +149,7 @@ class Joined:
         return float(c.Sy.range(np.array([p]), q)[0][0] / n)
 
     def segment_cost(self, bounds: Sequence[int], opts: Sequence[int], i: int) -> float:
-        """The SSE of segment ``i`` of a segmentation, joined to its neighbours; with its penalty when asked."""
+        """The SSE of segment ``i`` of a segmentation, a transient joined to its neighbours' levels."""
         prob = self.prob
         p, q = bounds[i], bounds[i + 1]
         o = opts[i]
@@ -185,6 +185,7 @@ class Joined:
         return int(i == 0) + int(i == len(opts) - 1)
 
     def penalty(self, opts: Sequence[int], i: int) -> float:
+        """Segment ``i``'s penalty: its option's, and a transient's ``extra`` for each free parameter."""
         o = opts[i]
         pen = float(self.prob.pen[o])
         if self.prob.options[o].state == "transient":
@@ -208,6 +209,7 @@ class Joined:
     # -- the program ---------------------------------------------------------------------------------------
 
     def solve(self, B: np.ndarray, ub: float = math.inf) -> Tuple[List[int], List[int]]:
+        """The best joined ``(bounds, options)`` on the breakpoints ``B``, pruned against the objective ``ub``."""
         return _Program(self, np.asarray(B, dtype=np.int64), ub).run()
 
 
@@ -220,20 +222,23 @@ def _lexmin(v: np.ndarray, r: np.ndarray):
 
 
 class _Entries:
-    """The program's final states: steady segments ``[B[s], B[k])``, each with its option and count layer."""
+    """
+    The program's final states: steady segments ``[B[s], B[k])``, one per field value of ``FIELDS``:
+    ``k`` and ``s`` the end and start candidates, ``o`` the option, ``l`` the count layer, ``v`` the value,
+    ``r`` the rank sum, ``L`` the segment's level, and how it was reached: ``kind`` (``START``,
+    ``AFTER_STEADY``, ``AFTER_FIRST_TRANSIENT`` or ``AFTER_TRANSIENT``), ``pred`` the state before (-1 for
+    none) and ``ot`` the option of the transient between (-1 for none).
+    """
 
     FIELDS = ("k", "s", "o", "l", "v", "r", "L", "kind", "pred", "ot")
 
     def __init__(self):
         self.parts: Dict[str, List[np.ndarray]] = {f: [] for f in self.FIELDS}
         self.arrays: Optional[Dict[str, np.ndarray]] = None
-        self.size = 0
 
     def add(self, **cols):
-        size = len(cols["v"])
         for f in self.FIELDS:
             self.parts[f].append(np.asarray(cols[f]))
-        self.size += size
         self.arrays = None
 
     def get(self) -> Dict[str, np.ndarray]:
@@ -389,19 +394,20 @@ class _Program:
                 rows = np.arange(K)
 
                 def put(v, r, tgt, kind, pred, ot):
+                    """Keep, for each end, the candidate ``v`` in layer ``tgt`` where it beats the best so far."""
                     v = np.where((tgt >= 0) & valid, v, math.inf)
-                    t_ = np.maximum(tgt, 0)
-                    cur, cr = bv[rows, t_], br[rows, t_]
+                    layer = np.maximum(tgt, 0)
+                    cur, cr = bv[rows, layer], br[rows, layer]
                     r = np.broadcast_to(r, v.shape)
                     win = np.isfinite(v) & ((v < cur) | ((v == cur) & (r < cr)))
                     idx = np.flatnonzero(win)
                     if not len(idx):
                         return
-                    bv[idx, t_[idx]] = v[idx]
-                    br[idx, t_[idx]] = r[idx]
-                    bkind[idx, t_[idx]] = kind
-                    bpred[idx, t_[idx]] = np.broadcast_to(pred, v.shape)[idx]
-                    bot[idx, t_[idx]] = ot
+                    bv[idx, layer[idx]] = v[idx]
+                    br[idx, layer[idx]] = r[idx]
+                    bkind[idx, layer[idx]] = kind
+                    bpred[idx, layer[idx]] = np.broadcast_to(pred, v.shape)[idx]
+                    bot[idx, layer[idx]] = ot
 
                 rank_o = int(prob.rank[o])
                 if s == 0 and prob.may_start[o]:
@@ -412,11 +418,11 @@ class _Program:
                         continue
                     tgt, over = self.step(o, P, Q, pl)
                     put(pv + base + over, pr + rank_o, tgt, AFTER_STEADY, pi, -1)
-                for ot, lt, kind, gv, gr, gp in groups:
+                for ot, lt, kind, gv, gr, gpred in groups:
                     if not prob.allowed[ot, o]:
                         continue
                     tgt, over = self.step(o, P, Q, lt)
-                    put(gv + base + over, gr + rank_o, tgt, kind, gp, ot)
+                    put(gv + base + over, gr + rank_o, tgt, kind, gpred, ot)
                 fin = np.isfinite(bv) & (bv <= self.ub)
                 kk, ll = np.nonzero(fin)
                 if not len(kk):
@@ -514,9 +520,9 @@ class _Program:
             arrived = True
             e, j, tgt, base = e[keep], j[keep], tgt[keep], base[keep]
             L1 = E["L"][e]
-            A, n, ub_ = T["A"][j, s], T["n"][j, s], T["ubar"][j, s]
+            A, n, ubar = T["A"][j, s], T["n"][j, s], T["ubar"][j, s]
             a1 = L1 + T["s"][j, s]
-            b0 = T["ybar"][j, s] - (1.0 - ub_) * L1
+            b0 = T["ybar"][j, s] - (1.0 - ubar) * L1
             rank = E["r"][e] + prob.rank[ot]
             for lt in np.unique(tgt):
                 g = np.flatnonzero(tgt == lt)
@@ -527,7 +533,7 @@ class _Program:
                 for c0 in range(0, len(g), step_rows):
                     gg = g[c0:c0 + step_rows]
                     vals = (base[gg, None] + A[gg, None] * (L2[None, :] - a1[gg, None]) ** 2
-                            + n[gg, None] * (b0[gg, None] - ub_[gg, None] * L2[None, :]) ** 2)
+                            + n[gg, None] * (b0[gg, None] - ubar[gg, None] * L2[None, :]) ** 2)
                     vals = _nan_inf(vals)
                     arg, vmin, rmin = _lexmin(vals, rank[gg, None])
                     win = (vmin < bestv) | ((vmin == bestv) & (rmin < bestr))
