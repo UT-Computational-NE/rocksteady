@@ -404,6 +404,19 @@ def test_a_subclass_works_out_its_derived_properties_on_every_read():
     assert (r.outcome, r.ratio > 1) == (Outcome.UNDECIDED, True)
 
 
+class _Refused(rs.CriterionResult):
+    """A subclass that refuses every result, through ``invalid_reason`` alone."""
+
+    @property
+    def invalid_reason(self):
+        return "refused"
+
+
+def test_a_subclass_s_ratio_and_outcome_follow_its_own_invalid_reason():
+    r = _Refused("c", 0.5, 0.1, 1.0, 2.0)  # valid fields, which would pass
+    assert (r.ratio, r.outcome) == (np.inf, Outcome.UNDECIDED)
+
+
 @pytest.mark.parametrize("field", ["statistic", "uncertainty", "limit", "k"])
 def test_derived_properties_follow_a_field_written_in_place(field):
     fields = {"statistic": 0.5, "uncertainty": 0.1, "limit": 1.0, "k": 2.0}
@@ -414,3 +427,61 @@ def test_derived_properties_follow_a_field_written_in_place(field):
     fresh = _Result0("c", r.statistic, r.uncertainty, r.limit, r.k)
     assert (r.invalid_reason, r.outcome) == (fresh.invalid_reason, Outcome.UNDECIDED)
     assert r.ratio == fresh.ratio == np.inf
+
+
+class _Scaled(float):
+    """A ``float`` whose arithmetic and comparisons use its value times ``factor``, which can change."""
+
+    factor = 1.0
+
+    def _v(self):
+        return float(self) * self.factor
+
+    def __add__(self, o):
+        return self._v() + o
+
+    def __radd__(self, o):
+        return o + self._v()
+
+    def __sub__(self, o):
+        return self._v() - o
+
+    def __rsub__(self, o):
+        return o - self._v()
+
+    def __mul__(self, o):
+        return self._v() * o
+
+    def __rmul__(self, o):
+        return o * self._v()
+
+    def __truediv__(self, o):
+        return self._v() / o
+
+    def __rtruediv__(self, o):
+        return o / self._v()
+
+    def __lt__(self, o):
+        return self._v() < o
+
+    def __le__(self, o):
+        return self._v() <= o
+
+    def __gt__(self, o):
+        return self._v() > o
+
+    def __ge__(self, o):
+        return self._v() >= o
+
+
+@pytest.mark.parametrize("field, factor", [("statistic", 3.0), ("uncertainty", 5.0), ("limit", 0.4), ("k", 5.0)])
+def test_derived_properties_follow_a_float_subclass_whose_arithmetic_changes(field, factor):
+    """Only the exact types are kept: a subclass of ``float`` cannot change its value, but its arithmetic can."""
+    fields = {"statistic": 0.5, "uncertainty": 0.1, "limit": 1.0, "k": 2.0}
+    fields[field] = _Scaled(fields[field])
+    r = rs.CriterionResult("c", **fields)
+    assert (r.invalid_reason, r.outcome) == (None, Outcome.PASS)  # read before the arithmetic changes
+    getattr(r, field).factor = factor
+    fresh = _Result0("c", r.statistic, r.uncertainty, r.limit, r.k)
+    assert fresh.outcome != Outcome.PASS
+    assert (r.outcome, r.ratio, r.invalid_reason) == (fresh.outcome, fresh.ratio, fresh.invalid_reason)

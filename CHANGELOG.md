@@ -165,9 +165,10 @@ Upgrading from 0.5.1. Behaviour changes to check:
   (five deviation criteria, three step disturbances, a floor latch), 113 µs
   became 66 µs on one machine. `CriterionResult` keeps its
   `invalid_reason`, `ratio` and `outcome` until `statistic`, `uncertainty`,
-  `limit` or `k` is reassigned, and only while each of them is a `float`,
-  `int` or `np.float64`, whose value cannot change in place (a subclass,
-  or a field of another type, still works them out on every read).
+  `limit` or `k` is reassigned, and only while each of them is exactly a
+  `float`, `int` or `np.float64`, whose value and arithmetic cannot change
+  (a subclass of `CriterionResult`, or a field of another type or of a
+  subclass of these, still works them out on every read).
   `batch.run` reads each ratio once a row. `DeviationCriterion`,
   `stats.linear_fit` and `StepChange` take their means without
   `ndarray.mean`'s wrapper, which gives the same values. `StepChange` keeps
