@@ -492,7 +492,7 @@ NATIVE = dict(
 
 def _day(freq, knots, seed=0):
     """A day of power through ``knots`` ``[(hh:mm, watts)]``, joined by lines, with 0.3 % noise and 0.01 W more."""
-    idx = pd.date_range("2025-05-07", periods=int(pd.Timedelta("1D") / pd.Timedelta(freq)), freq=freq)
+    idx = pd.date_range("2025-05-07 00:00:00", "2025-05-07 23:59:59", freq=freq)
     minute = (idx - idx[0]).total_seconds().to_numpy() / 60
     at = [int(h) * 60 + int(m) for h, m in (k.split(":") for k, _ in knots)]
     clean = np.interp(minute, at, [w for _, w in knots])
