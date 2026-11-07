@@ -173,7 +173,8 @@ class CriterionResult:
     ``invalid_reason``, ``ratio`` and ``outcome`` are each worked out once
     and kept until ``statistic``, ``uncertainty``, ``limit`` or ``k`` is
     reassigned, since the detector and ``batch.run`` read them several
-    times a window. A subclass works them out on every read.
+    times a window. A field changed in place (a 0-d array written into) is
+    not seen. A subclass works them out on every read.
     """
 
     name: str
@@ -186,9 +187,11 @@ class CriterionResult:
     def _kept(self, name: str, work_out: Callable[[], Any]) -> Any:
         """
         The derived value ``name``, worked out by ``work_out`` unless it was
-        kept from the same fields. The fields are compared by identity, not
-        equality: equal values can report differently (the reprs of inf and
-        np.float64(inf), or of -0.0 and 0.0, in ``invalid_reason``).
+        kept from the same fields; a subclass, whose properties may read more
+        than the fields, works it out on every read. The fields are compared
+        by identity, not equality: equal values can report differently (the
+        reprs of inf and np.float64(inf), or of -0.0 and 0.0, in
+        ``invalid_reason``).
         """
         if type(self) is not CriterionResult:
             return work_out()

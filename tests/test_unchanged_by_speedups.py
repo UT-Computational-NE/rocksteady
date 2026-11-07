@@ -1,7 +1,7 @@
 """
-The cheaper derived properties, deviation criterion, line fit, step detector and run loop (#180) give today's
-output bit for bit. Each test keeps the 0.5 implementation it replaced as a reference and compares the two with
-``==`` on the bits of every float, so a change that moves only a last bit, or turns 0.0 into -0.0, fails.
+The cheaper derived properties, deviation criterion, line fit, step detector and run loop (#180) give 0.5's output
+bit for bit. The 0.5 implementations they replaced are kept here as references, and the comparisons use ``==`` on
+the bits of every float, so a change that moves only a last bit, or turns 0.0 into -0.0, fails.
 """
 
 import math
@@ -228,8 +228,8 @@ def _detector(reference, windows=None):
 
 @pytest.fixture(scope="module")
 def runs():
-    """``(new, reference, windows)``: the run of today's code and of the 0.5 code on ``_record``, and the
-    reference deviation criteria's windows."""
+    """``(new, reference, windows)``: the runs of this version and of the 0.5 code on ``_record``, and the windows
+    the reference deviation criteria saw."""
     df, t = _record()
     windows: list = []
     return rs.batch.run(_detector(False), df, t, with_results=True), _run0(_detector(True, windows), df, t), windows
@@ -246,7 +246,9 @@ def test_the_record_reaches_every_reason_and_crosses_every_limit(runs):
     for c in _detector(False).criteria:
         ratio = old[f"ratio_{c.name}"]
         assert (ratio < 1).any() and ((ratio > 1) & np.isfinite(ratio)).any(), c.name
-    assert np.isinf(old["ratio_p_rel"]).any()  # invalid results: a NaN noise and a zero scale
+    assert np.isinf(old.loc[300:799, "ratio_p_rel"]).any()  # an invalid result from a zero scale (p is 0)
+    assert np.isinf(old.loc[1000:2499, "ratio_p_rel"]).any()  # and from a NaN noise (p near 1000)
+    assert (old.loc[:1999, "reason"] == "disturbance").any()  # a step detector's: the event log's event is later
     # Ties for the worst ratio: the limiting criterion is the first of them, neither the first nor the last criterion.
     ratios = old[[f"ratio_{c.name}" for c in _detector(False).criteria]]
     tied = (ratios.eq(old["eta"], axis=0).sum(axis=1) >= 2) & (old["limiting"] == "p_rel")
@@ -269,14 +271,17 @@ def test_line_fit_and_deviation_criteria_give_the_0_5_values_bit_for_bit(runs):
     for c, t, y in windows:
         fit, fit0 = rs.stats.linear_fit(t, y), _linear_fit0(t, y)
         assert [_bits(v).tolist() for v in fit] == [_bits(v).tolist() for v in fit0]
+        same_time = np.full_like(t, 2.0)  # no spread in time: the fit's flat branch
+        assert [_bits(v).tolist() for v in rs.stats.linear_fit(same_time, y)] == \
+            [_bits(v).tolist() for v in _linear_fit0(same_time, y)]
         r, r0 = c.evaluate(t, y), _deviation0(c, t, y)
         assert (r.name, r.details) == (r0.name, r0.details)
         assert _bits([r.statistic, r.uncertainty, r.limit, r.k]).tolist() == \
             _bits([r0.statistic, r0.uncertainty, r0.limit, r0.k]).tolist()
 
 
-# Consecutive values that compare equal but differ in what the properties report: inf then np.float64(inf)
-# (their reprs differ under numpy 2), -0.0 then 0.0 (a limit's repr), 3.0 then np.float64(3.0).
+# Pairs of consecutive values that compare equal: inf then np.float64(inf) (their reprs in invalid_reason differ
+# under numpy 2), -0.0 then 0.0 (a limit's repr), and 3.0 then np.float64(3.0) (another type).
 VALUES = [math.inf, np.float64(math.inf), math.nan, 1.5, -0.0, 0.0, -1.0, 3.0, np.float64(3.0), 0.25]
 
 
@@ -290,3 +295,20 @@ def test_derived_properties_follow_a_reassigned_field(field):
         assert r.invalid_reason == fresh.invalid_reason, value
         assert r.outcome == fresh.outcome, value
         assert _bits([r.ratio, r.upper, r.lower]).tolist() == _bits([fresh.ratio, fresh.upper, fresh.lower]).tolist()
+
+
+class _Offset(rs.CriterionResult):
+    """A subclass whose ``upper`` also reads an attribute that is not a field."""
+
+    offset = 0.0
+
+    @property
+    def upper(self):
+        return self.statistic + self.k * self.uncertainty + self.offset
+
+
+def test_a_subclass_works_out_its_derived_properties_on_every_read():
+    r = _Offset("c", 0.5, 0.1, 1.0, 2.0)
+    assert (r.outcome, r.ratio < 1) == (Outcome.PASS, True)
+    r.offset = 0.6  # upper 1.3, lower 0.3: straddles the limit
+    assert (r.outcome, r.ratio > 1) == (Outcome.UNDECIDED, True)

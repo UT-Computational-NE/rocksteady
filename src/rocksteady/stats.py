@@ -87,9 +87,10 @@ def first_nonpositive_lag(resid: np.ndarray, cap: int) -> int:
 
 def _mean(x: np.ndarray):
     """
-    ``x.mean()``, bit for bit, at less cost on a non-empty float64 array:
-    ``mean`` takes the same sum as ``x.sum()`` and divides it by the count.
-    Any other array takes ``x.mean()`` itself.
+    ``x.mean()``, bit for bit, at less cost on a non-empty float64
+    ``np.ndarray`` (not a subclass): ``mean`` takes the same sum as
+    ``x.sum()`` and divides it by the count. Any other array takes
+    ``x.mean()`` itself.
     """
     if type(x) is np.ndarray and x.dtype.type is np.float64 and x.size:
         return x.sum() / x.size

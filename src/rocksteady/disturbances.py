@@ -44,8 +44,8 @@ class StepChange(Disturbance):
         self.reset()
 
     def reset(self) -> None:
-        # The latest 2m values, each written twice (at i and i + 2m), so that in time order they are always one
-        # contiguous slice: neither half's mean needs a copy.
+        # The latest 2m values, each written twice (at i and i + 2m), so that once 2m have been seen they are, in
+        # time order, one contiguous slice: neither half's mean needs a copy.
         self._ring = np.empty(4 * self.m)
         self._seen = 0
 
