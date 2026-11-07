@@ -1,11 +1,14 @@
 """
-The cheaper derived properties, deviation criterion, line fit, step detector and run loop (#180) give 0.5's output
-bit for bit. The 0.5 implementations they replaced are kept here as references, and the comparisons use ``==`` on
-the bits of every float, so a change that moves only a last bit, or turns 0.0 into -0.0, fails.
+Through the detector and ``batch.run``, the cheaper derived properties, deviation criterion, line fit, step detector
+and run loop (#180) give 0.5.1's output bit for bit. The 0.5.1 implementations they replaced are kept here as
+references, and the comparisons use ``==`` on the bits of every float, so a change that moves only a last bit, or
+turns 0.0 into -0.0, fails. A step detector called directly with a value it cannot store differs from 0.5.1, as
+decided on #180; the last step-detector test pins both.
 """
 
 import math
 import warnings
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -16,11 +19,11 @@ from rocksteady import Label
 from rocksteady.batch import RUN_COLUMNS, _detail_columns, _unique_columns
 from rocksteady.core import Outcome
 
-# --- the 0.5 implementations ------------------------------------------------
+# --- the 0.5.1 implementations ----------------------------------------------
 
 
 class _Result0(rs.CriterionResult):
-    """A ``CriterionResult`` whose derived properties are the 0.5 ones, recomputed on every read."""
+    """A ``CriterionResult`` whose derived properties are the 0.5.1 ones, recomputed on every read."""
 
     @property
     def upper(self):
@@ -63,7 +66,7 @@ class _Result0(rs.CriterionResult):
 
 
 def _linear_fit0(t, y):
-    """The 0.5 ``stats.linear_fit``."""
+    """The 0.5.1 ``stats.linear_fit``."""
     tc = t - t.mean()
     stt = float(tc @ tc)
     if stt <= 0:
@@ -74,7 +77,7 @@ def _linear_fit0(t, y):
 
 
 def _deviation0(c, t_blocks, y_blocks):
-    """The 0.5 ``DeviationCriterion.evaluate`` of ``c``."""
+    """The 0.5.1 ``DeviationCriterion.evaluate`` of ``c``."""
     mean = float(y_blocks.mean())
     if c.model == "constant":
         resid = y_blocks - mean
@@ -91,8 +94,9 @@ def _deviation0(c, t_blocks, y_blocks):
 
 
 class _Reference:
-    """A built-in criterion as 0.5 judged it: its results take ``_Result0``'s properties, and a deviation criterion
-    is evaluated by ``_deviation0``. Every window a deviation criterion sees is kept in ``windows``."""
+    """A built-in criterion as 0.5.1 judged it: its results take ``_Result0``'s properties, and a deviation criterion
+    is evaluated by ``_deviation0`` (the others' line fits are 0.5.1's while ``runs`` has ``stats.linear_fit``
+    replaced). Every window a deviation criterion sees is kept in ``windows``."""
 
     def __init__(self, criterion, windows):
         self._c, self._windows = criterion, windows
@@ -109,7 +113,7 @@ class _Reference:
 
 
 class _StepChange0(rs.Disturbance):
-    """The 0.5 ``StepChange``."""
+    """The 0.5.1 ``StepChange``."""
 
     def __init__(self, signal, threshold, m=10, name=None):
         self.signal, self.threshold, self.m = signal, threshold, m
@@ -117,7 +121,6 @@ class _StepChange0(rs.Disturbance):
         self.reset()
 
     def reset(self):
-        from collections import deque  # pylint: disable=import-outside-toplevel
         self._hist = deque(maxlen=2 * self.m)
 
     def update(self, t, sample, values):
@@ -129,7 +132,7 @@ class _StepChange0(rs.Disturbance):
 
 
 def _run0(detector, df, t):
-    """The 0.5 ``batch.run(detector, df, t, with_results=True)``, with the 0.5 ``Verdict.eta`` and ``limiting``."""
+    """The 0.5.1 ``batch.run(detector, df, t, with_results=True)``, with its ``Verdict.eta`` and ``limiting``."""
     detail_cols = _detail_columns(detector)
     detector.reset()
     cols = _unique_columns(df)
@@ -229,15 +232,32 @@ def _detector(reference, windows=None):
 
 @pytest.fixture(scope="module")
 def runs():
-    """``(new, reference, windows)``: the runs of this version and of the 0.5 code on ``_record``, and the windows
-    the reference deviation criteria saw."""
+    """``(new, reference, windows)``: the runs of this version and of the 0.5.1 code on ``_record``, and the windows
+    the reference deviation criteria saw. The reference run has ``stats.linear_fit`` replaced by ``_linear_fit0``,
+    which the drift criterion's slope method calls."""
     df, t = _record()
     windows: list = []
-    return rs.batch.run(_detector(False), df, t, with_results=True), _run0(_detector(True, windows), df, t), windows
+    new = rs.batch.run(_detector(False), df, t, with_results=True)
+    calls = []
+
+    def fit0(t, y):
+        calls.append(1)
+        return _linear_fit0(t, y)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(rs.stats, "linear_fit", fit0)
+        old = _run0(_detector(True, windows), df, t)
+    assert calls  # the drift criterion's fits took the 0.5.1 code
+    return new, old, windows
 
 
 def _bits(x):
     return np.asarray(x, dtype=float).view(np.int64)
+
+
+def _bit_lists(values):
+    """The bits of each of ``values`` (numbers or arrays), as lists."""
+    return [_bits(v).tolist() for v in values]
 
 
 def test_the_record_reaches_every_reason_and_crosses_every_limit(runs):
@@ -250,13 +270,14 @@ def test_the_record_reaches_every_reason_and_crosses_every_limit(runs):
     assert np.isinf(old.loc[300:799, "ratio_p_rel"]).any()  # an invalid result from a zero scale (p is 0)
     assert np.isinf(old.loc[1000:2499, "ratio_p_rel"]).any()  # and from a NaN noise (p near 1000)
     assert (old.loc[:1999, "reason"] == "disturbance").any()  # a step detector's: the event log's event is later
+    assert (old.loc[5200:5400, "ratio_r_lin"] > 1).any()  # r's move at 5200, too small for the step detector
     # Ties for the worst ratio: the limiting criterion is the first of them, neither the first nor the last criterion.
     ratios = old[[f"ratio_{c.name}" for c in _detector(False).criteria]]
     tied = (ratios.eq(old["eta"], axis=0).sum(axis=1) >= 2) & (old["limiting"] == "p_rel")
     assert tied.any() and (ratios.loc[tied, "ratio_p_rel_lin"] == old.loc[tied, "eta"]).all()
 
 
-def test_run_gives_the_0_5_output_bit_for_bit(runs):
+def test_run_gives_the_0_5_1_output_bit_for_bit(runs):
     new, old, _ = runs
     pd.testing.assert_frame_equal(new, old, check_exact=True)
     for col in new.columns:
@@ -264,30 +285,38 @@ def test_run_gives_the_0_5_output_bit_for_bit(runs):
             assert np.array_equal(_bits(new[col]), _bits(old[col])), col
 
 
-def test_line_fit_and_deviation_criteria_give_the_0_5_values_bit_for_bit(runs):
+def test_a_verdict_names_the_first_criterion_with_the_worst_ratio():
+    upper = [0.5, 2.0, 0.7, 2.0, 0.1]  # the worst tied, at neither end; limit 1, so each ratio is its upper
+    v = rs.Verdict(0.0, Label.SETTLING, {f"c{i}": rs.CriterionResult(f"c{i}", u, 0.0, 1.0, 2.0)
+                                        for i, u in enumerate(upper)})
+    assert (v.eta, v.limiting) == (2.0, "c1")
+    empty = rs.Verdict(0.0, Label.INDETERMINATE)
+    assert math.isnan(empty.eta) and empty.limiting is None
+
+
+def test_line_fit_and_deviation_criteria_give_the_0_5_1_values_bit_for_bit(runs):
     _, _, windows = runs
     complete = _detector(False)._t_blocks  # pylint: disable=protected-access
     assert any(not np.array_equal(t, complete) for _, t, _ in windows)  # partial blocks move their times
     assert {c.name for c, _, _ in windows} == {"p_abs", "p_rel", "r_lin", "p_rel_lin", "r_rel"}
     for c, t, y in windows:
         fit, fit0 = rs.stats.linear_fit(t, y), _linear_fit0(t, y)
-        assert [_bits(v).tolist() for v in fit] == [_bits(v).tolist() for v in fit0]
+        assert _bit_lists(fit) == _bit_lists(fit0)
         same_time = np.full_like(t, 2.0)  # no spread in time: the fit's flat branch
-        assert [_bits(v).tolist() for v in rs.stats.linear_fit(same_time, y)] == \
-            [_bits(v).tolist() for v in _linear_fit0(same_time, y)]
+        assert _bit_lists(rs.stats.linear_fit(same_time, y)) == _bit_lists(_linear_fit0(same_time, y))
         r, r0 = c.evaluate(t, y), _deviation0(c, t, y)
         assert (r.name, r.details) == (r0.name, r0.details)
-        assert _bits([r.statistic, r.uncertainty, r.limit, r.k]).tolist() == \
-            _bits([r0.statistic, r0.uncertainty, r0.limit, r0.k]).tolist()
+        assert _bit_lists([r.statistic, r.uncertainty, r.limit, r.k]) == \
+            _bit_lists([r0.statistic, r0.uncertainty, r0.limit, r0.k])
 
 
 def _fit_and_warnings(fit, t, y):
-    """``fit(t, y)`` as bits, and the distinct messages of the warnings it gave (0.5 took some means twice, so it
+    """``fit(t, y)`` as bits, and the distinct messages of the warnings it gave (0.5.1 took some means twice, so it
     gave some warnings twice)."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         out = fit(t, y)
-    return [_bits(v).tolist() for v in out], sorted({str(w.message) for w in caught})
+    return _bit_lists(out), sorted({str(w.message) for w in caught})
 
 
 @pytest.mark.parametrize("t, y", [
@@ -298,25 +327,32 @@ def _fit_and_warnings(fit, t, y):
     # float64 off any grid, whose sums round differently in another order
     (np.random.default_rng(3).normal(0, 1e3, 20), np.random.default_rng(4).normal(0, 1, 20)),
 ], ids=["int64", "float32", "empty", "float64"])
-def test_line_fit_gives_the_0_5_values_and_warnings_on_other_arrays(t, y):
+def test_line_fit_gives_the_0_5_1_values_and_warnings_on_other_arrays(t, y):
     assert _fit_and_warnings(rs.stats.linear_fit, t, y) == _fit_and_warnings(_linear_fit0, t, y)
 
 
-def test_a_deviation_criterion_gives_the_0_5_values_on_a_masked_window():
+def test_a_deviation_criterion_gives_the_0_5_1_values_on_a_masked_window():
     """A masked array's mean counts its unmasked items only."""
     c = rs.DeviationCriterion("x", 1.0, 0.1)
     t, y = np.arange(4.0), np.ma.array([1.0, 50.0, 2.0, 4.0], mask=[0, 1, 0, 0])
     r, r0 = c.evaluate(t, y), _deviation0(c, t, y)
-    assert _bits([r.statistic, r.uncertainty]).tolist() == _bits([r0.statistic, r0.uncertainty]).tolist()
+    assert _bit_lists([r.statistic, r.uncertainty]) == _bit_lists([r0.statistic, r0.uncertainty])
     assert r0.statistic == pytest.approx(5 / 3)  # |4 - 7/3|: the unmasked mean
 
 
 def test_a_step_detector_raises_on_a_value_it_cannot_store_and_leaves_it_out():
     """A decision on #180: 0.5.1 kept such a value, and raised only while its full history held it."""
-    early = rs.StepChange("x", 1.0, m=2)
+    early, old = rs.StepChange("x", 1.0, m=2), _StepChange0("x", 1.0, m=2)
     assert early.update(0.0, {}, {"x": 0.0}) is False
     with pytest.raises(ValueError):  # at once, though the history is not yet full
         early.update(1.0, {}, {"x": "x"})
+    outcomes = []
+    for i, v in enumerate([0.0, "x", 0.0, 0.0, 0.0, 0.0]):  # 0.5.1: raised on the 4th and 5th, while "x" was held
+        try:
+            outcomes.append(old.update(float(i), {}, {"x": v}))
+        except ValueError:
+            outcomes.append("raised")
+    assert outcomes == [False, False, False, "raised", "raised", False]
     # Left out: the next samples are judged as if it never came, not with what its slot held before (5.0).
     step, clean = rs.StepChange("x", 1.0, m=1), rs.StepChange("x", 1.0, m=1)
     assert [step.update(0.0, {}, {"x": 5.0}), step.update(1.0, {}, {"x": 0.0})] == [False, True]
@@ -341,7 +377,14 @@ def test_derived_properties_follow_a_reassigned_field(field):
         fresh = _Result0("c", r.statistic, r.uncertainty, r.limit, r.k)
         assert r.invalid_reason == fresh.invalid_reason, value
         assert r.outcome == fresh.outcome, value
-        assert _bits([r.ratio, r.upper, r.lower]).tolist() == _bits([fresh.ratio, fresh.upper, fresh.lower]).tolist()
+        assert _bit_lists([r.ratio, r.upper, r.lower]) == _bit_lists([fresh.ratio, fresh.upper, fresh.lower])
+
+
+def test_derived_properties_are_unchanged_by_a_reassigned_name_or_details():
+    r = rs.CriterionResult("c", 1.5, 0.1, 1.0, 2.0)
+    before = r.invalid_reason, r.ratio, r.outcome
+    r.name, r.details = "d", {"tau_s": 3.0}
+    assert (r.invalid_reason, r.ratio, r.outcome) == before == (None, 1.7, Outcome.FAIL)
 
 
 class _Offset(rs.CriterionResult):
@@ -359,3 +402,15 @@ def test_a_subclass_works_out_its_derived_properties_on_every_read():
     assert (r.outcome, r.ratio < 1) == (Outcome.PASS, True)
     r.offset = 0.6  # upper 1.3, lower 0.3: straddles the limit
     assert (r.outcome, r.ratio > 1) == (Outcome.UNDECIDED, True)
+
+
+@pytest.mark.parametrize("field", ["statistic", "uncertainty", "limit", "k"])
+def test_derived_properties_follow_a_field_written_in_place(field):
+    fields = {"statistic": 0.5, "uncertainty": 0.1, "limit": 1.0, "k": 2.0}
+    fields[field] = np.array(fields[field])  # a 0-d array, which can be written into
+    r = rs.CriterionResult("c", **fields)
+    assert (r.invalid_reason, r.outcome) == (None, Outcome.PASS)  # read before the field changes
+    getattr(r, field)[()] = np.nan
+    fresh = _Result0("c", r.statistic, r.uncertainty, r.limit, r.k)
+    assert (r.invalid_reason, r.outcome) == (fresh.invalid_reason, Outcome.UNDECIDED)
+    assert r.ratio == fresh.ratio == np.inf

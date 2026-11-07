@@ -46,7 +46,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from operator import itemgetter
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -156,6 +156,20 @@ class Signal:
 # ---------------------------------------------------------------------------
 
 
+class _Kept(NamedTuple):
+    """A ``CriterionResult``'s derived values, and the field objects they were worked out from."""
+
+    statistic: Any
+    uncertainty: Any
+    limit: Any
+    k: Any
+    values: Dict[str, Any]
+
+
+_KEPT_TYPES = (float, int, np.float64)
+"""The field types whose values cannot change in place, so derived values worked out from them can be kept."""
+
+
 @dataclass
 class CriterionResult:
     """
@@ -173,8 +187,10 @@ class CriterionResult:
     ``invalid_reason``, ``ratio`` and ``outcome`` are each worked out once
     and kept until ``statistic``, ``uncertainty``, ``limit`` or ``k`` is
     reassigned, since the detector and ``batch.run`` read them several
-    times a window. A field changed in place (a 0-d array written into) is
-    not seen. A subclass works them out on every read.
+    times a window. They are kept only while every one of those fields is a
+    ``float``, ``int`` or ``np.float64``, whose value cannot change in place
+    (a 0-d array can be written into). A subclass works them out on every
+    read.
     """
 
     name: str
@@ -187,19 +203,23 @@ class CriterionResult:
     def _kept(self, name: str, work_out: Callable[[], Any]) -> Any:
         """
         The derived value ``name``, worked out by ``work_out`` unless it was
-        kept from the same fields; a subclass, whose properties may read more
-        than the fields, works it out on every read. The fields are compared
-        by identity, not equality: equal values can report differently (the
+        kept from the same fields. It is worked out on every read for a
+        subclass, whose properties may read more than the fields, and while
+        a field is not of a ``_KEPT_TYPES`` type. The fields are compared by
+        identity, not equality: equal values can report differently (the
         reprs of inf and np.float64(inf), or of -0.0 and 0.0, in
         ``invalid_reason``).
         """
         if type(self) is not CriterionResult:
             return work_out()
-        kept = self.__dict__.get("_kept_from")  # (statistic, uncertainty, limit, k, {name: value})
-        if (kept is None or kept[0] is not self.statistic or kept[1] is not self.uncertainty
-                or kept[2] is not self.limit or kept[3] is not self.k):
-            kept = self.__dict__["_kept_from"] = (self.statistic, self.uncertainty, self.limit, self.k, {})
-        values: Dict[str, Any] = kept[4]
+        kept = self.__dict__.get("_kept_from")
+        if (kept is None or kept.statistic is not self.statistic or kept.uncertainty is not self.uncertainty
+                or kept.limit is not self.limit or kept.k is not self.k):
+            fields = (self.statistic, self.uncertainty, self.limit, self.k)
+            if not all(type(f) in _KEPT_TYPES for f in fields):
+                return work_out()
+            kept = self.__dict__["_kept_from"] = _Kept(*fields, {})
+        values = kept.values
         if name not in values:
             values[name] = work_out()
         return values[name]
@@ -551,6 +571,8 @@ class Verdict:
     @property
     def limiting(self) -> Optional[str]:
         """Name of the criterion with the worst margin ratio."""
+        if not self.results:
+            return None
         return self._margins()[1]
 
     def _margins(self) -> Tuple[float, Optional[str], List[float]]:

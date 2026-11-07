@@ -160,21 +160,23 @@ Upgrading from 0.5.1. Behaviour changes to check:
 
 ### Changed
 
-- `batch.run` takes about 45 % less time per sample on one machine, with
-  the same output bit for bit (#180). On an 86,400-sample day with a
-  TRIGA-like detector (five deviation criteria, three step disturbances, a
-  floor latch), 133 µs became 72 µs there. `CriterionResult` keeps its `invalid_reason`, `ratio` and
-  `outcome` until `statistic`, `uncertainty`, `limit` or `k` is reassigned
-  (a subclass still works them out on every read), and `batch.run` reads
-  each ratio once a row. `DeviationCriterion`, `stats.linear_fit` and
-  `StepChange` take their means without `ndarray.mean`'s wrapper, which
-  gives the same values. `StepChange` keeps its history in a float64 array
-  rather than a deque, so a value numpy cannot store as a float64 (`"x"`;
-  `None` is stored as NaN, as before), given to `StepChange.update`
-  directly, raises on that call and is left out of the history. 0.5.1 kept
-  it, and raised once the history was full and on every call until the
-  value left it, so the flags after it differ too. The detector gives
-  `StepChange` floats only.
+- `batch.run` takes about 40 % less time per sample, with the same output
+  bit for bit (#180). On an 86,400-sample day with a TRIGA-like detector
+  (five deviation criteria, three step disturbances, a floor latch), 113 µs
+  became 66 µs on one machine. `CriterionResult` keeps its
+  `invalid_reason`, `ratio` and `outcome` until `statistic`, `uncertainty`,
+  `limit` or `k` is reassigned, and only while each of them is a `float`,
+  `int` or `np.float64`, whose value cannot change in place (a subclass,
+  or a field of another type, still works them out on every read).
+  `batch.run` reads each ratio once a row. `DeviationCriterion`,
+  `stats.linear_fit` and `StepChange` take their means without
+  `ndarray.mean`'s wrapper, which gives the same values. `StepChange` keeps
+  its history in a float64 array rather than a deque, so a value numpy
+  cannot store as a float64 (`"x"`; `None` is stored as NaN, as before),
+  given to `StepChange.update` directly, raises on that call and is left
+  out of the history. 0.5.1 kept it, and raised once the history was full
+  and on every call until the value left it, so the flags after it differ
+  too. The detector gives `StepChange` floats only.
 - With an aware `DatetimeIndex`, an aware `period_origin` in another zone
   is converted to the index's zone before periods start on its wall clock,
   so the same instant in any zone starts the same periods. It was read on
