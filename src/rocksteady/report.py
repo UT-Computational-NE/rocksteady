@@ -31,7 +31,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .fit import FitResult, PiecewiseFit, _subtype_specs, normalize_model, piecewise_fit, resolve_model, validate_models
+from .fit import (JOIN_KEY, FitResult, PiecewiseFit, _joins_transients, _subtype_specs, normalize_model,
+                  piecewise_fit, resolve_model, validate_models)
 from . import _grouping as _g
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment
@@ -201,13 +202,16 @@ def _normalized(spec, states: Sequence[str]) -> Dict[str, Any]:
     own = _subtype_specs(spec)
     if own:
         out["subtypes"] = {sub: normalize_model(spec, subtype=sub) for sub in own}
+    if _joins_transients(spec):
+        out[JOIN_KEY] = True
     return out
 
 
 def _models_title(spec, states: Sequence[str]) -> str:
     parts = [f"{st} {_model_label(*resolve_model(spec, st))}" for st in states if st != "all"]
     own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _subtype_specs(spec)]
-    return f"(models: {', '.join(parts)}{'; ' + ', '.join(own) if own else ''})"
+    joined = "; transients joined" if _joins_transients(spec) else ""
+    return f"(models: {', '.join(parts)}{'; ' + ', '.join(own) if own else ''}{joined})"
 
 
 def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=None, dt: Optional[float] = None,
@@ -229,7 +233,10 @@ def fit_report(values, segs: Sequence[Segment], models: Mapping[str, Any], *, t=
         ``{"steady": 0, "transient": "exp", "subtypes": {"pulse": 1}}``
         (``OptimalSegmentation.models`` is such a spec): a segment whose
         ``subtype`` it lists is fitted with that model, any other with its
-        state's.
+        state's. ``"join_transients": True`` in such a spec fits each
+        transient as the line between its neighbours' levels, as
+        ``optimal_segments(..., join_transients=True)`` does
+        (``fit.piecewise_fit``).
     t : array, optional
         Sample times in seconds. Default: from a ``DatetimeIndex``, else
         the row number times ``dt``.

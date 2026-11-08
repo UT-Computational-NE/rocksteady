@@ -38,8 +38,25 @@ subtypes their own models under ``"subtypes"``, for example ``{"steady":
 segment with its state's (``optimal.Subtype`` names a segment's subtype).
 The names there are not checked against the segments: a name that no
 segment carries, such as a subtype absent from this record or a
-misspelling, changes nothing, so a misspelt subtype's segments are fitted
-with their state's model.
+misspelling, changes nothing (except that a spec that joins transients,
+below, refuses a listed model other than a constant or a line), so a
+misspelt subtype's segments are fitted with their state's model.
+
+A spec keyed by state may also join transients, ``"join_transients":
+True`` (``True`` or ``False``; ``optimal.OptimalSegmentation.models`` sets
+it when the optimiser joined them). ``piecewise_fit`` then fits each
+steady segment with its constant, and each transient as the line from the
+previous segment's level, at the transient's first sample, to the next
+segment's level, at that segment's first sample; at
+the record's start or end only its inner side is joined, and a transient
+that is the whole record is a free line. Steady segments must be fitted
+with a constant and transients with a line (``poly`` order 0 and 1); a
+subtype listed under ``"subtypes"`` must have a constant or a line, and
+the one that fits each of its segments must match the segment's state. A
+transient that borders a transient, an indeterminate segment, or a steady
+segment with no finite sample raises ``ValueError``, naming the two
+segments; such segments are fitted as usual where no transient borders
+them.
 
 Parameter uncertainty
 ---------------------
@@ -93,6 +110,7 @@ UNCERTAINTY_METHODS = ("ar1", "ar1_time", "iid")
 
 _STATE_KEYS = {s.value for s in State}
 _SUBTYPES_KEY = "subtypes"  # in a spec keyed by state: {subtype: model spec}
+JOIN_KEY = "join_transients"  # in a spec keyed by state: True to join transients to their neighbours' levels
 
 
 # ---------------------------------------------------------------------------
@@ -728,10 +746,10 @@ def resolve_model(spec: ModelSpec, state: Union[State, str, None] = None,
     """
     if _keyed_by_state(spec):
         spec = cast(Mapping[str, Any], spec)
-        keys = set(spec) - {_SUBTYPES_KEY}
+        keys = set(spec) - {_SUBTYPES_KEY, JOIN_KEY}
         if not keys or not keys <= _STATE_KEYS:
-            raise ValueError(f"a state-keyed model spec may only have keys {sorted(_STATE_KEYS)} and "
-                             f"{_SUBTYPES_KEY!r}, with at least one state, got {sorted(spec)}")
+            raise ValueError(f"a state-keyed model spec may only have keys {sorted(_STATE_KEYS)}, "
+                             f"{_SUBTYPES_KEY!r} and {JOIN_KEY!r}, with at least one state, got {sorted(spec)}")
         own = _subtype_specs(spec)
         if subtype is not None and subtype in own:
             return resolve_model(own[subtype])
@@ -774,6 +792,49 @@ def check_model_options(name: str, options: Mapping[str, Any]) -> None:
     registry.check_options(registry.fit_models.get(name), options, name)
 
 
+def _joins_transients(spec: ModelSpec) -> bool:
+    """
+    Whether a spec keyed by state joins transients (``"join_transients": True``), checked: the value is
+    ``True`` or ``False``, and a spec that joins fits steady segments with a constant and transients with a
+    line (``poly`` order 0 and 1), and gives each subtype it lists a constant or a line. Which of the two a
+    subtype needs depends on its segments' state, which ``piecewise_fit`` checks segment by segment.
+    """
+    if not _keyed_by_state(spec):
+        return False
+    spec = cast(Mapping[str, Any], spec)
+    join = spec.get(JOIN_KEY, False)
+    if not isinstance(join, (bool, np.bool_)):
+        raise ValueError(f"a model spec's {JOIN_KEY!r} must be True or False, got {join!r}")
+    join = bool(join)
+    if join:
+        for st in (State.STEADY.value, State.TRANSIENT.value):
+            if st in spec:
+                check_joined(st, spec[st], f"state {st!r}")
+        for sub, own in _subtype_specs(spec).items():
+            check_joined(None, own, f"subtype {sub!r}")  # its segments' state decides which, in piecewise_fit
+    return join
+
+
+def check_joined(state: Optional[str], spec: ModelSpec, who: str) -> None:
+    """
+    With joined transients: a steady segment's model (one model's spec) is a constant, a transient's a line,
+    and a model whose state is open (``state`` None, a subtype's in a fit spec) is one of the two.
+    """
+    name, opts = resolve_model(spec)
+    orders = {State.STEADY.value: (0,), State.TRANSIENT.value: (1,), None: (0, 1)}[state]
+    if name != "poly" or int(opts.get("order", 0)) not in orders:
+        line = {0: "a constant (poly order 0)", 1: "a line (poly order 1)"}
+        what = (f"{state} segments with {line[orders[0]]}" if state is not None
+                else "steady segments with a constant and transients with a line")
+        raise ValueError(f"{JOIN_KEY} fits {what}; {who} has model {spec!r}")
+
+
+def _one_model(model: ModelSpec, s: Segment) -> Dict[str, Any]:
+    """The one-model spec that fits segment ``s``: its subtype's own, else its state's."""
+    name, opts = resolve_model(model, s.state, s.subtype)
+    return {"model": name, **opts}
+
+
 def validate_models(models: Mapping[str, ModelSpec],
                     states: Sequence[Union[State, str]] = tuple(State)) -> None:
     """
@@ -785,6 +846,7 @@ def validate_models(models: Mapping[str, ModelSpec],
     for name, spec in models.items():
         try:
             own = _subtype_specs(spec)
+            _joins_transients(spec)
         except ValueError as exc:
             raise ValueError(f"model for {name!r}: {exc}") from None
         for st in states:
@@ -827,7 +889,9 @@ class PiecewiseFit:
 def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: ModelSpec) -> PiecewiseFit:
     """
     Fit each segment with the model for its state, or for its subtype when
-    the spec gives the subtype one (``"subtypes"``).
+    the spec gives the subtype one (``"subtypes"``). With
+    ``"join_transients": True``, transients are joined to their neighbours'
+    levels (see "Model specs" in the module docstring).
 
     ``t`` and ``y`` are full-record arrays; ``segs`` index into them (for
     example from ``rocksteady.segments``). ``model`` is one signal's spec.
@@ -837,13 +901,79 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     if len(t) != len(y):
         raise ValueError("t and y must have the same length")
     segs = check_segments(segs, len(y))
+    join = _joins_transients(model)
     fitted = np.full(len(y), np.nan)
-    results = []
+    results: List[Optional[FitResult]] = []
     for s in segs:
+        if join and s.state == State.TRANSIENT:
+            results.append(None)  # joined to its neighbours, once they are fitted
+            continue
+        if join and s.state == State.STEADY:
+            check_joined(s.state.value, _one_model(model, s), f"steady segment {s.start}:{s.stop}")
         r = fit_model(model, t[s.slice], y[s.slice], s.state, s.subtype)
         fitted[s.slice] = r.fitted
         results.append(r)
-    return PiecewiseFit(fitted, list(segs), results)
+    for i, s in enumerate(segs):
+        if results[i] is not None:
+            continue
+        check_joined(s.state.value, _one_model(model, s), f"transient {s.start}:{s.stop}")
+        pins: List[Optional[Tuple[float, float]]] = []
+        for j, side in ((i - 1, "before"), (i + 1, "after")):
+            if not 0 <= j < len(segs):
+                pins.append(None)
+                continue
+            near = segs[j]
+            where = f"the transient {s.start}:{s.stop} is joined to its neighbours' levels"
+            if near.state != State.STEADY:
+                raise ValueError(f"{where}, but the segment {side} it ({near.start}:{near.stop}) is "
+                                 f"{near.state.value}, not steady")
+            level = cast(FitResult, results[j]).params["level"]
+            if not np.isfinite(level):
+                raise ValueError(f"{where}, but the steady segment {side} it ({near.start}:{near.stop}) has no "
+                                 "finite sample, so no level")
+            pins.append((t[s.start] if side == "before" else t[near.start], float(level)))
+        if pins == [None, None]:
+            r = fit_model(model, t[s.slice], y[s.slice], s.state, s.subtype)  # the whole record: a free line
+        else:
+            _, opts = resolve_model(model, s.state, s.subtype)
+            r = _fit_joined_line(t[s.slice], y[s.slice], pins[0], pins[1], opts.get("uncertainty", "ar1"))
+        fitted[s.slice] = r.fitted
+        results[i] = r
+    return PiecewiseFit(fitted, list(segs), cast(List[FitResult], results))
+
+
+def _fit_joined_line(t: np.ndarray, y: np.ndarray, before: Optional[Tuple[float, float]],
+                    after: Optional[Tuple[float, float]], uncertainty: str = "ar1") -> FitResult:
+    """
+    A line through the joined points: ``before`` and ``after`` are ``(time, level)``, the previous segment's
+    level at the transient's first sample and the next segment's at that segment's first sample. With both,
+    the line has no free parameter; with one, its slope is fitted by least squares through that point. The
+    result is a ``poly`` order 1 with the flag ``joined`` and ``n_params`` the free parameters; its
+    parameters have no covariance (the levels it is joined to carry the uncertainty).
+    """
+    t = np.asarray(t, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(t) & np.isfinite(y)
+    if before is not None and after is not None:
+        (t0, a), (t1, b) = before, after
+        slope = (b - a) / (t1 - t0)
+        t_pin, level, free = t0, a, 0
+    else:
+        t_pin, level = cast(Tuple[float, float], before if before is not None else after)
+        d = t[ok] - t_pin
+        dd = float(d @ d)
+        slope = float(d @ (y[ok] - level)) / dd if dd > 0 else 0.0
+        free = 1
+    lo, hi = (float(t[ok].min()), float(t[ok].max())) if ok.any() else (float(t[0]), float(t[-1]))
+    centre, half = 0.5 * (lo + hi), 0.5 * (hi - lo) or 1.0
+    at_centre = level + slope * (centre - t_pin)
+    fitted = at_centre + slope * (t - centre)
+    resid = np.where(ok, y - fitted, np.nan)
+    flags = {"joined"} if ok.any() else {"joined", "no_data"}
+    options = {"order": 1, "uncertainty": uncertainty, "order_used": 1}
+    evaluation = {"t_ref": centre, "t_scale": half, "coef": [float(at_centre), float(slope * half)]}
+    params = {"level": float(at_centre), "slope": float(slope)}
+    return FitResult("poly", params, None, fitted, resid, flags, options, float("nan"), free, centre, evaluation)
 
 
 __all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit",

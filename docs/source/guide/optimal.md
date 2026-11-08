@@ -380,3 +380,65 @@ segmented by hand. Four of its transients are `other`: a rise to low power
 (no startup), an excursion at power that no rod drove (neither a maneuver
 nor a perturbation), a slow excursion to a pulse's height and a fast, low
 bump (neither of them a pulse).
+
+## Joined transients
+
+Without the option, segments are fitted independently, so a transient
+fitted with a line can be flat. It fits a run of steady samples as well as
+a constant does, and it costs no more in SSE than the steady segment beside
+it. Under a cap, that lets
+a transient take a plateau the cap keeps from being steady. Take a reactor
+at power from 09:00, scrammed at 16:00 and restarted at 16:30, with at most
+one at-power segment a day: the best fit puts the at-power segment on the
+dip, and the morning plateau goes into a flat startup. A caller that draws
+a profile from the segments (steady levels joined by ramps) then gets the
+wrong plateau.
+
+`join_transients=True` fits each transient as a **joined transient**: the
+straight line from the level of the steady segment before it, at the
+transient's first sample, to the level of the segment after it, at that
+segment's first sample. A joined transient between two different levels
+cannot be flat, and one that holds steady samples at an end pays for them,
+because its line moves away from that level. When a transient between two
+levels must cross a gap, and the candidates include the last sample before
+the gap and the first after it: with the gap's samples missing from the
+record, the transient keeps only that last sample, and the next segment
+starts at the first sample after the gap; with them there as NaN, the
+transient's only finite sample, if any, is that last one.
+
+- **Models.** Steady segments are fitted with a constant and transients
+  with a line, `{"steady": 0, "transient": 1}`, and a subtype's own model
+  must be the same. Any other model, and `indeterminate` in `models`, is
+  refused.
+- **Neighbours.** A transient borders steady segments or the record's ends
+  only: no transient follows a transient, whatever `transitions` allow.
+  Steady segments may still follow each other, meeting in a step. At the
+  record's start or end only the inner side is joined, and the slope is
+  fitted through that point; a transient that is the whole record is a
+  free line.
+- **No level, no join.** A steady segment with no finite sample has no
+  level, so a transient is never placed beside one. When nothing else
+  fits, the infeasibility error says so.
+- **Penalty.** With `"bic"`, a transient joined on both sides has no free
+  parameter, so it costs half a steady segment's penalty; each side left
+  free, at the record's start or end, adds one parameter. Give a penalty
+  mapping to charge transients more.
+- **Reporting.** `res.models` carries `"join_transients": True`, so
+  `fit_report(values, res.segments, {signal: res.models})` fits the
+  segments as the optimiser did. Given segments from elsewhere, it refuses a
+  transient that borders a transient, an indeterminate segment, or a steady
+  segment with no finite sample; such segments elsewhere are fitted as
+  usual.
+- **Ties.** Of segmentations equal in objective, the least sum of subtype
+  ranks wins, as without the option, then the one with the fewest
+  transients.
+- **Cost.** A transient's cost depends on both its neighbours, so the
+  program does more work (*Joined transients* in {doc}`methods`). `subset`
+  and `refine` on a few hundred candidates take seconds; `exact` needs a
+  coarse `grid_s`.
+
+````{admonition} Why steady segments are fitted on their own (ADR 0002)
+```{include} ../../adr/0002-joined-transients-take-their-neighbours-levels.md
+:start-line: 2
+```
+````

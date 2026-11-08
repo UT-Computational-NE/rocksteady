@@ -1,0 +1,3 @@
+# Joined transients take their neighbours' levels
+
+With `join_transients`, `optimal_segments` fits each steady segment on its own, as before, and draws each transient as the line between its neighbours' levels, rather than fitting the whole record as one continuous piecewise-linear function by least squares. A joint fit couples every level to the ramps around it, so a segment's cost would no longer depend on its own samples and those of its neighbours alone, and the dynamic program could not be exact. The pinned fit keeps it exact with one more piece of state, the previous steady segment. It is also the profile callers build from best-fit segments (steady levels joined by ramps), so its objective is the SSE of the profile they use.
