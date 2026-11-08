@@ -460,8 +460,8 @@ works through an example.
 With `join_transients=True`, each transient is a **joined transient**: the
 line from the level of the steady segment before it, at its first sample, to
 the level of the segment after it, at that segment's first sample. A
-transient can then no longer be flat, so it cannot take a plateau that a cap
-keeps from being steady. It needs `models={"steady": 0, "transient": 1}`; no
+transient between two different levels can then no longer be flat, so it
+cannot take a plateau that a cap keeps from being steady. It needs `models={"steady": 0, "transient": 1}`; no
 transient follows a transient, and `res.models` tells `fit_report` to fit the
 segments the same way. The [guide](https://rocksteady.readthedocs.io/en/latest/guide/optimal.html#joined-transients)
 says what it costs.

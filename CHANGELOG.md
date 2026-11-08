@@ -174,8 +174,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
 - Joined transients for `optimal_segments`: `join_transients=True` fits
   each transient as the line from the previous steady segment's level, at
   its first sample, to the next segment's level, at that segment's first
-  sample, so a transient can no longer be flat and take a plateau that a
-  cap keeps from being steady. At the record's start or end only its inner
+  sample, so a transient between two different levels can no longer be
+  flat and take a plateau that a cap keeps from being steady. At the record's start or end only its inner
   side is joined. Steady segments are fitted on their own, as before (ADR
   0002). The option needs `{"steady": 0, "transient": 1}` (a subtype's own
   model too) and refuses `indeterminate`; no transient follows a

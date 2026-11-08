@@ -957,3 +957,40 @@ def test_the_objective_is_the_sse_and_every_charge_the_result_reports(join):
     extra = res.info["free_parameter_cost"]
     assert res.objective == pytest.approx(res.sse + charged + res.info["overflow_cost"] + extra, rel=1e-12)
     assert extra == (pytest.approx(res.penalty["transient"], rel=1e-12) if join else 0.0)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 17, 33, 37])
+def test_a_minimum_taken_in_blocks_is_the_minimum(seed, monkeypatch):
+    # The coupled minimum over earlier steady segments is taken in blocks of rows, to bound memory; with blocks of
+    # three rows, a small record needs many, and the result must still be the best joined segmentation.
+    import rocksteady._joined as joined
+    monkeypatch.setattr(joined, "_CHUNK", 3)
+    rng = np.random.default_rng(seed)
+    t = np.arange(9, dtype=float)
+    y = rng.integers(0, 4, 9).astype(float)
+    pen = {"steady": 0.3, "transient": 0.2}
+    res = optimal_segments(t, y, MODELS, method="exact", penalty=pen, join_transients=True)
+    best, optima = _brute_joined(t, y, cuts=range(1, 9), choices=PLAIN, penalty=pen)
+    assert res.objective == pytest.approx(best, rel=1e-9, abs=1e-12)
+    assert (_bounds(res), _names(res)) in optima
+
+
+def test_of_equal_ways_into_steady_after_steady_the_least_key_wins():
+    # Zero penalties: steady segments of different starts reach the same point at equal cost, with different rank
+    # sums and transients before them; the steady segment that follows takes the least of those keys.
+    t = np.arange(5, dtype=float)
+    y = np.array([0.0, 1.0, 1.0, 1.0, 0.0])
+    subtypes = {"p": rs.Subtype("steady"), "q": rs.Subtype("steady"), "x": rs.Subtype("transient"),
+                "w": rs.Subtype("transient")}
+    kw = dict(transitions={"p": ["q", "w"], "q": ["p", "w"], "x": ["x"], "w": ["p"]}, initial={"w", "p"},
+              final={"q", "w"})
+    res = optimal_segments(t, y, MODELS, method="exact", subtypes=subtypes, penalty=0.0,
+                           max_duration_s={"p": 3.0, "q": 3.0}, join_transients=True, **kw)
+    choices = {k: sub.state.value for k, sub in subtypes.items()}
+    best, optima = _brute_joined(t, y, cuts=range(1, 5), choices=choices, penalty={k: 0.0 for k in subtypes},
+                                 accepts={k: (lambda v: len(v) <= 3) for k in ("p", "q")}, **kw)
+    rank = _ranks(subtypes)
+    key = [(sum(rank[c] for c in names), sum(choices[c] == "transient" for c in names)) for _, names in optima]
+    assert res.objective == pytest.approx(best, abs=1e-12)
+    assert len(set(key)) > 1
+    assert (sum(rank[c] for c in _names(res)), sum(s.state == TR for s in res.segments)) == min(key)
