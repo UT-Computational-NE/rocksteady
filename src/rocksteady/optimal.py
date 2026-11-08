@@ -139,10 +139,16 @@ is never placed beside one; when nothing else fits, the infeasibility error
 says so. With ``"bic"``, a joined transient's penalty counts its free
 parameters: none joined on both sides, so it costs half a steady segment's
 penalty, and one more for each side not joined, at the record's start or
-end. A penalty mapping applies as given, wherever the transient lies.
+end (``info["free_parameter_cost"]`` reports those). A caller who wants
+transients charged otherwise gives a penalty mapping, which applies as
+given, wherever the transient lies.
 
 The result is optimal under this objective on the candidates (``subset``,
-``exact``), and ``refine`` moves boundaries under it. A transient's cost
+``exact``), and ``refine`` moves boundaries under it. Of segmentations equal
+in objective, the least sum of subtype ranks wins, as without the option,
+then the fewest transients, then the first the search finds: on flat data at
+zero penalties, one steady segment rather than a steady segment and a flat
+transient. A transient's cost
 depends on both its neighbours' levels, so the program also tracks the
 last steady segment's start: it takes up to about ``m**4`` steps for ``m``
 candidates where the program without the option takes ``m**2``, and
@@ -899,9 +905,13 @@ class OptimalSegmentation:
 
     ``segments`` cover the record in order, like ``states.segments``, so
     ``report.fit_report`` and ``metrics.stats_by_state`` take them as they are.
-    ``objective = sse + sum of penalties + overflow cost`` (0 without soft
-    caps); ``rms = sqrt(sse / n_valid)``.
-    ``penalty`` is charged per segment: each state's, then each subtype's.
+    ``objective = sse + sum of penalties + overflow cost + free parameter
+    cost``: the overflow cost is 0 without soft caps, and the free parameter
+    cost (``info["free_parameter_cost"]``) is 0 unless ``join_transients``
+    and ``"bic"`` charge a transient at the record's start or end for its
+    free parameters. ``rms = sqrt(sse / n_valid)``.
+    ``penalty`` is charged per segment: each state's, then each subtype's
+    (a joined transient's when it is joined on both sides).
     ``counts`` has a column per state and per declared subtype,
     ``subtypes`` (also ``info["subtypes"]``) holds the subtypes used, and
     ``info["events"]`` the event masks. ``models`` is the signal's model
@@ -2202,8 +2212,11 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
         missing from it gets 0). A subtype's penalty replaces its state's;
         a subtype not in the mapping takes its state's. With ``"bic"``, a
         subtype takes its state's, unless it has a model of its own
-        (``Subtype.model``): then it takes that model's. See the module
-        docstring.
+        (``Subtype.model``): then it takes that model's. With
+        ``join_transients`` and ``"bic"``, a transient at the record's start
+        or end is also charged for its free parameters, and
+        ``info["free_parameter_cost"]`` holds that charge; give a mapping to
+        charge transients otherwise. See the module docstring.
     method : "subset", "refine" (default) or "exact"
         With ``join_transients``, ``exact`` needs a coarse ``grid_s``: the
         program takes up to about ``m**4`` steps for ``m`` candidates.
@@ -2410,7 +2423,8 @@ def optimal_segments(t, y, models: Mapping[str, Any], *, per=None, max_counts: O
     counts = prob.counts(bounds, opts)
     overflow = _overflow_table(counts, prob, bounds, opts)
     info = {"upper_bound": ub, "refine_s": refine_s, "subtypes": subtypes, "events": masks,
-            "overflow_cost": prob.overflow_cost(bounds, opts)}
+            "overflow_cost": prob.overflow_cost(bounds, opts),
+            "free_parameter_cost": joined.free_parameter_cost(opts) if joined is not None else 0.0}
     return OptimalSegmentation(segs, method, float(objective), float(sse),
                                math.sqrt(sse / n_valid) if n_valid else float("nan"), n_valid, pen, counts,
                                int(len(B)), prob.costs.n_fits, info, subtypes,

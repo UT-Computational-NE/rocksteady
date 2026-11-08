@@ -424,10 +424,10 @@ detector's criteria.
 |---|---|
 | `per`, `max_counts` | at most N segments of a state or subtype per period. A segment counts once against every period it touches: one segment from 16:00 to 08:00 the next day counts against both days. Periods are half-open and follow a `DatetimeIndex`'s wall clock. |
 | `overflow_penalty` | makes the caps it names soft: each segment beyond its cap in a period, counted once against every period it touches, costs this much instead of being refused; `res.overflow` says where. |
-| `transitions` | which state or subtype may follow which; default any. A state's name stands for all of its subtypes. This constrains the sequence of segments only. Segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
+| `transitions` | which state or subtype may follow which; default any. A state's name stands for all of its subtypes. This constrains the sequence of segments only. Without `join_transients` (below), segments are fitted independently, so a level change may sit at any boundary, including transient → steady. |
 | `initial`, `final` | the states or subtypes the record's first and last segments may take; default any |
 | `min_duration_s`, `max_duration_s` | per state or subtype; a subtype's and its state's both bind. A minimum above the maximum is refused. |
-| `penalty` | added per segment, per state or subtype; a subtype's replaces its state's. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. |
+| `penalty` | added per segment, per state or subtype; a subtype's replaces its state's. The default, `"bic"`, makes the counts maxima rather than quotas; `0` uses every allowed slot. With `join_transients` and `"bic"`, a transient at the record's start or end is also charged for its free parameters (`res.info["free_parameter_cost"]`). |
 
 | `method` | Candidate breakpoints | Result |
 |---|---|---|
@@ -456,6 +456,15 @@ peak, rise time and events, and every constraint above can name them.
 `rs.classify_segments` gives the same subtypes to segments you already
 have. The [subtypes guide](https://rocksteady.readthedocs.io/en/latest/guide/optimal.html#subtypes)
 works through an example.
+
+With `join_transients=True`, each transient is a **joined transient**: the
+line from the level of the steady segment before it, at its first sample, to
+the level of the segment after it, at that segment's first sample. A
+transient can then no longer be flat, so it cannot take a plateau that a cap
+keeps from being steady. It needs `models={"steady": 0, "transient": 1}`; no
+transient follows a transient, and `res.models` tells `fit_report` to fit the
+segments the same way. The [guide](https://rocksteady.readthedocs.io/en/latest/guide/optimal.html#joined-transients)
+says what it costs.
 
 ## Extending rocksteady
 

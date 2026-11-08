@@ -38,15 +38,16 @@ subtypes their own models under ``"subtypes"``, for example ``{"steady":
 segment with its state's (``optimal.Subtype`` names a segment's subtype).
 The names there are not checked against the segments: a name that no
 segment carries, such as a subtype absent from this record or a
-misspelling, changes nothing, so a misspelt subtype's segments are fitted
-with their state's model.
+misspelling, changes nothing (except that a spec that joins transients,
+below, refuses a listed model other than a constant or a line), so a
+misspelt subtype's segments are fitted with their state's model.
 
 A spec keyed by state may also join transients, ``"join_transients":
 True`` (``True`` or ``False``; ``optimal.OptimalSegmentation.models`` sets
 it when the optimiser joined them). ``piecewise_fit`` then fits each
 steady segment with its constant, and each transient as the line from the
 previous segment's level, at the transient's first sample, to the next
-segment's level, at that segment's first sample (``fit_joined_line``); at
+segment's level, at that segment's first sample; at
 the record's start or end only its inner side is joined, and a transient
 that is the whole record is a free line. Steady segments must be fitted
 with a constant and transients with a line (``poly`` order 0 and 1); a
@@ -791,7 +792,7 @@ def check_model_options(name: str, options: Mapping[str, Any]) -> None:
     registry.check_options(registry.fit_models.get(name), options, name)
 
 
-def joins_transients(spec: ModelSpec) -> bool:
+def _joins_transients(spec: ModelSpec) -> bool:
     """
     Whether a spec keyed by state joins transients (``"join_transients": True``), checked: the value is
     ``True`` or ``False``, and a spec that joins fits steady segments with a constant and transients with a
@@ -810,20 +811,22 @@ def joins_transients(spec: ModelSpec) -> bool:
             if st in spec:
                 check_joined(st, spec[st], f"state {st!r}")
         for sub, own in _subtype_specs(spec).items():
-            name, opts = resolve_model(own)
-            if name != "poly" or int(opts.get("order", 0)) not in (0, 1):
-                raise ValueError(f"{JOIN_KEY} fits steady segments with a constant and transients with a line; "
-                                 f"subtype {sub!r} has model {own!r}")
+            check_joined(None, own, f"subtype {sub!r}")  # its segments' state decides which, in piecewise_fit
     return join
 
 
-def check_joined(state: str, spec: ModelSpec, who: str) -> None:
-    """With joined transients: a steady segment's model (one model's spec) is a constant, a transient's a line."""
+def check_joined(state: Optional[str], spec: ModelSpec, who: str) -> None:
+    """
+    With joined transients: a steady segment's model (one model's spec) is a constant, a transient's a line,
+    and a model whose state is open (``state`` None, a subtype's in a fit spec) is one of the two.
+    """
     name, opts = resolve_model(spec)
-    order = 0 if state == State.STEADY.value else 1
-    if name != "poly" or int(opts.get("order", 0)) != order:
-        line = "a constant (poly order 0)" if order == 0 else "a line (poly order 1)"
-        raise ValueError(f"{JOIN_KEY} fits {state} segments with {line}; {who} has model {spec!r}")
+    orders = {State.STEADY.value: (0,), State.TRANSIENT.value: (1,), None: (0, 1)}[state]
+    if name != "poly" or int(opts.get("order", 0)) not in orders:
+        line = {0: "a constant (poly order 0)", 1: "a line (poly order 1)"}
+        what = (f"{state} segments with {line[orders[0]]}" if state is not None
+                else "steady segments with a constant and transients with a line")
+        raise ValueError(f"{JOIN_KEY} fits {what}; {who} has model {spec!r}")
 
 
 def _one_model(model: ModelSpec, s: Segment) -> Dict[str, Any]:
@@ -843,7 +846,7 @@ def validate_models(models: Mapping[str, ModelSpec],
     for name, spec in models.items():
         try:
             own = _subtype_specs(spec)
-            joins_transients(spec)
+            _joins_transients(spec)
         except ValueError as exc:
             raise ValueError(f"model for {name!r}: {exc}") from None
         for st in states:
@@ -898,7 +901,7 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
     if len(t) != len(y):
         raise ValueError("t and y must have the same length")
     segs = check_segments(segs, len(y))
-    join = joins_transients(model)
+    join = _joins_transients(model)
     fitted = np.full(len(y), np.nan)
     results: List[Optional[FitResult]] = []
     for s in segs:
@@ -933,13 +936,13 @@ def piecewise_fit(t: np.ndarray, y: np.ndarray, segs: Sequence[Segment], model: 
             r = fit_model(model, t[s.slice], y[s.slice], s.state, s.subtype)  # the whole record: a free line
         else:
             _, opts = resolve_model(model, s.state, s.subtype)
-            r = fit_joined_line(t[s.slice], y[s.slice], pins[0], pins[1], opts.get("uncertainty", "ar1"))
+            r = _fit_joined_line(t[s.slice], y[s.slice], pins[0], pins[1], opts.get("uncertainty", "ar1"))
         fitted[s.slice] = r.fitted
         results[i] = r
     return PiecewiseFit(fitted, list(segs), cast(List[FitResult], results))
 
 
-def fit_joined_line(t: np.ndarray, y: np.ndarray, before: Optional[Tuple[float, float]],
+def _fit_joined_line(t: np.ndarray, y: np.ndarray, before: Optional[Tuple[float, float]],
                     after: Optional[Tuple[float, float]], uncertainty: str = "ar1") -> FitResult:
     """
     A line through the joined points: ``before`` and ``after`` are ``(time, level)``, the previous segment's
@@ -973,7 +976,6 @@ def fit_joined_line(t: np.ndarray, y: np.ndarray, before: Optional[Tuple[float, 
     return FitResult("poly", params, None, fitted, resid, flags, options, float("nan"), free, centre, evaluation)
 
 
-__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_joined_line", "joins_transients", "fit_first_order",
-           "fit_exp", "fit_model", "piecewise_fit",
+__all__ = ["FitResult", "PiecewiseFit", "fit_poly", "fit_first_order", "fit_exp", "fit_model", "piecewise_fit",
            "resolve_model", "validate_models", "check_model_options", "sandwich_cov", "propagate_cov", "ar1_apply",
            "residual_phi", "evaluate", "normalize_model"]

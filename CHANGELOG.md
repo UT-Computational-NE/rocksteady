@@ -188,8 +188,8 @@ Upgrading from 0.5.1. Behaviour changes to check:
   `OptimalSegmentation.models` carries `"join_transients": True`, which
   `fit.piecewise_fit`, `fit.validate_models` and `report.fit_report`
   accept, so the report fits the segments as the optimiser did; given
-  segments it cannot join, `fit_report` raises `ValueError` naming them.
-  New: `fit.fit_joined_line` and `fit.joins_transients` (#179).
+  segments it cannot join, `fit_report` raises `ValueError` naming them
+  (#179).
 
 ### Changed
 

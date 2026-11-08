@@ -31,8 +31,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .fit import (JOIN_KEY, FitResult, PiecewiseFit, _subtype_specs, joins_transients, normalize_model, piecewise_fit,
-                  resolve_model, validate_models)
+from .fit import (JOIN_KEY, FitResult, PiecewiseFit, _joins_transients, _subtype_specs, normalize_model,
+                  piecewise_fit, resolve_model, validate_models)
 from . import _grouping as _g
 from .metrics import STATES, signal_stats, stats_by_segment, stats_by_state
 from .states import Segment
@@ -202,7 +202,7 @@ def _normalized(spec, states: Sequence[str]) -> Dict[str, Any]:
     own = _subtype_specs(spec)
     if own:
         out["subtypes"] = {sub: normalize_model(spec, subtype=sub) for sub in own}
-    if joins_transients(spec):
+    if _joins_transients(spec):
         out[JOIN_KEY] = True
     return out
 
@@ -210,7 +210,7 @@ def _normalized(spec, states: Sequence[str]) -> Dict[str, Any]:
 def _models_title(spec, states: Sequence[str]) -> str:
     parts = [f"{st} {_model_label(*resolve_model(spec, st))}" for st in states if st != "all"]
     own = [f"{sub} {_model_label(*resolve_model(spec, subtype=sub))}" for sub in _subtype_specs(spec)]
-    joined = "; transients joined" if joins_transients(spec) else ""
+    joined = "; transients joined" if _joins_transients(spec) else ""
     return f"(models: {', '.join(parts)}{'; ' + ', '.join(own) if own else ''}{joined})"
 
 

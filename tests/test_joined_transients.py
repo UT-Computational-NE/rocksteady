@@ -539,7 +539,10 @@ def test_a_transient_does_not_take_a_plateau_that_a_cap_keeps_from_being_steady(
     kw = dict(method=method, **NATIVE)
     kw.update(dict(grid_s=window) if method == "exact" else dict(candidates=_candidates(idx), refine_s=window))
     unjoined = optimal_segments(idx, y, MODELS, **kw)
+    assert [s.subtype for s in unjoined.segments] == ["zero_power", "startup", "at_power", "shutdown", "zero_power"]
     assert idx[unjoined.segments[1].stop] > pd.Timestamp("2025-05-07 15:00")  # the flat startup
+    dip = unjoined.segments[2]  # the one at-power segment, on the dip
+    assert pd.Timestamp("2025-05-07 15:55") <= idx[dip.start] and idx[dip.stop - 1] <= pd.Timestamp("2025-05-07 16:45")
     res = optimal_segments(idx, y, MODELS, join_transients=True, **kw)
     names = [s.subtype for s in res.segments]
     assert names == ["zero_power", "startup", "at_power", "shutdown", "zero_power"]
@@ -614,10 +617,13 @@ def test_refine_scores_moves_by_the_joined_fit():
 
 @pytest.mark.parametrize("own", [{"pulse": "exp"}, {"a": 1, "pulse": 2, "b": 0}])
 def test_a_joined_spec_refuses_a_subtypes_model_that_is_not_a_constant_or_a_line(own):
-    # Refused up front, whether or not a segment carries the subtype; the offending one is not first or last.
+    # Refused up front, whether or not a segment carries the subtype; in the second spec the offending one is
+    # neither first nor last.
     t, y = _two_steps(n=40)
-    with pytest.raises(ValueError, match="subtype 'pulse' has model"):
-        _report(t, y, [Segment(0, 40, ST)], {**JOINED, "subtypes": own})
+    carried = [Segment(0, 10, ST), Segment(10, 20, TR, subtype="pulse"), Segment(20, 40, ST)]
+    for segs in ([Segment(0, 40, ST)], carried):
+        with pytest.raises(ValueError, match="subtype 'pulse' has model"):
+            _report(t, y, segs, {**JOINED, "subtypes": own})
     rs.fit.validate_models({"y": {**MODELS, "subtypes": own}})  # unjoined, the spec is fine
 
 
@@ -760,8 +766,8 @@ def test_a_soft_cap_of_zero_charges_the_first_segment_for_each_period_it_touches
      [0, 2, 3, 5, 7], [0, 2, 4, 5, 7]),
 ])
 def test_refine_costs_the_transient_beyond_the_moved_segment(y, kw, expected, alternative):
-    # Scoring a move by the two segments beside the boundary alone stops at the alternative, which on these
-    # records has the higher joined objective.
+    # On these records the result has a lower joined objective than the alternative, where the boundary at 3
+    # sits one sample later.
     y = np.array(y)
     t = np.arange(len(y), dtype=float)
     res = optimal_segments(t, y, MODELS, method="refine", join_transients=True, **kw)
@@ -781,7 +787,7 @@ def test_the_error_names_where_a_transient_is_stranded():
                          max_duration_s={"steady": 6.0}, penalty=0.1, join_transients=True)
 
 
-def test_a_short_transient_in_a_long_record_is_costed_from_its_samples():
+def test_a_burst_a_billion_seconds_after_the_first_gets_the_best_joined_segmentation():
     # Ten samples, then ten more 1e9 s later: the second burst's time variance is far below the range sums'
     # rounding, so its transients are summed directly.
     t = np.concatenate((np.arange(10.0), 1e9 + np.arange(10.0)))
@@ -836,8 +842,7 @@ def test_a_transient_subtypes_own_line_takes_the_joined_transients_penalty():
 ])
 def test_refine_searches_again_the_boundaries_a_move_can_reach(y, kw, expected, alternative):
     # A move changes a steady level, so the transients beside that segment, whose costs enter boundaries up to
-    # three away: refine searches those again. Searching only the next boundaries stops at the alternative,
-    # which on these records has the higher joined objective.
+    # three away. On these records the result has a lower joined objective than the alternative.
     y = np.array(y)
     t = np.arange(len(y), dtype=float)
     res = optimal_segments(t, y, MODELS, method="refine", join_transients=True, **kw)
@@ -846,3 +851,109 @@ def test_refine_searches_again_the_boundaries_a_move_can_reach(y, kw, expected, 
     pen = kw["penalty"] * len(states)
     assert res.objective == pytest.approx(_joined_sse(t, y, expected, states) + pen, rel=1e-9)
     assert _joined_sse(t, y, expected, states) < _joined_sse(t, y, alternative, states)
+
+
+# -- ties, and the bound that prunes ----------------------------------------------------------------------------
+
+
+def _ranks(subtypes):
+    """Each subtype's position among its state's subtypes."""
+    names = list(subtypes)
+    return {k: sum(subtypes[o].state == sub.state for o in names[:i]) for i, (k, sub) in enumerate(subtypes.items())}
+
+
+OVERLAPPING = {"lo": rs.Subtype("steady", level=(None, 1.5)), "any": rs.Subtype("steady"),
+               "up": rs.Subtype("transient"), "ramp": rs.Subtype("transient")}
+
+
+@pytest.mark.parametrize("y", [[2, 0, 2, 1, 1, 1, 0, 2], [0, 1, 1, 1, 0, 0], [1, 1, 0, 2, 2, 2, 1]])
+@pytest.mark.parametrize("order", ["declared", "reversed"])
+def test_ties_go_to_the_least_rank_sum_then_the_fewest_transients(y, order):
+    # Overlapping subtypes on integer data: many segmentations tie exactly on the objective.
+    y = np.array(y, dtype=float)
+    t = np.arange(len(y), dtype=float)
+    subtypes = dict(OVERLAPPING) if order == "declared" else dict(reversed(list(OVERLAPPING.items())))
+    res = optimal_segments(t, y, MODELS, method="exact", subtypes=subtypes, penalty=0.5, join_transients=True)
+    choices = {k: sub.state.value for k, sub in subtypes.items()}
+    accepts = {"lo": lambda v: np.isfinite(v).any() and np.nanmean(v) < 1.5}
+    best, optima = _brute_joined(t, y, cuts=range(1, len(y)), choices=choices, accepts=accepts,
+                                 penalty={k: 0.5 for k in subtypes})
+    assert res.objective == pytest.approx(best, rel=1e-9)
+    rank = _ranks(subtypes)
+    key = [(sum(rank[c] for c in names), sum(choices[c] == "transient" for c in names)) for _, names in optima]
+    mine = (sum(rank[c] for c in _names(res)), sum(s.state == TR for s in res.segments))
+    assert len(set(key)) > 1  # the tie rule decides here
+    assert mine == min(key)
+
+
+def test_an_exact_tie_goes_to_the_segmentation_with_fewer_transients():
+    # Flat data at zero penalties: one steady segment and a steady segment with a flat transient after it both cost
+    # nothing; the joined program returns the one without the transient, as the program without the option does.
+    t = np.arange(8, dtype=float)
+    y = np.zeros(8)
+    pen = {"steady": 0.0, "transient": 0.0}
+    res = optimal_segments(t, y, MODELS, method="exact", penalty=pen, join_transients=True)
+    assert [(s.start, s.stop, s.state) for s in res.segments] == [(0, 8, ST)]
+    assert [(s.start, s.stop, s.state) for s in optimal_segments(t, y, MODELS, method="exact", penalty=pen).segments] \
+        == [(0, 8, ST)]
+
+
+def test_two_transient_options_never_follow_each_other():
+    # up -> down is allowed, but both are transients: no segmentation exists, and the error is the constraints'.
+    t = np.arange(12, dtype=float)
+    y = np.interp(t, [0, 3, 6, 9, 11], [0, 3, 6, 3, 0])
+    subtypes = {"up": rs.Subtype("transient"), "down": rs.Subtype("transient"), "lvl": rs.Subtype("steady")}
+    with pytest.raises(ValueError, match="no segmentation satisfies the constraints") as err:
+        optimal_segments(t, y, MODELS, method="exact", subtypes=subtypes, penalty=0.1, initial={"up"},
+                         final={"lvl"}, transitions={"up": ["down"], "down": ["lvl"], "lvl": ["up"]},
+                         join_transients=True)
+    assert "finite sample" not in str(err.value)
+
+
+def test_the_bound_that_prunes_leaves_room_for_rounding():
+    # The fits apart choose the optimum here, so the bound equals its objective up to rounding; without room for
+    # rounding, the search would prune the optimum itself.
+    t = 1e3 + 0.1 * np.arange(10)
+    y = np.round(np.array([-1.0, -0.7, -0.9, -0.9, -0.4, -0.1, 0.0, 0.1, -1.2, -1.3]), 1) + 0.1
+    res = optimal_segments(t, y, MODELS, method="subset", candidates=[2, 5, 8], penalty=0.0, join_transients=True)
+    best, optima = _brute_joined(t, y, cuts=[2, 5, 8], choices=PLAIN, penalty={"steady": 0.0, "transient": 0.0})
+    assert res.objective == pytest.approx(best, rel=1e-9)
+    assert (_bounds(res), _names(res)) in optima
+    assert _names(res) == ("steady", "transient", "steady", "steady")
+
+
+def test_of_equal_ways_into_a_steady_segment_the_least_rank_sum_wins():
+    # Zero penalties on integer data: the steady segments before the last transient tie in many ways, and so do the
+    # two transients that may lead to z, whose ranks differ. The least rank sum takes x, not w.
+    t = np.arange(7, dtype=float)
+    y = np.array([0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0])
+    subtypes = {"p": rs.Subtype("steady"), "q": rs.Subtype("steady"), "z": rs.Subtype("steady"),
+                "x": rs.Subtype("transient"), "w": rs.Subtype("transient")}
+    trans = {"p": ["p", "q", "x", "w"], "q": ["p", "q", "x", "w"], "x": ["z", "p"], "w": ["z", "q"], "z": ["z", "x"]}
+    kw = dict(transitions=trans, initial={"x", "p"}, final={"z"})
+    res = optimal_segments(t, y, MODELS, method="exact", subtypes=subtypes, penalty=0.0,
+                           max_duration_s={"p": 2.0, "q": 1.0}, join_transients=True, **kw)
+    choices = {k: sub.state.value for k, sub in subtypes.items()}
+    lengths = {"p": 2.0, "q": 1.0}
+    best, optima = _brute_joined(t, y, cuts=range(1, 7), choices=choices, penalty={k: 0.0 for k in subtypes},
+                                 accepts={k: (lambda v, d=d: len(v) <= d) for k, d in lengths.items()}, **kw)
+    rank = _ranks(subtypes)
+    key = [(sum(rank[c] for c in names), sum(choices[c] == "transient" for c in names)) for _, names in optima]
+    assert res.objective == pytest.approx(best, abs=1e-12)
+    assert len(set(key)) > 1
+    assert (sum(rank[c] for c in _names(res)), sum(s.state == TR for s in res.segments)) == min(key)
+    assert "w" not in _names(res)
+
+
+@pytest.mark.parametrize("join", [False, True])
+def test_the_objective_is_the_sse_and_every_charge_the_result_reports(join):
+    # A transient starts the record: with "bic" and the option, its free slope is charged beyond its penalty, and
+    # info["free_parameter_cost"] reports that, so the objective is the sum of what the result reports.
+    t = np.arange(40, dtype=float)
+    y = np.where(t < 10, 0.5 * t, 5.0) + np.random.default_rng(1).normal(0, 0.05, 40)
+    res = optimal_segments(t, y, MODELS, method="exact", initial={"transient"}, join_transients=join)
+    assert res.segments[0].state == TR
+    charged = sum(res.penalty[s.subtype or s.state.value] for s in res.segments)
+    extra = res.info["free_parameter_cost"]
+    assert res.objective == pytest.approx(res.sse + charged + res.info["overflow_cost"] + extra, rel=1e-12)
+    assert extra == (pytest.approx(res.penalty["transient"], rel=1e-12) if join else 0.0)

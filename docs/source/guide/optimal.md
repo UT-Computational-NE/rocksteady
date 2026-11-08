@@ -383,9 +383,10 @@ bump (neither of them a pulse).
 
 ## Joined transients
 
-Segments are fitted independently, so a transient fitted with a line can
-be flat. It fits a run of steady samples as well as a constant does, and
-it costs no more than the steady segment beside it. Under a cap, that lets
+Without the option, segments are fitted independently, so a transient
+fitted with a line can be flat. It fits a run of steady samples as well as
+a constant does, and it costs no more in SSE than the steady segment beside
+it. Under a cap, that lets
 a transient take a plateau the cap keeps from being steady. Take a reactor
 at power from 09:00, scrammed at 16:00 and restarted at 16:30, with at most
 one at-power segment a day: the best fit puts the at-power segment on the
@@ -398,11 +399,12 @@ straight line from the level of the steady segment before it, at the
 transient's first sample, to the level of the segment after it, at that
 segment's first sample. A joined transient between two different levels
 cannot be flat, and one that holds steady samples at an end pays for them,
-because its line moves away from that level. Across a gap whose samples
-are missing from the record, a transient between two levels keeps only the
-last sample before the gap, and the next segment starts at the first sample
-after it; when the gap's samples are there as NaN, the transient's only
-finite sample, if any, is that last one before the gap.
+because its line moves away from that level. When a transient between two
+levels must cross a gap, and the candidates include the last sample before
+the gap and the first after it: with the gap's samples missing from the
+record, the transient keeps only that last sample, and the next segment
+starts at the first sample after the gap; with them there as NaN, the
+transient's only finite sample, if any, is that last one.
 
 - **Models.** Steady segments are fitted with a constant and transients
   with a line, `{"steady": 0, "transient": 1}`, and a subtype's own model
@@ -427,6 +429,9 @@ finite sample, if any, is that last one before the gap.
   transient that borders a transient, an indeterminate segment, or a steady
   segment with no finite sample; such segments elsewhere are fitted as
   usual.
+- **Ties.** Of segmentations equal in objective, the least sum of subtype
+  ranks wins, as without the option, then the one with the fewest
+  transients.
 - **Cost.** A transient's cost depends on both its neighbours, so the
   program does more work (*Joined transients* in {doc}`methods`). `subset`
   and `refine` on a few hundred candidates take seconds; `exact` needs a

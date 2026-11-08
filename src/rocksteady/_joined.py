@@ -192,6 +192,10 @@ class Joined:
             pen += self.extra * self.free_params(opts, i)
         return pen
 
+    def free_parameter_cost(self, opts: Sequence[int]) -> float:
+        """What a segmentation's transients at the record's ends are charged beyond their penalties."""
+        return sum(self.penalty(opts, i) - float(self.prob.pen[o]) for i, o in enumerate(opts))
+
     def total(self, bounds: Sequence[int], opts: Sequence[int]) -> Tuple[float, float]:
         """``(objective, sse)`` of a segmentation under the joined fit."""
         sse = sum(self.segment_cost(bounds, opts, i) for i in range(len(opts)))
@@ -225,7 +229,7 @@ class _Entries:
     """
     The program's final states: steady segments ``[B[s], B[k])``, one per field value of ``FIELDS``:
     ``k`` and ``s`` the end and start candidates, ``o`` the option, ``l`` the count layer, ``v`` the value,
-    ``r`` the rank sum, ``L`` the segment's level, and how it was reached: ``kind`` (``START``,
+    ``r`` the tie key (``_Program.key``), ``L`` the segment's level, and how it was reached: ``kind`` (``START``,
     ``AFTER_STEADY``, ``AFTER_FIRST_TRANSIENT`` or ``AFTER_TRANSIENT``), ``pred`` the state before (-1 for
     none) and ``ot`` the option of the transient between (-1 for none).
     """
@@ -262,6 +266,11 @@ class _Program:
         opts = prob.options
         self.steady = [o for o in range(prob.O) if opts[o].state == "steady" and prob.tgtB[o] >= 0]
         self.trans = [o for o in range(prob.O) if opts[o].state == "transient" and prob.tgtB[o] >= 0]
+        # The tie key a segment of each option adds: of equal objectives the least sum of subtype ranks wins, then
+        # the fewest transients, then the first found. A segmentation has fewer than m transients, so the rank
+        # sum, times m, plus the transients compares as the pair does.
+        is_transient = np.array([opt.state == "transient" for opt in opts], dtype=np.int64)
+        self.key = prob.rank * self.m + is_transient
         self._tables()
 
     # The candidate segments, their validity and their costs, as (start index, end index) tables over B.
@@ -344,7 +353,7 @@ class _Program:
         prob, B, m, L = self.prob, self.B, self.m, self.prob.L
         entries = _Entries()
         pending: List[List[Dict[str, np.ndarray]]] = [[] for _ in range(m)]  # states ending at each B[k]
-        final: Optional[Tuple[float, int, Tuple]] = None  # (value, rank, description)
+        final: Optional[Tuple[float, int, Tuple]] = None  # (value, tie key, description)
         last_reached = 0
 
         def offer(v, r, desc):
@@ -409,7 +418,7 @@ class _Program:
                     bpred[idx, layer[idx]] = np.broadcast_to(pred, v.shape)[idx]
                     bot[idx, layer[idx]] = ot
 
-                rank_o = int(prob.rank[o])
+                rank_o = int(self.key[o])
                 if s == 0 and prob.may_start[o]:
                     tgt, over = self.first(o, Q)
                     put(base + over, rank_o, tgt, START, -1, -1)
@@ -449,7 +458,7 @@ class _Program:
             if tgt[0] < 0:
                 continue
             c = prob.cost(ot, 0, self.n)
-            offer(c + prob.pen[ot] + 2 * self.j.extra + float(over[0]), int(prob.rank[ot]), ("whole", ot))
+            offer(c + prob.pen[ot] + 2 * self.j.extra + float(over[0]), int(self.key[ot]), ("whole", ot))
         if final is None:
             raise ValueError(prob._infeasible(B, last_reached) + " With join_transients, a transient cannot border "
                              "a steady segment that has no finite sample.")
@@ -472,14 +481,14 @@ class _Program:
             tgt, over = self.step(ot, P, self.n, E["l"][mine])
             v = E["v"][mine] + prob.pen[ot] + self.j.extra + over + _nan_inf(at_end(t, L1))
             v = np.where(ok & (tgt >= 0), v, math.inf)
-            r = E["r"][mine] + prob.rank[ot]
+            r = E["r"][mine] + self.key[ot]
             for i in np.flatnonzero(np.isfinite(v)):
                 offer(v[i], r[i], ("end", int(mine[i]), ot))
 
     def _transient_groups(self, E, s: int, P: int):
         """
         For the steady segments starting at ``B[s]``, the best way to arrive by a transient ending there, for
-        each end: ``(ot, layer, kind, value (K,), rank (K,), state (K,))``, one per transient option and count
+        each end: ``(ot, layer, kind, value (K,), tie key (K,), state (K,))``, one per transient option and count
         layer after it. The values include the transient's cost joined to each end's level. Also whether any
         transient can end at ``B[s]`` at all.
         """
@@ -499,7 +508,7 @@ class _Program:
                 continue
             arrived = True
             v = _nan_inf(at_start(t0, L2)) + prob.pen[ot] + self.j.extra + float(over[0])
-            out.append((ot, int(tgt[0]), AFTER_FIRST_TRANSIENT, v, np.full(len(ks), int(prob.rank[ot])),
+            out.append((ot, int(tgt[0]), AFTER_FIRST_TRANSIENT, v, np.full(len(ks), int(self.key[ot])),
                         np.full(len(ks), -1)))
         # A transient [B[j], B[s]) after a steady segment ending at B[j].
         before = np.flatnonzero((E["k"] >= 1) & (E["k"] < s) & np.isfinite(E["L"]))
@@ -523,23 +532,20 @@ class _Program:
             A, n, ubar = T["A"][j, s], T["n"][j, s], T["ubar"][j, s]
             a1 = L1 + T["s"][j, s]
             b0 = T["ybar"][j, s] - (1.0 - ubar) * L1
-            rank = E["r"][e] + prob.rank[ot]
+            rank = E["r"][e] + self.key[ot]
             for lt in np.unique(tgt):
                 g = np.flatnonzero(tgt == lt)
-                bestv = np.full(len(ks), math.inf)
-                bestr = np.zeros(len(ks), dtype=np.int64)
-                bestp = np.full(len(ks), -1, dtype=np.int64)
                 step_rows = max(1, _CHUNK // max(1, len(ks)))
+                parts = []  # each block's best per end: (value, tie key, state)
                 for c0 in range(0, len(g), step_rows):
                     gg = g[c0:c0 + step_rows]
                     vals = (base[gg, None] + A[gg, None] * (L2[None, :] - a1[gg, None]) ** 2
                             + n[gg, None] * (b0[gg, None] - ubar[gg, None] * L2[None, :]) ** 2)
-                    vals = _nan_inf(vals)
-                    arg, vmin, rmin = _lexmin(vals, rank[gg, None])
-                    win = (vmin < bestv) | ((vmin == bestv) & (rmin < bestr))
-                    bestv = np.where(win, vmin, bestv)
-                    bestr = np.where(win, rmin, bestr)
-                    bestp = np.where(win, e[gg][arg], bestp)
+                    arg, vmin, rmin = _lexmin(_nan_inf(vals), rank[gg, None])
+                    parts.append((vmin, rmin, e[gg][arg]))
+                # The blocks' bests by the same rule; of equal ones, the earlier block's, as within a block.
+                which, bestv, bestr = _lexmin(np.array([v for v, _, _ in parts]), np.array([r for _, r, _ in parts]))
+                bestp = np.array([p for _, _, p in parts])[which, np.arange(len(ks))]
                 out.append((ot, int(lt), AFTER_TRANSIENT, bestv, bestr, bestp))
         return out, arrived
 
